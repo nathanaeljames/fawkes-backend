@@ -7,18 +7,10 @@ WORKDIR /usr/local/whisper
 USER root
 
 ARG DEBIAN_FRONTEND=noninteractive
-RUN ln -snf /usr/share/zoneinfo/$CONTAINER_TIMEZONE /etc/localtime && echo $CONTAINER_TIMEZONE > /etc/timezone\
-    && apt-get update\
-    && apt-get upgrade -y\
-    #&& apt-get install python3-pip -y\
-    #&& pip3 install autobahn[twisted]\
-    && apt-get install python3-pip -y\
-    && apt-get install nano\
-    #&& apt install pipx -y\
-    #python3 -m pip install pipx\
-    #&& pipx ensurepath\
-    #&& pipx install autobahn[twisted] --python python3\
-    && apt-get install python3-autobahn[twisted]
+RUN apt-get update\
+    && apt-get upgrade\
+    && apt-get install python3-pip\
+    && pip3 install autobahn[twisted]
 
 COPY server.py ./
 
