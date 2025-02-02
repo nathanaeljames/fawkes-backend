@@ -13,7 +13,7 @@
 	// "features": {},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [9001,9001]
+	"forwardPorts": [9001,9001],
 
 	// Uncomment the next line to run commands after the container is created.
 	// "postCreateCommand": "cat /etc/os-release",
@@ -23,6 +23,6 @@
 
 	// Uncomment to connect as an existing user other than the container default. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "devcontainer"
-	//"workspaceMount": "source=${localWorkspaceFolder},target=/usr/local/whisper,type=bind",
-	//"workspaceFolder": "/usr/local/whisper"
+	"workspaceMount": "source=${localWorkspaceFolder},target=/usr/local/whisper,type=bind",
+	"workspaceFolder": "/usr/local/whisper"
 }
