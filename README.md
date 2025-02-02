@@ -1,6 +1,7 @@
 Basic Python backend for Fawkes chatbot
 
 - [X] Set up dockerfile for fast environment build
+- [ ] Figure out remote git issues
 - [ ] Receive audio data via websocket
 - [ ] Relay audio to Google Speech
 - [ ] Send sentence-by-sentence transcription to client via websockets
@@ -13,4 +14,4 @@ Basic Python backend for Fawkes chatbot
 - [ ] Multiple speaker memory
 - [ ] Prompting and phonetic pangram collection
 - [ ] Custom voice
-- [ ]
+- [ ] Live model retraining against prompts and pangrams
