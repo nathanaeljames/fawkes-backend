@@ -6,6 +6,7 @@ WORKDIR /usr/local/whisper
 
 USER root
 
+#update upgrade install must be on same line or will fail due to caching
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     python3\
