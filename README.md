@@ -13,4 +13,4 @@ Basic Python backend for Fawkes chatbot
 - [ ] Multiple speaker memory
 - [ ] Prompting and phonetic pangram collection
 - [ ] Custom voice
-- [ ] Live model retraining against prompts and pangrams
+- [ ]
