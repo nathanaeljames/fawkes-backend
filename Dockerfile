@@ -16,6 +16,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     
 RUN pip3 install autobahn[twisted]
 
+#not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
 COPY server.py ./
 COPY . .
 

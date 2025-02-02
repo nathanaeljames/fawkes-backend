@@ -15,3 +15,4 @@ Basic Python backend for Fawkes chatbot
 - [ ] Prompting and phonetic pangram collection
 - [ ] Custom voice
 - [ ] Live model retraining against prompts and pangrams
+- [ ] Interruptability
