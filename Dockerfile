@@ -14,8 +14,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     
 RUN pip3 install autobahn[twisted]
 
-COPY server.py ./
+#COPY server.py ./
+COPY . .
 
 EXPOSE 9001
 
-#CMD ["python3", "server.py"]
+CMD ["python3", "server.py"]
