@@ -20,4 +20,4 @@ COPY . .
 
 EXPOSE 9001
 
-CMD ["pyt
+CMD ["python3", "server.py"]
