@@ -25,4 +25,5 @@
 	// "remoteUser": "devcontainer"
 	//"workspaceMount": "source=${localWorkspaceFolder},target=/usr/local/whisper,type=bind",
 	//"workspaceFolder": "/usr/local/whisper"
+	//test
 }
