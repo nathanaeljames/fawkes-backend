@@ -16,3 +16,5 @@ Basic Python backend for Fawkes chatbot
 - [ ] Custom voice
 - [ ] Live model retraining against prompts and pangrams
 - [ ] Interruptability
+
+If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
