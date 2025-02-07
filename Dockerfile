@@ -14,7 +14,10 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     nano\
     git
     
-RUN pip3 install autobahn[twisted]
+RUN pip3 install\
+    autobahn[twisted]\
+    pyttsx3\
+    speechRecognition
 
 #not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
 COPY server.py ./
