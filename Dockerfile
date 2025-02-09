@@ -17,7 +17,10 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
 RUN pip3 install\
     autobahn[twisted]\
     pyttsx3\
-    speechRecognition
+    speechRecognition\
+    ibm-watson\
+    ibm_cloud_sdk_core\
+    pyaudio
 
 #not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
 COPY server.py ./

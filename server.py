@@ -1,60 +1,70 @@
 ## @server.py
 #  This file contains the server side of the Autobahn websocket service
+import speech_recognition as sr #pip install speechRecognition
+import datetime
+import io
 
-import json
 from twisted.internet import reactor
 
-from autobahn.twisted.websocket import WebSocketServerFactory, \
-                                       WebSocketServerProtocol, \
-                                       listenWS
-
-## @StreamingServerProtocol
-#
-#  Parse JSON-formatted string
-#
-#    # Encode JSON-formatted string
-#    json_input = json.dumps([ "one": 1, "two": { "list": [ {"aa":"A"},{"ab":"B"} ] } ])
-#
-#    # Prints 'B'
-#    print decoded['two']['list'][1]['ab']
-#
-#    # Prints entire JSON-formatted string nicely
-#    print json.dumps(decoded, sort_keys=True, indent=4)
-#
-#  The following methods are triggered on the server side:
-#
-#  onConnect(self, requestOrResponse) callback fired during WebSocket opening handshake
-#    when client connects, or when server connection established (by a client with 
-#    response from server).
-#
-#  onOpen(self) callback fired when initial WebSocket opening handshake was completed.
-#    You now can send and receive WebSocket messages.
-#
-#  sendMessage(self, payload, isBinary = False, fragmentSize = None, sync = False,
-#    doNotCompress = False) send a WebSocket message over the connection to the peer.
-#
-#  onMessage(self, payload, isBinary) callback fired when a complete WebSocket message
-#    was received.
-#
-#  sendClose(self, code = None, reason = None) starts WebSocket closing handshake.
-#
-#  onClose(self, wasClean, code, reason) callback when the WebSocket connection has been
-#    closed (WebSocket closing handshake has been finished or the connection was closed
-#    uncleanly).
-#
-#  A more complete list of available 'WebSocket' interfaces:
-#
-#  github.com/tavendo/AutobahnPython/blob/master/autobahn/autobahn/websocket/interfaces.py
+from autobahn.twisted.websocket import WebSocketServerProtocol, \
+    WebSocketServerFactory
 
 class StreamingServerProtocol(WebSocketServerProtocol):
 
-   def onMessage(self, msg, binary):
-      print ('sending echo:', msg)
-      # send 'msg' back to the client (i.e. javascript)
-      self.sendMessage(msg, binary)
+    def onConnect(self, request):
+        print("Client connecting: {0}".format(request.peer))
+
+    def onOpen(self):
+        print("WebSocket connection open.")
+
+    def onMessage(self, payload, isBinary):
+        if isBinary:
+            r = sr.Recognizer()
+            #data_buffer = io.BytesIO(payload)
+            #print("Binary message received: {0} bytes".format(len(payload)))
+            print("Listening...")
+            #r.pause_threshold = 1
+            #audio = r.listen(data_buffer)
+            #try:
+            #   print("Recognizing...")    
+            #   query = r.recognize_google(data_buffer, language='en-in')
+            #   print(f"User said: {query}\n")
+
+            #except Exception as e:
+            #   print(e)    
+            #   print("Say that again please...")
+
+            try:
+                with io.BytesIO(payload) as audio_file:
+                    with sr.AudioFile(audio_file) as source:
+                        audio_data = r.record(source)
+                
+                # Perform speech recognition
+                try:
+                    query = r.recognize_google(audio_data)
+                    #print(f"Recognized text: {text}")
+                    print(f"User said: {query}\n")
+                    # Send the recognized text back to the client or process it further
+                    #await websocket.send(text)
+
+                except sr.UnknownValueError:
+                    print("Speech recognition could not understand audio")
+                except sr.RequestError as e:
+                    print(f"Could not request results from speech recognition service; {e}")
+            
+            except Exception as e:
+                    print(f"Error processing audio data: {e}") 
+        else:
+            print("Text message received: {0}".format(payload.decode('utf8')))
+
+        # echo back message verbatim
+        #self.sendMessage(payload, isBinary)
+
+    def onClose(self, wasClean, code, reason):
+        print("WebSocket connection closed: {0}".format(reason))
 
 if __name__ == '__main__':
    factory = WebSocketServerFactory("ws://localhost:9001")
    factory.protocol = StreamingServerProtocol
-   listenWS(factory)
+   reactor.listenTCP(9001, factory)
    reactor.run()
