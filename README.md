@@ -18,3 +18,12 @@ Basic Python backend for Fawkes chatbot
 - [ ] Interruptability
 
 If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
+
+Watson Credentials:
+  "apikey": "REDACTED",
+  "iam_apikey_description": "REDACTED",
+  "iam_apikey_id": "REDACTED",
+  "iam_apikey_name": "Auto-generated service credentials",
+  "iam_role_crn": "crn:v1:bluemix:public:iam::::serviceRole:Manager",
+  "iam_serviceid_crn": "REDACTED",
+  "url": "https://api.us-south.speech-to-text.watson.cloud.ibm.com/instances/REDACTED_IBM_STT_INSTANCE"
