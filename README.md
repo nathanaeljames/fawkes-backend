@@ -18,7 +18,7 @@ Basic Python backend for Fawkes chatbot
 - [ ] Interruptability
 
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
-* ISSUE 2: Docker "rebuild" insists on using cache, run `docker system prune -a`
+* ISSUE 2: Docker "rebuild" insists on using cache, instantly reusing broken container and ignoring any revisions to Dockerfile, must run `docker system prune -a`
 
 Watson Credentials:
   "apikey": "IYBIxRJeINqwcjOAd0PuFYI6NLyH0qV8hqfh3ziNqtQf",
