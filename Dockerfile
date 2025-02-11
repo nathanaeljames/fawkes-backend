@@ -12,7 +12,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     python3\
     python3-pip\
     nano\
-    git
+    git\
+    portaudio19-dev
     
 RUN pip3 install\
     autobahn[twisted]\
@@ -23,7 +24,8 @@ RUN pip3 install\
     pyaudio
 
 #not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
-COPY server.py ./
+COPY ./server.py .
+COPY ./server2.py .
 COPY . .
 
 EXPOSE 9001
