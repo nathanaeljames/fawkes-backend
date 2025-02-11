@@ -30,19 +30,11 @@ class StreamingServerProtocol(WebSocketServerProtocol):
 
     def onMessage(self, payload, isBinary):
         if isBinary:
-            #audio = pyaudio.PyAudio()
-            #stream = audio.open(
-            #    format=pyaudio.paInt16,
-            #    channels=1,
-            #    rate=16000,
-            #    input=True,
-            #    frames_per_buffer=CHUNK,
-            #    stream_callback=stream_callback,
-            #    start=False
-            #)
-            stream = io.BytesIO(payload)
-            print("Enter CTRL+C to end recording...")
-            #stream.start_stream()
+            try:
+                q.put(payload)
+            except Full:
+                pass # discard
+            return (None)
 
             try:
                 recognize_thread = Thread(target=recognize_using_weboscket, args=())
@@ -118,12 +110,12 @@ class MyRecognizeCallback(RecognizeCallback):
 # this function will initiate the recognize service and pass in the AudioSource
 def recognize_using_weboscket(*args):
     mycallback = MyRecognizeCallback()
-    speech_to_text.recognize_using_websocket(audio=stream,
+    speech_to_text.recognize_using_websocket(audio=audio_source,
                                              content_type='audio/l16; rate=16000',
                                              recognize_callback=mycallback,
                                              interim_results=True)
     
-def stream_callback(payload, frame_count, time_info, status):
+def stream_callback(in_data, frame_count, time_info, status):
     try:
         q.put(payload)
     except Full:
