@@ -24,8 +24,8 @@ RUN pip3 install\
     pyaudio
 
 #not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
-COPY ./server.py .
-COPY ./server2.py .
+COPY server.py ./
+COPY server2.py ./
 COPY . .
 
 EXPOSE 9001
