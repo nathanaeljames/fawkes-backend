@@ -17,6 +17,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     
 RUN pip3 install\
     autobahn[twisted]\
+    websockets\
     pyttsx3\
     speechRecognition\
     ibm-watson\
