@@ -46,10 +46,13 @@ class WatsonCallback(RecognizeCallback):
         print('Service is listening')
 
     def on_hypothesis(self, hypothesis):
+        #print("hypothesis called")
         print(hypothesis)
 
     def on_data(self, data):
-        print(data)
+        #print("on_data called")
+        #print(data)
+        c = 1 #(do nothing)
 
     def on_close(self):
         print("Connection closed")
@@ -86,6 +89,7 @@ async def receive_audio(websocket):
                     q.put(message)
                     #print("Received audio data and added to queue")
                 except Full:
+                    print("WARNING: packets dropped!")
                     pass # discard
             else:
                 print(f"Text message received: {message}")
@@ -97,15 +101,14 @@ async def receive_audio(websocket):
 
 async def transcribe_audio():
     recognize_thread = Thread(target=recognize_using_weboscket, args=())
-    recognize_thread.start()  
+    recognize_thread.start()
+
+#def respond_to_thought():
+    #?
 
 async def main():
-    """Starts the WebSocket server."""
-    print(f"Starting WebSocket server on ws://{HOST}:{PORT}")
-    #async with websockets.serve(receive_audio, HOST, PORT):
-    #    await asyncio.Future()  # Keep server running
-
     # Start the WebSocket server for receiving audio
+    print(f"Starting WebSocket server on ws://{HOST}:{PORT}")
     server = await websockets.serve(receive_audio, HOST, PORT)
     # Start the transcription process
     await transcribe_audio()
