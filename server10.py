@@ -88,6 +88,7 @@ def recognize_using_weboscket(*args):
 
 async def receive_audio_service(websocket):
     """Handles incoming WebSocket connections."""
+    audio_frames = []  # Buffer to store raw L16 data
     print("Client connected.")
     active_websockets.add(websocket)  # Store the connection
     try:
@@ -95,12 +96,13 @@ async def receive_audio_service(websocket):
             if isinstance(message, bytes):
                 #print("Binary message received: {0} bytes".format(len(message)))
                 #await websocket.send(message)
-                try:
-                    q.put(message)
+                audio_frames.append(message)  # Store raw PCM data
+                #try:
+                #    q.put(message)
                     #print("Received audio data and added to queue")
-                except Full:
-                    print("WARNING: packets dropped!")
-                    pass # discard
+                #except Full:
+                #    print("WARNING: packets dropped!")
+                #    pass # discard
             else:
                 print(f"Text message received: {message}")
                 #await websocket.send(f"Received text: {message}")
@@ -111,6 +113,7 @@ async def receive_audio_service(websocket):
     finally:
         active_websockets.remove(websocket)  # Remove connection when done
         # Save the collected L16 audio data as a WAV file
+        save_as_wav(b''.join(audio_frames), "output.wav")
 
 async def transcribe_audio_service():
     """Initiates IBM Watson transcription service."""
@@ -123,6 +126,34 @@ async def send_message_to_clients(message):
         await asyncio.gather(*[ws.send(message) for ws in active_websockets])
     else:
         print("No active clients to send messages to.")
+
+#for quality testing purposes
+async def record_audio():
+    audio_frames = []  # Buffer to store raw L16 data
+    
+    async with websockets.connect('ws://localhost:9001') as websocket:
+        try:
+            print("Connected to WebSocket, receiving audio...")
+            async for message in websocket:
+                if isinstance(message, bytes):
+                    audio_frames.append(message)  # Store raw PCM data
+                else:
+                    print(f"Received non-binary message: {message}")
+
+        except Exception as e:
+            print(f"WebSocket error: {e}")
+
+    # Save the collected L16 audio data as a WAV file
+    save_as_wav(b''.join(audio_frames), "output.wav")
+
+def save_as_wav(audio_data, filename):
+    """Save raw L16 PCM audio data to a WAV file."""
+    with wave.open(filename, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # 16-bit PCM = 2 bytes per sample
+        wf.setframerate(16000)
+        wf.writeframes(audio_data)
+    print(f"Audio saved as {filename}")
 
 async def main():
     global main_loop

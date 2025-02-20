@@ -4,10 +4,11 @@ Basic Python backend for Fawkes chatbot
 - [X] Figure out remote git issues
 - [X] Receive audio data via websocket
 - [ ] Relay audio to Google Speech
-- [ ] Send sentence-by-sentence transcription to client via websockets
+- [X] Send sentence-by-sentence transcription to client via websockets
 - [ ] Send audio to client via websockets
 - [X] Relay audio live to Watson
-- [ ] Send live transcription with probabilities to client via websockets
+- [X] Send live transcription with probabilities to client via websockets
+- [ ] Capture audio sample for quality check
 - [ ] Basic response framework (name/ date/ wikipedia)
 - [ ] ChatGPT/ Deepseek integration
 - [ ] Speaker recognition
