@@ -8,7 +8,8 @@ Basic Python backend for Fawkes chatbot
 - [ ] Send audio to client via websockets
 - [X] Relay audio live to Watson
 - [X] Send live transcription with probabilities to client via websockets
-- [ ] Capture audio sample for quality check
+- [X] Capture audio sample for quality check
+- [ ] Resolve Docker network connectivity issues
 - [ ] Basic response framework (name/ date/ wikipedia)
 - [ ] ChatGPT/ Deepseek integration
 - [ ] Speaker recognition

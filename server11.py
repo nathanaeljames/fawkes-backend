@@ -35,6 +35,8 @@ class WatsonCallback(RecognizeCallback):
     def on_transcription(self, transcript):
         #print("transcription called")
         print(transcript)
+        if active_websockets:
+            asyncio.run_coroutine_threadsafe(send_message_to_clients(str(transcript)), main_loop)
 
     def on_connected(self):
         print('Connection was successful')
@@ -133,9 +135,7 @@ async def save_audio():
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(16000)
-
         print(f"Saving audio to output.wav...")
-
         while True:
             audio_data = await asyncio.to_thread(q.get)  # Fetch from queue in non-blocking way
             if audio_data is None:  # Stop signal
@@ -152,12 +152,12 @@ async def main():
     #await transcribe_audio_service()
     transcribe_task = asyncio.create_task(transcribe_audio_service())
     # Start saving the audio in a separate task
-    save_task = asyncio.create_task(save_audio())
+    #save_task = asyncio.create_task(save_audio())
     # Keep the server running
     await server.wait_closed()
     # Stop the saving process
-    await q.put(None)
-    await save_task
+    #await q.put(None)
+    #await save_task
     await transcribe_task
 
 if __name__ == "__main__":
