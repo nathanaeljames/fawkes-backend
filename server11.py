@@ -3,6 +3,8 @@ import websockets #pip install websockets
 import speech_recognition as sr #pip install speechRecognition
 import io
 import wave
+import datetime
+import json
 from ibm_watson import SpeechToTextV1
 from ibm_watson.websocket import RecognizeCallback, AudioSource
 from threading import Thread
@@ -17,6 +19,10 @@ except ImportError:
 HOST = "localhost"
 PORT = 9001
 active_websockets = set()  # Store active clients
+
+# Dialogue partners
+SPEAKER = "Nathanael"
+SERVER = "Fawkes"
 
 # IBM Watson Speech-to-Text credentials
 IBM_API_KEY = "IYBIxRJeINqwcjOAd0PuFYI6NLyH0qV8hqfh3ziNqtQf"
@@ -35,8 +41,14 @@ class WatsonCallback(RecognizeCallback):
     def on_transcription(self, transcript):
         #print("transcription called")
         print(transcript)
-        if active_websockets:
-            asyncio.run_coroutine_threadsafe(send_message_to_clients(str(transcript)), main_loop)
+        #if active_websockets:
+        #    asyncio.run_coroutine_threadsafe(send_message_to_clients(SPEAKER + ': ' + str(transcript)), main_loop)
+        if 'the time' in str(transcript):
+            print("Asked about the time")
+            strTime = datetime.datetime.now().strftime("%H:%M:%S")    
+            #speak(f"Sir, the time is {strTime}")
+            if active_websockets:
+                asyncio.run_coroutine_threadsafe(send_message_to_clients(SERVER + ': Sir, the time is ' + strTime), main_loop)
 
     def on_connected(self):
         print('Connection was successful')
@@ -57,12 +69,21 @@ class WatsonCallback(RecognizeCallback):
         #asyncio.create_task(send_message_to_clients(str(hypothesis)))
         #loop = asyncio.get_running_loop()
         #loop.call_soon_threadsafe(asyncio.create_task, send_message_to_clients(str(hypothesis)))
-        if active_websockets:
-            asyncio.run_coroutine_threadsafe(send_message_to_clients(str(hypothesis)), main_loop)
+        #if active_websockets:
+        #    asyncio.run_coroutine_threadsafe(send_message_to_clients(SPEAKER + ': ' + str(hypothesis)), main_loop)
 
     def on_data(self, data):
         #print("on_data called")
         print(data)
+        #json_string = '{"speaker": SPEAKER, "final": data.final, "transcript": "New York"}'
+        data_to_send = {
+            "speaker": SPEAKER,
+            "final": data.final,
+            "transcript": data.transcript
+        }
+        json_string = json.dumps(data_to_send)
+        if active_websockets:
+            asyncio.run_coroutine_threadsafe(send_message_to_clients(data), main_loop)        
         #pass
 
     def on_close(self):
@@ -114,7 +135,7 @@ async def receive_audio_service(websocket):
     finally:
         active_websockets.remove(websocket)  # Remove connection when done
         # Save the collected L16 audio data as a WAV file
-        save_as_wav(b''.join(audio_frames), "output.wav")
+        #save_as_wav(b''.join(audio_frames), "output.wav")
 
 async def transcribe_audio_service():
     """Initiates IBM Watson transcription service."""

@@ -159,6 +159,8 @@ async def main():
     await q.put(None)
     await save_task
     await transcribe_task
+    # NOTE this server saves an audio file from websockets but doesn't simultaneously transcode due to queue interruption
+    # (would need a second queue?)
 
 if __name__ == "__main__":
     try:
