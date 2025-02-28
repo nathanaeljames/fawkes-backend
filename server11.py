@@ -40,15 +40,16 @@ class WatsonCallback(RecognizeCallback):
 
     def on_transcription(self, transcript):
         #print("transcription called")
-        print(transcript)
+        #print(transcript)
         #if active_websockets:
         #    asyncio.run_coroutine_threadsafe(send_message_to_clients(SPEAKER + ': ' + str(transcript)), main_loop)
-        if 'the time' in str(transcript):
-            print("Asked about the time")
-            strTime = datetime.datetime.now().strftime("%H:%M:%S")    
+        #if 'the time' in str(transcript):
+        #    print("Asked about the time")
+        #    strTime = datetime.datetime.now().strftime("%H:%M:%S")    
             #speak(f"Sir, the time is {strTime}")
-            if active_websockets:
-                asyncio.run_coroutine_threadsafe(send_message_to_clients(SERVER + ': Sir, the time is ' + strTime), main_loop)
+        #    if active_websockets:
+        #        asyncio.run_coroutine_threadsafe(send_message_to_clients(SERVER + ': Sir, the time is ' + strTime), main_loop)
+        pass
 
     def on_connected(self):
         print('Connection was successful')
@@ -64,8 +65,8 @@ class WatsonCallback(RecognizeCallback):
 
     def on_hypothesis(self, hypothesis):
         #print("hypothesis called")
-        print(hypothesis)
-        #pass
+        #print(hypothesis)
+        pass
         #asyncio.create_task(send_message_to_clients(str(hypothesis)))
         #loop = asyncio.get_running_loop()
         #loop.call_soon_threadsafe(asyncio.create_task, send_message_to_clients(str(hypothesis)))
@@ -78,13 +79,28 @@ class WatsonCallback(RecognizeCallback):
         #json_string = '{"speaker": SPEAKER, "final": data.final, "transcript": "New York"}'
         data_to_send = {
             "speaker": SPEAKER,
-            "final": data.final,
-            "transcript": data.transcript
+            "final": data['results'][0]['final'],
+            "transcript": data['results'][0]['alternatives'][0]['transcript']
         }
         json_string = json.dumps(data_to_send)
         if active_websockets:
-            asyncio.run_coroutine_threadsafe(send_message_to_clients(data), main_loop)        
+            asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)        
         #pass
+        if(data['results'][0]['final']):
+            print("Current speaker is done speaking")
+            # here is where to house all response routines
+            if 'the time' in str(data['results'][0]['alternatives'][0]['transcript']):
+                print("Asked about the time")
+                strTime = datetime.datetime.now().strftime("%H:%M:%S")
+                data_to_send = {
+                    "speaker": SERVER,
+                    "final": "True",
+                    "transcript": 'Sir, the time is ' + strTime
+                }
+                json_string = json.dumps(data_to_send)  
+                #speak(f"Sir, the time is {strTime}")
+                if active_websockets:
+                    asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
 
     def on_close(self):
         print("Connection closed")
