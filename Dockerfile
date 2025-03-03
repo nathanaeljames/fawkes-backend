@@ -13,16 +13,19 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     python3-pip\
     nano\
     git\
-    portaudio19-dev
+    ffmpeg\
+    #portaudio19-dev\
+    espeak-ng
     
 RUN pip3 install\
-    autobahn[twisted]\
+    #autobahn[twisted]\
     websockets\
-    pyttsx3\
-    speechRecognition\
+    #pyttsx3\
+    #speechRecognition\
+    #pyaudio\
+    pydub\
     ibm-watson\
-    ibm_cloud_sdk_core\
-    pyaudio
+    ibm_cloud_sdk_core
 
 #not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
 COPY server*.py README.md ibm-credentials.env ./
