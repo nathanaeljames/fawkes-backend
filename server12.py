@@ -26,13 +26,20 @@ SPEAKER = "Nathanael"
 SERVER = "Fawkes"
 
 # IBM Watson Speech-to-Text credentials
-IBM_API_KEY = "REDACTED_IBM_STT_APIKEY"
-IBM_SERVICE_URL = "https://api.us-south.speech-to-text.watson.cloud.ibm.com/instances/REDACTED_IBM_STT_INSTANCE"
+IBM_API_KEY_STT = "REDACTED_IBM_STT_APIKEY"
+IBM_API_KEY_TTS = "REDACTED_IBM_STT_APIKEY"
+IBM_SERVICE_URL_STT = "https://api.us-south.speech-to-text.watson.cloud.ibm.com/instances/REDACTED_IBM_STT_INSTANCE"
+IBM_SERVICE_URL_TTS = "https://api.us-south.text-to-speech.watson.cloud.ibm.com/instances/REDACTED_IBM_TTS_INSTANCE"
 
 # IBM Watson setup
-authenticator = IAMAuthenticator(IBM_API_KEY)
-stt = SpeechToTextV1(authenticator=authenticator)
-stt.set_service_url(IBM_SERVICE_URL)
+#authenticator = IAMAuthenticator(IBM_API_KEY_STT)
+stt = SpeechToTextV1(authenticator=IAMAuthenticator(IBM_API_KEY_STT))
+stt.set_service_url(IBM_SERVICE_URL_STT)
+
+# IBM Watson setup (TTS)
+#authenticator = IAMAuthenticator(IBM_API_KEY_STT)
+tts = TextToSpeechV1(authenticator=IAMAuthenticator(IBM_API_KEY_STT))
+tts.set_service_url(IBM_SERVICE_URL_TTS)  # Use the TTS-specific service URL
 
 # define callback for the speech to text service
 class WatsonCallback(RecognizeCallback):
