@@ -1,11 +1,13 @@
 import asyncio
 import websockets #pip install websockets
-import speech_recognition as sr #pip install speechRecognition
+#import speech_recognition as sr #pip install speechRecognition
 import io
-import pyttsx3
+#import pyttsx3 #pip install pyttsx3
 import wave
+from pydub import AudioSegment
 import datetime
 import json
+import subprocess
 from ibm_watson import SpeechToTextV1, TextToSpeechV1
 from ibm_watson.websocket import RecognizeCallback, AudioSource
 from threading import Thread
@@ -198,20 +200,6 @@ async def stream_tts_audio(text):
     # Send "EOF" signal to indicate the end of the audio stream
     if active_websockets:
         await asyncio.gather(*[ws.send("EOF") for ws in active_websockets])
-
-#for quality testing purposes
-async def save_audio():
-    """Retrieve audio data from the queue and save it to a WAV file."""
-    with wave.open('output.wav', 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(16000)
-        print(f"Saving audio to output.wav...")
-        while True:
-            audio_data = await asyncio.to_thread(q.get)  # Fetch from queue in non-blocking way
-            if audio_data is None:  # Stop signal
-                break
-            wf.writeframes(audio_data)  # Write L16 PCM data to WAV file
 
 async def main():
     global main_loop

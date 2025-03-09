@@ -113,7 +113,7 @@ class WatsonCallback(RecognizeCallback):
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
                 if active_websockets:
-                    asyncio.run_coroutine_threadsafe(stream_tts_audio(response_text), main_loop)
+                    asyncio.run_coroutine_threadsafe(debug_stream_tts_audio(response_text), main_loop)
                 #save_audio_segment(response_text)
 
     def on_close(self):
@@ -179,41 +179,125 @@ async def send_message_to_clients(message):
     else:
         print("No active clients to send messages to.")
 
-def generate_speech(text, voice="en+f3", speed=150, pitch=50):
-    command = [
-        'espeak-ng',
-        '-v', voice,          # Voice selection
-        '-s', str(speed),     # Speed
-        '-p', str(pitch),     # Pitch
-        '-w', '/dev/stdout',  # Output raw PCM data to stdout
-        text
-    ]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # Capture the PCM data from stdout (raw audio data)
-    audio_data, _ = process.communicate()
-    # Return the raw audio data directly
-    return audio_data
-
-def save_audio_segment(text):
-    audio_data = generate_speech(text)
-    # Convert the raw PCM data to an AudioSegment
-    audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="wav")
-    audio_segment.export("output_tts.wav", format="wav")
-
 async def stream_tts_audio(text):
     """Streams generated TTS audio to connected WebSocket clients."""
     print(f"Streaming TTS for: {text}")
-    audio_data = generate_speech(text)
+    
+    try:
+        audio_data = generate_speech(text)  # Generate speech audio
+        if audio_data is None:
+            print("❌ Failed to generate speech audio. Exiting function.")
+            return "AUDIO_GENERATION_FAILED"
+    except Exception as e:
+        print(f"❌ Exception in generate_speech: {e}")
+        return "EXCEPTION_IN_GENERATE_SPEECH"
+
     chunk_size = 1024
-    
-    for i in range(0, len(audio_data), chunk_size):
-        chunk = audio_data[i:i+chunk_size]
+    print(f"Active clients: {len(active_websockets)}")
+    print(f"Audio data length: {len(audio_data)} bytes")  
+
+    if len(audio_data) == 0:
+        print("❌ ERROR: Audio data is empty! Exiting function.")
+        return "EMPTY_AUDIO"
+
+    # REMOVE CLOSED CONNECTIONS
+    active_websockets_copy = active_websockets.copy()
+    for ws in active_websockets_copy:
+        if ws.closed:
+            print("⚠️ Removing closed WebSocket")
+            active_websockets.remove(ws)
+
+    if not active_websockets:
+        print("❌ No active WebSockets available. Exiting function.")
+        return "NO_ACTIVE_WEBSOCKETS"
+
+    print("✅ Starting loop to send audio chunks...")
+
+    try:
+        for i in range(0, len(audio_data), chunk_size):
+            chunk = audio_data[i:i+chunk_size]
+            print(f"🟢 Sending chunk {i // chunk_size + 1}: {len(chunk)} bytes")
+
+            if active_websockets:
+                for ws in active_websockets:
+                    if not ws.closed:
+                        try:
+                            await ws.send(chunk)
+                            print(f"✅ Sent {len(chunk)} bytes to clients")
+                        except Exception as e:
+                            print(f"❌ WebSocket send error: {e}")
+                            return "WEBSOCKET_SEND_ERROR"
+            else:
+                print("⚠️ No active clients to send messages to.")
+                return "NO_ACTIVE_CLIENTS"
+            
+            await asyncio.sleep(0.05)  # Simulating real-time streaming
+
         if active_websockets:
-            await asyncio.gather(*[ws.send(chunk) for ws in active_websockets if not ws.closed])
-        await asyncio.sleep(0.1)  # Simulating real-time streaming
-    
-    if active_websockets:
-        await asyncio.gather(*[ws.send("EOF") for ws in active_websockets])
+            print("✅ Sending EOF")
+            await asyncio.gather(*[ws.send(b"EOF") for ws in active_websockets])
+
+    except Exception as e:
+        print(f"❌ Exception in sending audio: {e}")
+        return "EXCEPTION_IN_SENDING_AUDIO"
+
+    print("✅ Finished streaming audio")
+    return "SUCCESS"
+
+# Call the function and explicitly print the return value
+async def debug_stream_tts_audio(text):
+    result = await stream_tts_audio(text)
+    print(f"🔍 Function returned: {result}")    
+
+def generate_speech(text, voice="en+f3", speed=150, pitch=50):
+    """Generate speech using espeak-ng and return properly formatted WAV audio."""
+    command = [
+        'espeak-ng',
+        '-v', voice,
+        '-s', str(speed),
+        '-p', str(pitch),
+        '--stdout',
+        text
+    ]
+
+    print("Running espeak-ng subprocess...")  # Debugging
+
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        audio_data, error = process.communicate(timeout=5)  # Timeout ensures it doesn't hang
+
+        print("espeak-ng process completed.")  # Debugging
+
+        if process.returncode != 0:
+            print(f"espeak-ng error: {error.decode().strip()}")
+            return None  # Ensure failure returns None
+
+        if not audio_data:
+            print("espeak-ng returned empty audio data.")
+            return None
+
+        print(f"espeak-ng produced {len(audio_data)} bytes of raw audio.")  # Debugging
+
+        # Convert raw PCM to WAV using pydub
+        audio_segment = AudioSegment.from_raw(io.BytesIO(audio_data), sample_width=2, frame_rate=22050, channels=1)
+
+        buffer = io.BytesIO()
+        audio_segment.export(buffer, format="wav")
+        return buffer.getvalue()
+
+    except subprocess.TimeoutExpired:
+        print("espeak-ng process timed out.")
+        return None
+
+    except Exception as e:
+        print(f"Error in generate_speech: {e}")
+        return None
+
+def save_audio_segment(audio_data):
+    #audio_data = generate_speech(text)
+    # Convert the raw PCM data to an AudioSegment
+    audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="wav")
+    audio_segment.export("output_tts_01.wav", format="wav")
 
 async def main():
     global main_loop
