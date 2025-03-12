@@ -104,6 +104,7 @@ class WatsonCallback(RecognizeCallback):
                 print("Asked about the time")
                 strTime = datetime.datetime.now().strftime("%H:%M:%S")
                 response_text = f"Sir, the time is {strTime}"
+                #response_text = "The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again, just as young Arthur wanted. The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again, just as young Arthur wanted."
                 data_to_send = {
                     "speaker": SERVER,
                     "final": "True",
@@ -134,7 +135,7 @@ class WatsonCallback(RecognizeCallback):
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
                 if active_websockets:
-                    asyncio.run_coroutine_threadsafe(stream_tts_audio(response_text), main_loop)
+                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
 
     def on_close(self):
         print("Connection closed")
@@ -163,6 +164,7 @@ async def receive_audio_service(websocket):
     """Handles incoming WebSocket connections."""
     print("Client connected.")
     active_websockets.add(websocket)  # Store the connection
+    #asyncio.create_task(delayed_tts())
     try:
         async for message in websocket:
             if isinstance(message, bytes):
@@ -213,10 +215,14 @@ def generate_speech(text, voice="en-US_AllisonV3Voice", audio_format="audio/wav"
         # Log the type of response content
         print(f"Type of audio_data: {type(audio_data)}")
         #return audio_data  # Returns raw WAV audio data
-        if audio_data: # Returns raw PCM audio data
-            audio_segment = AudioSegment.from_wav(io.BytesIO(audio_data))
-            pcm_data = audio_segment.set_channels(1).set_sample_width(2).set_frame_rate(16000)
-            return pcm_data.raw_data
+        #with open("tts_output_wav.wav", "wb") as f:
+        #    f.write(audio_data)
+        #print("Saved generated speech to tts_output_wav.wav")
+        if audio_data:
+            audio_segment = AudioSegment.from_wav(io.BytesIO(audio_data))  # Load as WAV
+            pcm_data = audio_segment.set_channels(1).set_sample_width(2).set_frame_rate(16000)  # Ensure PCM 16-bit mono
+            #save_audio_segment(pcm_data)
+            return pcm_data.raw_data  # Return raw PCM data
         return None
     except Exception as e:
         print(f"Watson TTS error: {e}")
@@ -233,27 +239,40 @@ async def stream_tts_audio(text):
         return
 
     # Save to a WAV file for testing
-    with open("test_output.wav", "wb") as f:
-        f.write(audio_data)
-    print("Saved generated speech to test_output.wav")
+    #with open("test_output.wav", "wb") as f:
+    #    f.write(audio_data)
+    #print("Saved generated speech to test_output.wav")
 
     chunk_size = 1024
     print(f"Audio data length: {len(audio_data)} bytes")
 
     for i in range(0, len(audio_data), chunk_size):
         chunk = audio_data[i:i+chunk_size]
-        print(f"Sending chunk {i // chunk_size + 1}: {len(chunk)} bytes")
+        #print(f"Sending chunk {i // chunk_size + 1}: {len(chunk)} bytes")
 
         if active_websockets:
             await asyncio.gather(*[ws.send(chunk) for ws in active_websockets if ws.close_code is None])
         else:
             print("No active clients to send messages to.")
         
-        await asyncio.sleep(0.05)
+        #await asyncio.sleep(0.01)
+        await asyncio.sleep(0.015)
 
     if active_websockets:
         print("Sending EOF")
         await asyncio.gather(*[ws.send(b"EOF") for ws in active_websockets])
+
+def save_audio_segment(audio_data):
+    #audio_data = generate_speech(text)
+    # Convert the raw PCM data to an AudioSegment
+    audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="wav")
+    audio_segment.export("tts_output_pcm.wav", format="wav")
+
+async def delayed_tts():
+    """Waits 5 seconds and then calls stream_tts_audio."""
+    await asyncio.sleep(5)
+    response_text = "The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again, just as young Arthur wanted. The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again, just as young Arthur wanted."
+    await stream_tts_audio(response_text)
 
 async def main():
     global main_loop
