@@ -1,6 +1,6 @@
 import asyncio
 import websockets #pip install websockets
-import speech_recognition as sr #pip install speechRecognition
+#import speech_recognition as sr #pip install speechRecognition
 import io
 import wave
 from ibm_watson import SpeechToTextV1
@@ -132,7 +132,8 @@ async def save_audio():
     with wave.open('output.wav', 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
-        wf.setframerate(16000)
+        wf.setframerate(44100)
+       #16000, 22050, 44100
 
         print(f"Saving audio to output.wav...")
 
