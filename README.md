@@ -3,10 +3,10 @@ Basic Python backend for Fawkes chatbot
 - [X] Set up dockerfile for fast environment build
 - [X] Figure out remote git issues
 - [X] Receive audio data via websocket
-- [ ] Relay audio to Google Speech
+- [ ] ~~Relay audio to Google Speech~~
 - [X] Send sentence-by-sentence transcription to client via websockets (as text)
 - [X] Send JSON data to client, display as text
-- [ ] ~~Stream audio to client via websockets, play it automatically~~
+- [X] Stream audio to client via websockets, play it automatically
 - [X] Relay audio live to Watson
 - [X] Send live transcription with probabilities to client via websockets
 - [X] Capture audio sample for quality check
