@@ -22,6 +22,7 @@ except ImportError:
 HOST = "localhost"
 PORT = 9001
 active_websockets = set()  # Store active clients
+clientSideTTS = 'false'
 
 # Dialogue partners
 SPEAKER = "Nathanael"
@@ -96,7 +97,7 @@ class WatsonCallback(RecognizeCallback):
                 if active_websockets:
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
-                if active_websockets:
+                if not clientSideTTS and active_websockets:
                     main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
             if 'your name' in transcript_text.lower():
                 print("Asked about my name")
@@ -111,7 +112,7 @@ class WatsonCallback(RecognizeCallback):
                 if active_websockets:
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
-                if active_websockets:
+                if not clientSideTTS and active_websockets:
                     main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
 
     def on_close(self):
@@ -153,6 +154,8 @@ async def receive_audio_service(websocket):
                     pass # discard
             else:
                 print(f"Text message received: {message}")
+                if(message == 'clientSideTTS'):
+                    clientSideTTS = 'true'
     except websockets.exceptions.ConnectionClosed:
         print("Client disconnected.")
     except Exception as e:
