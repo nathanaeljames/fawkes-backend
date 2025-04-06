@@ -10,17 +10,22 @@ Basic Python backend for Fawkes chatbot
 - [X] Relay audio live to Watson
 - [X] Send live transcription with probabilities to client via websockets
 - [X] Capture audio sample for quality check
-- [ ] Resolve Docker network connectivity issues
-- [ ] Docker network/ remote server test
+- [X] Resolve Docker network connectivity issues
+- [X] Docker network/ remote server test
 - [X] Basic response framework (name/ date/ wikipedia)
+- [X] Implement own local TTS model
+- [X] Zero shot voice cloning functionality
+- [X] Custom voice
 - [ ] Implement own local STT model
-- [ ] Implement own local TTS model
-- [ ] ChatGPT/ Deepseek integration
+- [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
+- [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
 - [ ] Speaker recognition
 - [ ] Multiple speaker memory
+- [ ] "Skills framework" (Rasa?)
 - [ ] Prompting and phonetic pangram collection
-- [ ] Custom voice
-- [ ] Live model retraining against prompts and pangrams
+- [ ] ~~ChatGPT/ Deepseek integration~~
+- [ ] Langchain routing and LLM referal
+- [ ] RAG use case
 - [ ] Interruptability
 
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.

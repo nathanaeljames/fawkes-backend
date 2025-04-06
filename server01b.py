@@ -1,3 +1,4 @@
+# This server replaces Watson TTS with piper
 import asyncio
 import websockets #pip install websockets
 #import speech_recognition as sr #pip install speechRecognition
@@ -12,6 +13,10 @@ from ibm_watson import SpeechToTextV1, TextToSpeechV1
 from ibm_watson.websocket import RecognizeCallback, AudioSource
 from threading import Thread
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
+#import piper
+#print(dir(piper))  # Check if 'tts' is listed
+#from piper import PiperVoice  # Install with `pip install piper-tts`
+from piper.voice import PiperVoice
 
 try:
     from Queue import Queue, Full
@@ -22,6 +27,7 @@ except ImportError:
 HOST = "localhost"
 PORT = 9001
 active_websockets = set()  # Store active clients
+clientSideTTS = False
 
 # Dialogue partners
 SPEAKER = "Nathanael"
@@ -30,17 +36,27 @@ SERVER = "Fawkes"
 # IBM Watson Speech-to-Text (STT) Credentials
 IBM_STT_API_KEY = "REDACTED_IBM_STT_APIKEY"
 IBM_STT_SERVICE_URL = "https://api.us-south.speech-to-text.watson.cloud.ibm.com/instances/REDACTED_IBM_STT_INSTANCE"
-# IBM Watson Text-to-Speech (TTS) Credentials
-IBM_TTS_API_KEY = "REDACTED_IBM_TTS_APIKEY"
-IBM_TTS_SERVICE_URL = "https://api.us-south.text-to-speech.watson.cloud.ibm.com/instances/REDACTED_IBM_TTS_INSTANCE"
 # Initialize IBM Watson STT
 stt_authenticator = IAMAuthenticator(IBM_STT_API_KEY)
 stt = SpeechToTextV1(authenticator=stt_authenticator)
 stt.set_service_url(IBM_STT_SERVICE_URL)
-# Initialize IBM Watson TTS
-tts_authenticator = IAMAuthenticator(IBM_TTS_API_KEY)
-tts = TextToSpeechV1(authenticator=tts_authenticator)
-tts.set_service_url(IBM_TTS_SERVICE_URL)
+
+# Load Piper TTS with northern_english_male (low) voice
+#piper_model_path = "/root/models/en_GB-northern_english_male-medium.onnx"
+#tts = PiperTTS(model_path=piper_model_path)
+
+#voice = PiperVoice(
+#    model_path="/root/models/en_GB-northern_english_male-medium.onnx",  # Set this to the path of your .onnx model
+#    config_path="/root/models/en_GB-northern_english_male-medium.onnx.json",  # Set this to your Piper config file
+#)
+#voice = piper.load_voice("/root/models/en_GB-northern_english_male-medium.onnx", "/root/models/en_GB-northern_english_male-medium.onnx.json")
+# Load the voice model
+#model_path = '/root/models/en_GB-northern_english_male-medium.onnx'
+#voice = PiperVoice.load(model_path)
+
+# Load the Piper model
+model_path = "/root/models/piper-tts/en_GB-northern_english_male-medium.onnx"
+pipervoice = PiperVoice.load(model_path)
 
 # define callback for the speech to text service
 class WatsonCallback(RecognizeCallback):
@@ -48,16 +64,6 @@ class WatsonCallback(RecognizeCallback):
         RecognizeCallback.__init__(self)
 
     def on_transcription(self, transcript):
-        #print("transcription called")
-        #print(transcript)
-        #if active_websockets:
-        #    asyncio.run_coroutine_threadsafe(send_message_to_clients(SPEAKER + ': ' + str(transcript)), main_loop)
-        #if 'the time' in str(transcript):
-        #    print("Asked about the time")
-        #    strTime = datetime.datetime.now().strftime("%H:%M:%S")    
-            #speak(f"Sir, the time is {strTime}")
-        #    if active_websockets:
-        #        asyncio.run_coroutine_threadsafe(send_message_to_clients(SERVER + ': Sir, the time is ' + strTime), main_loop)
         pass
 
     def on_connected(self):
@@ -73,19 +79,11 @@ class WatsonCallback(RecognizeCallback):
         print('Service is listening')
 
     def on_hypothesis(self, hypothesis):
-        #print("hypothesis called")
-        #print(hypothesis)
         pass
-        #asyncio.create_task(send_message_to_clients(str(hypothesis)))
-        #loop = asyncio.get_running_loop()
-        #loop.call_soon_threadsafe(asyncio.create_task, send_message_to_clients(str(hypothesis)))
-        #if active_websockets:
-        #    asyncio.run_coroutine_threadsafe(send_message_to_clients(SPEAKER + ': ' + str(hypothesis)), main_loop)
 
     def on_data(self, data):
-        #print("on_data called")
         print(data)
-        #json_string = '{"speaker": SPEAKER, "final": data.final, "transcript": "New York"}'
+        # Establish transcript JSON
         transcript_text = data['results'][0]['alternatives'][0]['transcript']
         is_final = data['results'][0]['final']
         data_to_send = {
@@ -94,9 +92,9 @@ class WatsonCallback(RecognizeCallback):
             "transcript": transcript_text
         }
         json_string = json.dumps(data_to_send)
+        # Send transcript as text/ JSON
         if active_websockets:
             asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)        
-        #pass
         if(is_final):
             print("Current speaker is done speaking")
             # here is where to house all response routines
@@ -110,27 +108,27 @@ class WatsonCallback(RecognizeCallback):
                     "transcript": response_text
                 }
                 json_string = json.dumps(data_to_send)  
-                #speak(f"Sir, the time is {strTime}")
+                # Send response as text/ JSON
                 if active_websockets:
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
-                if active_websockets:
-                    asyncio.run_coroutine_threadsafe(stream_tts_audio(response_text), main_loop)
+                if not clientSideTTS and active_websockets:
+                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
             if 'your name' in transcript_text.lower():
                 print("Asked about my name")
-                response_text = f"Hello {SPEAKER}, my name is {SERVER}"
+                response_text = f"Sir, my name is {SERVER}"
                 data_to_send = {
                     "speaker": SERVER,
                     "final": "True",
                     "transcript": response_text
                 }
                 json_string = json.dumps(data_to_send)
-                # Send response as TTS audio
-                if active_websockets:
-                    asyncio.run_coroutine_threadsafe(stream_tts_audio(response_text), main_loop)
-                # Send response as text
+                # Send response as text/ JSON
                 if active_websockets:
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
+                # Send response as TTS audio
+                if not clientSideTTS and active_websockets:
+                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
 
     def on_close(self):
         print("Connection closed")
@@ -149,7 +147,7 @@ q = Queue(maxsize=int(round(BUF_MAX_SIZE / CHUNK)))
 audio_source = AudioSource(q, True, True)
 
 # this function will initiate the recognize service and pass in the AudioSource
-def recognize_using_weboscket(*args):
+def recognize_using_websocket(*args):
     stt.recognize_using_websocket(audio=audio_source,
                                 content_type='audio/l16; rate=16000',
                                 recognize_callback=WatsonCallback(),
@@ -163,8 +161,6 @@ async def receive_audio_service(websocket):
         async for message in websocket:
             if isinstance(message, bytes):
                 #print("Binary message received: {0} bytes".format(len(message)))
-                #await websocket.send(message)
-                #audio_frames.append(message)  # Store raw PCM data
                 try:
                     q.put(message)
                     #print("Received audio data and added to queue")
@@ -173,19 +169,20 @@ async def receive_audio_service(websocket):
                     pass # discard
             else:
                 print(f"Text message received: {message}")
-                #await websocket.send(f"Received text: {message}")
+                if(message == 'clientSideTTS'):
+                    global clientSideTTS
+                    clientSideTTS = True
+                    print(f"Client has specified using client-side TTS.")
     except websockets.exceptions.ConnectionClosed:
         print("Client disconnected.")
     except Exception as e:
         print(f"Error: {e}")
     finally:
         active_websockets.remove(websocket)  # Remove connection when done
-        # Save the collected L16 audio data as a WAV file
-        #save_as_wav(b''.join(audio_frames), "output.wav")
 
 async def transcribe_audio_service():
     """Initiates IBM Watson transcription service."""
-    recognize_thread = Thread(target=recognize_using_weboscket, args=())
+    recognize_thread = Thread(target=recognize_using_websocket, args=())
     recognize_thread.start()
 
 async def send_message_to_clients(message):
@@ -195,33 +192,27 @@ async def send_message_to_clients(message):
     else:
         print("No active clients to send messages to.")
 
-def generate_speech(text, voice="en-US_AllisonV3Voice", audio_format="audio/wav"):
-    """Generate speech using IBM Watson Text-to-Speech and return WAV formatted audio."""
-    try:
-        response = tts.synthesize(
-            text,
-            voice=voice,
-            accept=audio_format
-        ).get_result()
-
-        audio_data = response.content
-        print(f"Watson TTS returned {len(audio_data)} bytes.")
-        # Log the type of response content
-        print(f"Type of audio_data: {type(audio_data)}")
-        # Save to a WAV file for testing
-        with open("test_output.wav", "wb") as f:
-            f.write(audio_data)
-        print("Saved generated speech to test_output.wav")
-        return audio_data  # Returns raw WAV audio data
-    except Exception as e:
-        print(f"Watson TTS error: {e}")
-        return None
-
-# Stream IBM Watson TTS audio back to WebSocket clients
 async def stream_tts_audio(text):
     """Streams generated TTS audio to connected WebSocket clients."""
     print(f"Streaming TTS for: {text}")
-    audio_data = generate_speech(text)
+    
+    # Create an in-memory buffer
+    audio_stream = io.BytesIO()
+
+    # Generate speech using Piper (writing directly to a wave file in memory)
+    with wave.open(audio_stream, "wb") as wav_file:
+        wav_file.setnchannels(1)  # Mono
+        wav_file.setsampwidth(2)  # 16-bit PCM
+        wav_file.setframerate(pipervoice.config.sample_rate)  # Use Piper's native sample rate
+        pipervoice.synthesize(text, wav_file)
+
+    # Convert Piper output to raw PCM at 16kHz
+    audio_stream.seek(0)
+    audio = AudioSegment.from_wav(audio_stream)
+    audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)  # 16kHz, mono, 16-bit PCM
+
+    # Get raw PCM data
+    audio_data = audio.raw_data
 
     if audio_data is None:
         print("Failed to generate speech audio. Exiting function.")
@@ -230,81 +221,32 @@ async def stream_tts_audio(text):
     chunk_size = 1024
     print(f"Audio data length: {len(audio_data)} bytes")
 
-    if not active_websockets:
-        print("No active WebSockets available. Exiting function.")
-        return
-
     for i in range(0, len(audio_data), chunk_size):
         chunk = audio_data[i:i+chunk_size]
-        print(f"Sending chunk {i // chunk_size + 1}: {len(chunk)} bytes")
+        #print(f"Sending chunk {i // chunk_size + 1}: {len(chunk)} bytes")
 
-        for ws in active_websockets.copy():
-            if ws.closed:
-                print("Skipping closed WebSocket.")
-                active_websockets.remove(ws)
-                continue  # Skip closed WebSockets
-
-            try:
-                if ws.state != websockets.protocol.State.OPEN:
-                    print(f"WebSocket {ws} is not OPEN. Skipping.")
-                    active_websockets.remove(ws)
-                    continue
-
-                await ws.send(chunk)  # Send binary chunk
-                print(f"Sent {len(chunk)} bytes to client")
-
-            except Exception as e:
-                print(f"WebSocket send error: {e}")
-                active_websockets.remove(ws)  # Remove failed connections
-
-        await asyncio.sleep(0.05)  # Simulating real-time streaming
+        if active_websockets:
+            await asyncio.gather(*[ws.send(chunk) for ws in active_websockets if ws.close_code is None])
+        else:
+            print("No active clients to send messages to.")
+        
+        await asyncio.sleep(0.015)
 
     if active_websockets:
         print("Sending EOF")
-        await asyncio.gather(*[ws.send(b"EOF") for ws in active_websockets if not ws.closed])
-
-AUDIO_FILE_PATH = "output2.wav"
-
-async def stream_audio(websocket):
-    """Stream an audio file in chunks to the WebSocket client."""
-    print("Client connected.")
-
-    chunk_size = 1024  # Send 1024-byte chunks
-
-    while True:
-        try:
-            with open(AUDIO_FILE_PATH, "rb") as audio_file:
-                while chunk := audio_file.read(chunk_size):
-                    print(f"Sending chunk of size {len(chunk)} bytes")
-                    await websocket.send(chunk)  # Send binary data
-                    await asyncio.sleep(0.05)  # Simulate real-time streaming
-
-            print("Finished streaming. Sending EOF")
-            await websocket.send(b"EOF")  # Send EOF signal
-
-        except Exception as e:
-            print(f"Error streaming audio: {e}")
-
-        print("Client disconnected.")
+        await asyncio.gather(*[ws.send(b"EOF") for ws in active_websockets])
 
 async def main():
     global main_loop
     main_loop = asyncio.get_event_loop()  # Store the event loop
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{HOST}:{PORT}")
-    #server = await websockets.serve(receive_audio_service, HOST, PORT)
-    server = await websockets.serve(stream_audio, HOST, PORT)
-    # Start the transcription process
-    #await transcribe_audio_service()
-    #transcribe_task = asyncio.create_task(transcribe_audio_service())
-    # Start saving the audio in a separate task
-    #save_task = asyncio.create_task(save_audio())
-    # Keep the server running
+    server = await websockets.serve(receive_audio_service, HOST, PORT)
+    transcribe_task = asyncio.create_task(transcribe_audio_service())
+    # Start and keep the server running
     await server.wait_closed()
-    # Stop the saving process
-    #await q.put(None)
-    #await save_task
-    #await transcribe_task
+    # Start the transcription process
+    await transcribe_task
 
 if __name__ == "__main__":
     try:

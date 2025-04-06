@@ -9,26 +9,31 @@ USER root
 #update upgrade install must be on same line or will fail due to caching
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get upgrade -y && apt-get install -y\
+    #portaudio19-dev\
+    #espeak-ng\
     python3\
     python3-pip\
     nano\
     git\
-    ffmpeg\
-    #portaudio19-dev\
-    espeak-ng
+    ffmpeg
     
-RUN pip3 install\
+RUN pip3 install \
     #autobahn[twisted]\
-    websockets\
     #pyttsx3\
     #speechRecognition\
     #pyaudio\
-    pydub\
-    ibm-watson\
-    ibm_cloud_sdk_core
+    websockets \
+    pydub \
+    ibm-watson \
+    ibm_cloud_sdk_core \
+    piper-tts
+RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#RUN pip3 install torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip3 install TTS
 
-#not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable version
-COPY server*.py README.md ibm-credentials.env ./
+
+#not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable versions
+COPY server*.py README.md ./
 COPY . .
 
 EXPOSE 9001
