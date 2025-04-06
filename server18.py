@@ -1,3 +1,4 @@
+# This server is the first fully functional STT/TTS proof-of-concept using IBM Watson
 import asyncio
 import websockets #pip install websockets
 #import speech_recognition as sr #pip install speechRecognition
