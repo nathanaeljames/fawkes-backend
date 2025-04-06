@@ -1,4 +1,4 @@
-# This server replaces Watson TTS with piper and adds Coqui for zero-shot voice cloning
+# This server uses Coqui for zero-shot voice cloning from precomputed speaker embedding/ gpt latent files
 import asyncio
 import websockets #pip install websockets
 #import speech_recognition as sr #pip install speechRecognition
@@ -142,7 +142,8 @@ class WatsonCallback(RecognizeCallback):
                 # Send response as TTS audio
                 if not clientSideTTS and active_websockets:
                     #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
-                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio(response_text,'/root/fawkes/audio_samples/neilgaiman_01.wav'))
+                    #main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio(response_text,'/root/fawkes/audio_samples/neilgaiman_01.wav'))
+                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio('neil_gaiman',response_text))
 
     def on_close(self):
         print("Connection closed")
@@ -252,7 +253,19 @@ async def stream_tts_audio(text):
 #    embedding = xtts_model.get_speaker_embedding(audio_path)
 #    np.save(save_path, embedding)
 
-async def stream_xtts_audio(text, audio_sample_path):
+def load_speakers_into_manager():
+    """
+    Load all .pt files in the speakers directory into speaker_manager.
+    """
+    for pt_file in SPEAKERS_DIR.glob("*.pt"):
+        data = torch.load(pt_file, map_location="cpu")
+        xtts_model.speaker_manager.speakers[pt_file.stem] = {
+            "gpt_cond_latent": data["gpt_cond_latent"],
+            "speaker_embedding": data["speaker_embedding"]
+        }
+    print(f"Loaded {len(xtts_model.speaker_manager.speakers)} speakers into speaker_manager.")
+
+async def stream_xtts_audio(speaker_name, text):
     """Generates speech using Coqui XTTS and streams it over WebSockets."""
     print(f"Streaming XTTS for: {text}")
 
@@ -261,37 +274,38 @@ async def stream_xtts_audio(text, audio_sample_path):
     # Synthesize speech using XTTS (outputs 24kHz audio)
     #audio_wav = xtts_model.tts(text=text, speaker_wav=audio_sample_path, language="en")
     #audio_wav = xtts_model.tts_with_vc(text=text, speaker_wav=audio_sample_path, language="en")
-    audio_wav_dict = xtts_model.synthesize(
+    speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
+
+    if speaker_data is None:
+        raise ValueError(f"Speaker '{speaker_name}' not found in speaker_manager.")
+
+    chunks = xtts_model.inference_stream(
         text=text,
-        config=xtts_config,
-        speaker_wav=audio_sample_path,
-        language="en"
+        language="en",
+        gpt_cond_latent=speaker_data["gpt_cond_latent"].to(xtts_model.device),
+        speaker_embedding=speaker_data["speaker_embedding"].to(xtts_model.device),
+        stream_chunk_size=512,  # optional, tune for latency/quality
     )
 
-    audio_wav_np = audio_wav_dict["wav"]  # NumPy float32 array
-    sample_rate = 24000  # XTTS default
+    for chunk in chunks:
+        # chunk is a NumPy float32 array at 24kHz
+        if chunk is None or len(chunk) == 0:
+            continue
 
-    # Write NumPy array to BytesIO as WAV
-    buffer = io.BytesIO()
-    sf.write(buffer, audio_wav_np, samplerate=sample_rate, format="WAV")
-    buffer.seek(0)
+        chunk_np = chunk.cpu().numpy()
 
-    # Convert to 16kHz mono for streaming
-    audio = AudioSegment.from_wav(buffer)
-    audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-    audio_data = audio.raw_data
+        # Convert to 16kHz mono PCM
+        pcm_buffer = io.BytesIO()
+        sf.write(pcm_buffer, chunk_np, samplerate=24000, format="WAV")
+        pcm_buffer.seek(0)
+        audio = AudioSegment.from_wav(pcm_buffer)
+        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+        audio_data = audio.raw_data
 
-    if not audio_data:
-        print("Failed to generate speech audio. Exiting function.")
-        return
-    
-    chunk_size = 1024
-    
-    for i in range(0, len(audio_data), chunk_size):
-        chunk = audio_data[i:i+chunk_size]
+        # Send as WebSocket chunk
         if active_websockets:
-            await asyncio.gather(*[ws.send(chunk) for ws in active_websockets if ws.close_code is None])
-        await asyncio.sleep(0.015)
+            await asyncio.gather(*[ws.send(audio_data) for ws in active_websockets if ws.close_code is None])
+        await asyncio.sleep(0.015)  # keep it snappy; you can tune this delay
     
     if active_websockets:
         print("Sending EOF")
@@ -300,6 +314,8 @@ async def stream_xtts_audio(text, audio_sample_path):
 async def main():
     global main_loop
     main_loop = asyncio.get_event_loop()  # Store the event loop
+    #load all speakers one time into dictionary
+    load_speakers_into_manager()
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{HOST}:{PORT}")
     server = await websockets.serve(receive_audio_service, HOST, PORT)
