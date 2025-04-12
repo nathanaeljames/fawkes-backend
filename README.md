@@ -15,6 +15,7 @@ Basic Python backend for Fawkes chatbot
 - [X] Basic response framework (name/ date/ wikipedia)
 - [X] Implement own local TTS model
 - [X] Zero shot voice cloning functionality
+- [X] Voice cloning from speaker embeds/ gpt latents (as .pt files)
 - [X] Custom voice
 - [ ] Implement own local STT model
 - [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)

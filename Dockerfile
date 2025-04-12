@@ -27,6 +27,8 @@ RUN pip3 install \
     ibm-watson \
     ibm_cloud_sdk_core \
     piper-tts\
+    scipy\
+    soundfile\
     transformers==4.35.2
 RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
 #RUN pip3 install torch --index-url https://download.pytorch.org/whl/cpu

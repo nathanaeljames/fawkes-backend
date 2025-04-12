@@ -129,7 +129,7 @@ class WatsonCallback(RecognizeCallback):
             if 'your name' in transcript_text.lower():
                 print("Asked about my name")
                 #response_text = f"Sir, my name is {SERVER}"
-                response_text = "My name is Neil Richard Esteban Gaiman."
+                response_text = "My name is Sofía Margarita Vergara Vergara."
                 data_to_send = {
                     "speaker": SERVER,
                     "final": "True",
@@ -140,10 +140,20 @@ class WatsonCallback(RecognizeCallback):
                 if active_websockets:
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
-                if not clientSideTTS and active_websockets:
+                #if not clientSideTTS and active_websockets:
                     #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
                     #main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio(response_text,'/root/fawkes/audio_samples/neilgaiman_01.wav'))
-                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio('neil_gaiman',response_text))
+                #    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio('Compiling response, please wait a moment...'))
+                #    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio('neil_gaiman',response_text))
+
+                if not clientSideTTS and active_websockets:
+                    async def speak_response_sequentially():
+                        await stream_tts_audio("Please wait a moment...")
+                        await stream_xtts_audio("sofia_vergara", response_text)
+
+                    main_loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(speak_response_sequentially())
+                    )
 
     def on_close(self):
         print("Connection closed")
