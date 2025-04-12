@@ -36,5 +36,5 @@ def save_speaker_representation(wav_path: Path, speaker_id: str):
     print(f"Saved speaker data for '{speaker_id}' to {save_path}")
 
 if __name__ == "__main__":
-    wav_file = Path("/root/fawkes/audio_samples/neilgaiman_01.wav")
-    save_speaker_representation(wav_file, "neil_gaiman")
+    wav_file = Path("/root/fawkes/audio_samples/sofia_vergara.wav")
+    save_speaker_representation(wav_file, "sofia_vergara")

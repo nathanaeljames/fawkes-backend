@@ -1,5 +1,6 @@
-# This server uses Coqui for zero-shot voice cloning from precomputed speaker embedding/ gpt latent files
+# This server probably doesn't function, abandoned branch before realizing I needed to massively restructure the code
 import asyncio
+from asyncio import Queue
 import websockets #pip install websockets
 #import speech_recognition as sr #pip install speechRecognition
 import io
@@ -25,6 +26,7 @@ from TTS.tts.models.xtts import Xtts
 import numpy as np
 import soundfile as sf
 from pathlib import Path
+from collections import defaultdict
 
 try:
     from Queue import Queue, Full
@@ -35,11 +37,15 @@ except ImportError:
 #HOST = "localhost"
 HOST = "0.0.0.0"
 PORT = 9001
-active_websockets = set()  # Store active clients
+#active_websockets = set()  # Store active clients
+active_websockets = {}            # client_id -> websocket
+incoming_audio_queues = {}        # client_id -> asyncio.Queue
+outgoing_audio_queues = {}        # client_id -> asyncio.Queue
 clientSideTTS = False
 
 # Dialogue partners
 SPEAKER = "Nathanael"
+client_id = "client_1" # Assuming only one client for now
 SERVER = "Fawkes"
 
 # IBM Watson Speech-to-Text (STT) Credentials
@@ -140,10 +146,34 @@ class WatsonCallback(RecognizeCallback):
                 if active_websockets:
                     asyncio.run_coroutine_threadsafe(send_message_to_clients(json_string), main_loop)
                 # Send response as TTS audio
-                if not clientSideTTS and active_websockets:
+                #if not clientSideTTS and active_websockets:
                     #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
                     #main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio(response_text,'/root/fawkes/audio_samples/neilgaiman_01.wav'))
-                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio('neil_gaiman',response_text))
+                #    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio('Compiling response, please wait a moment...'))
+                #    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio('neil_gaiman',response_text))
+
+                #if not clientSideTTS and active_websockets:
+                #    async def speak_response_sequentially():
+                #        await stream_tts_audio("Please wait a moment...")
+                #        await stream_xtts_audio("neil_gaiman", response_text)
+
+                #    main_loop.call_soon_threadsafe(
+                #        lambda: asyncio.create_task(speak_response_sequentially())
+                #    )
+
+                if not clientSideTTS and active_websockets:
+                    async def parallel_tts_pipeline():
+                        # Start Coqui synthesis in the background
+                        coqui_task = asyncio.create_task(synthesize_xtts_audio("neil_gaiman", response_text))
+
+                        # Do Piper speech first (blocks until done)
+                        await stream_tts_audio("Compiling response, please wait a moment...")
+
+                        # Begin streaming the already-kicked-off Coqui response
+                        coqui_audio_stream = await coqui_task
+                        await stream_precomputed_xtts_audio(coqui_audio_stream)
+
+                    main_loop.call_soon_threadsafe(lambda: asyncio.create_task(parallel_tts_pipeline()))
 
     def on_close(self):
         print("Connection closed")
@@ -171,7 +201,15 @@ def recognize_using_websocket(*args):
 async def receive_audio_service(websocket):
     """Handles incoming WebSocket connections."""
     print("Client connected.")
-    active_websockets.add(websocket)  # Store the connection
+    #active_websockets.add(websocket)  # Store the connection
+    active_websockets[client_id] = websocket
+
+    # Initialize per-client queues if they don't exist
+    if client_id not in incoming_audio_queues:
+        incoming_audio_queues[client_id] = asyncio.Queue(maxsize=10)
+    if client_id not in outgoing_audio_queues:
+        outgoing_audio_queues[client_id] = asyncio.Queue(maxsize=10)
+    
     try:
         async for message in websocket:
             if isinstance(message, bytes):
@@ -265,7 +303,7 @@ def load_speakers_into_manager():
         }
     print(f"Loaded {len(xtts_model.speaker_manager.speakers)} speakers into speaker_manager.")
 
-async def stream_xtts_audio(speaker_name, text):
+async def stream_xtts_audio_old(speaker_name, text):
     """Generates speech using Coqui XTTS and streams it over WebSockets."""
     print(f"Streaming XTTS for: {text}")
 
@@ -306,6 +344,54 @@ async def stream_xtts_audio(speaker_name, text):
         if active_websockets:
             await asyncio.gather(*[ws.send(audio_data) for ws in active_websockets if ws.close_code is None])
         await asyncio.sleep(0.015)  # keep it snappy; you can tune this delay
+    
+    if active_websockets:
+        print("Sending EOF")
+        await asyncio.gather(*[ws.send(b"EOF") for ws in active_websockets])
+
+async def synthesize_xtts_audio(speaker_name, text):
+    print(f"Computing XTTS for: {text}")
+    speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
+    if speaker_data is None:
+        raise ValueError(f"Speaker '{speaker_name}' not found in speaker_manager.")
+    # Just the synthesis step (e.g., inference_stream() but no audio output)
+    segments = list(xtts_model.inference_stream(
+        text=text,
+        language="en",
+        gpt_cond_latent=speaker_data["gpt_cond_latent"].to(xtts_model.device),
+        speaker_embedding=speaker_data["speaker_embedding"].to(xtts_model.device),
+        stream_chunk_size=512,  # optional, tune for latency/quality
+    ))
+
+    audio = np.concatenate([seg["wav"] for seg in segments])
+    audio = ap.postprocess(audio)
+
+    # Write audio to an in-memory buffer
+    buffer = io.BytesIO()
+    sf.write(buffer, audio, ap.sample_rate, format="WAV")
+    buffer.seek(0)
+    return buffer.read()
+
+async def stream_xtts_audio(precomputed_stream):
+    async for chunk in precomputed_stream:
+        # chunk is a NumPy float32 array at 24kHz
+        if chunk is None or len(chunk) == 0:
+            continue
+
+        chunk_np = chunk.cpu().numpy()
+
+        # Convert to 16kHz mono PCM
+        pcm_buffer = io.BytesIO()
+        sf.write(pcm_buffer, chunk_np, samplerate=24000, format="WAV")
+        pcm_buffer.seek(0)
+        audio = AudioSegment.from_wav(pcm_buffer)
+        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+        audio_data = audio.raw_data
+
+        # Send as WebSocket chunk
+        if active_websockets:
+            await asyncio.gather(*[ws.send(audio_data) for ws in active_websockets if ws.close_code is None])
+        await asyncio.sleep(0.015)  # keep it snappy
     
     if active_websockets:
         print("Sending EOF")
