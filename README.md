@@ -19,11 +19,13 @@ Basic Python backend for Fawkes chatbot
 - [X] Custom voice
 - [X] Multiclient support, asyncronous model/routine calls
 - [ ] Implement own local STT model
-- [ ] Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation
-- [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
-- [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
+- [ ] Fine-tune basline STT model
 - [ ] Speaker recognition
 - [ ] Multiple speaker memory
+- [ ] Speaker diarization
+- [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
+- [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
+- [ ] Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation
 - [ ] "Skills framework" (Rasa?)
 - [ ] Prompting and phonetic pangram collection
 - [ ] ~~ChatGPT/ Deepseek integration~~
