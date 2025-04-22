@@ -17,7 +17,9 @@ Basic Python backend for Fawkes chatbot
 - [X] Zero shot voice cloning functionality
 - [X] Voice cloning from speaker embeds/ gpt latents (as .pt files)
 - [X] Custom voice
+- [X] Multiclient support, asyncronous model/routine calls
 - [ ] Implement own local STT model
+- [ ] Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation
 - [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
 - [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
 - [ ] Speaker recognition
