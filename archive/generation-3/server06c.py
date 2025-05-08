@@ -98,7 +98,7 @@ MODEL_PATH = "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid
 asr_model = EncDecRNNTBPEModel.restore_from(MODEL_PATH, map_location=torch.device(device))
 #asr_model.encoder.set_default_att_context_size([70, 16])
 ENCODER_STEP_LENGTH = 80 # ms
-lookahead_size = 80 # in milliseconds
+lookahead_size = 480 # in milliseconds
 left_context_size = asr_model.encoder.att_context_size[0]
 asr_model.encoder.set_default_att_context_size([left_context_size, int(lookahead_size / ENCODER_STEP_LENGTH)])
 asr_model.change_decoding_strategy(decoder_type='rnnt')

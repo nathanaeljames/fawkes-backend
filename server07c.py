@@ -1,4 +1,5 @@
 # first round refining Nemo model
+# first fully functional Nemo model usage
 import asyncio
 from asyncio import Queue
 import websockets #pip install websockets
@@ -43,11 +44,6 @@ import time
 import atexit  # To handle exits
 import struct  # For writing binary data to WAV
 
-try:
-    from Queue import Queue, Full
-except ImportError:
-    from queue import Queue, Full
-
 # WebSocket server settings
 #HOST = "localhost"
 HOST = "0.0.0.0"
@@ -61,22 +57,16 @@ clientSideTTS = False
 SPEAKER = "Nathanael"
 SERVER = "Fawkes"
 
-# IBM Watson Speech-to-Text (STT) Credentials
-IBM_STT_API_KEY = "IYBIxRJeINqwcjOAd0PuFYI6NLyH0qV8hqfh3ziNqtQf"
-IBM_STT_SERVICE_URL = "https://api.us-south.speech-to-text.watson.cloud.ibm.com/instances/30d589a2-77a6-4819-90f7-9a3090278b40"
-# Initialize IBM Watson STT
-stt_authenticator = IAMAuthenticator(IBM_STT_API_KEY)
-stt = SpeechToTextV1(authenticator=stt_authenticator)
-stt.set_service_url(IBM_STT_SERVICE_URL)
+# Establish the preferred device to run models on
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+if (DEVICE != "cuda"):
+    print('Warning! GPU not detected!')
 
 # Load Piper TTS with northern_english_male (med) voice
 model_path = "/root/fawkes/models/piper_tts/en_GB-northern_english_male-medium.onnx"
 pipervoice = PiperVoice.load(model_path)
 
 # Load the Coqui XTTS model
-device = "cuda" if torch.cuda.is_available() else "cpu"
-if (device != "cuda"):
-    print('Warning! GPU not detected!')
 MODEL_DIR = Path("/root/fawkes/models/coqui_xtts/XTTS-v2/")
 CONFIG_PATH = MODEL_DIR / "config.json"
 SPEAKERS_DIR = Path("speakers")
@@ -89,287 +79,111 @@ xtts_model.load_checkpoint(
     checkpoint_dir=MODEL_DIR,
     eval=True
 )
-xtts_model.to(device)
+xtts_model.to(DEVICE)
 
 # Load cache-aware STT model stt_en_fastconformer_hybrid_large_streaming_multi
-print("Pre-loading NeMo ASR model...")
-MODEL_PATH = "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid_large_streaming_multi.nemo"
-asr_model = EncDecRNNTBPEModel.restore_from(MODEL_PATH, map_location=torch.device(device))
-#asr_model.encoder.set_default_att_context_size([70, 16])
-ENCODER_STEP_LENGTH = 80 # ms
-lookahead_size = 80 # in milliseconds
-left_context_size = asr_model.encoder.att_context_size[0]
-asr_model.encoder.set_default_att_context_size([left_context_size, int(lookahead_size / ENCODER_STEP_LENGTH)])
-asr_model.change_decoding_strategy(decoder_type='rnnt')
-print("NeMo ASR model loaded successfully")
+# --- NeMo ASR Configuration ---
+NEMO_MODEL_PATH = "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid_large_streaming_multi.nemo"
+NEMO_ENCODER_STEP_LENGTH = 80  # ms (for FastConformer)
+NEMO_LOOKAHEAD_SIZE = 480  # 0ms, 80ms, 480ms, 1040ms lookahead / 80ms, 160ms, 540ms, 1120ms chunk size
+NEMO_DECODER_TYPE = 'rnnt'
+NEMO_SAMPLE_RATE = 16000 # Hz
 
-# make sure the model's decoding strategy is optimal
-decoding_cfg = asr_model.cfg.decoding
-with open_dict(decoding_cfg):
-    # save time by doing greedy decoding and not trying to record the alignments
-    decoding_cfg.strategy = "greedy"
-    decoding_cfg.preserve_alignments = False
-    if hasattr(asr_model, 'joint'):  # if an RNNT model
-        # restrict max_symbols to make sure not stuck in infinite loop
-        decoding_cfg.greedy.max_symbols = 10
-        # sensible default parameter, but not necessary since batch size is 1
-        decoding_cfg.fused_batch_size = -1
-    asr_model.change_decoding_strategy(decoding_cfg)
+class NemoStreamingTranscriber:
+    def __init__(self, model_path, decoder_type, lookahead_size, encoder_step_length, device, sample_rate):
+        self.device = device
+        self.sample_rate = sample_rate
+        self.encoder_step_length = encoder_step_length
+        self.model_path = model_path
+        self.decoder_type = decoder_type
+        self.lookahead_size = lookahead_size
+        self.asr_model = self._load_model()
+        self.preprocessor = self._init_preprocessor()
+        self.cache_last_channel, self.cache_last_time, self.cache_last_channel_len = self.asr_model.encoder.get_initial_cache_state(
+            batch_size=1)
+        self.previous_hypotheses = None
+        self.pred_out_stream = None
+        self.step_num = 0
+        self.pre_encode_cache_size = self.asr_model.encoder.streaming_cfg.pre_encode_cache_size[1]
+        num_channels = self.asr_model.cfg.preprocessor.features
+        self.cache_pre_encode = torch.zeros((1, num_channels, self.pre_encode_cache_size),
+                                           device=self.device)
 
-# set model to eval mode
-asr_model.eval()
+    def _load_model(self):
+        print("Pre-loading NeMo ASR model...")
+        asr_model = EncDecRNNTBPEModel.restore_from(self.model_path, map_location=torch.device(self.device))
+        asr_model.eval()
+        decoding_cfg = asr_model.cfg.decoding
+        with open_dict(decoding_cfg):
+            decoding_cfg.strategy = "greedy"
+            decoding_cfg.preserve_alignments = False
+            if hasattr(asr_model, 'joint'):
+                decoding_cfg.greedy.max_symbols = 10
+                decoding_cfg.fused_batch_size = -1
+        asr_model.change_decoding_strategy(decoding_cfg)
+        if "multi" in self.model_path:
+            left_context_size = asr_model.encoder.att_context_size[0]
+            asr_model.encoder.set_default_att_context_size(
+                [left_context_size, int(self.lookahead_size / self.encoder_step_length)])
+        print("NeMo ASR model loaded successfully")
+        return asr_model
 
-# get parameters to use as the initial cache state
-cache_last_channel, cache_last_time, cache_last_channel_len = asr_model.encoder.get_initial_cache_state(
-    batch_size=1
-)
+    def _init_preprocessor(self):
+        cfg = copy.deepcopy(self.asr_model._cfg)
+        OmegaConf.set_struct(cfg.preprocessor, False)
+        cfg.preprocessor.dither = 0.0
+        cfg.preprocessor.pad_to = 0
+        cfg.preprocessor.normalize = "None"
+        preprocessor = EncDecCTCModelBPE.from_config_dict(cfg.preprocessor)
+        preprocessor.to(self.device)
+        return preprocessor
 
-# init params we will use for streaming
-previous_hypotheses = None
-pred_out_stream = None
-step_num = 0
-pre_encode_cache_size = asr_model.encoder.streaming_cfg.pre_encode_cache_size[1]
-# cache-aware models require some small section of the previous processed_signal to
-# be fed in at each timestep - we initialize this to a tensor filled with zeros
-# so that we will do zero-padding for the very first chunk(s)
-num_channels = asr_model.cfg.preprocessor.features
-cache_pre_encode = torch.zeros((1, num_channels, pre_encode_cache_size), device=asr_model.device)
-
-# helper function for extracting transcriptions
-def extract_transcriptions(hyps):
-    """
-        The transcribed_texts returned by CTC and RNNT models are different.
-        This method would extract and return the text section of the hypothesis.
-    """
-    #print("Entering extract_transcriptions")
-    if isinstance(hyps[0], Hypothesis):
-        transcriptions = []
-        for hyp in hyps:
-            transcriptions.append(hyp.text)
-    else:
-        transcriptions = hyps
-    #print("Exiting extract_transcriptions")
-    return transcriptions
-
-# define functions to init audio preprocessor and to
-# preprocess the audio (ie obtain the mel-spectrogram)
-def init_preprocessor(asr_model):
-    #print("Entering init_preprocessor")
-    cfg = copy.deepcopy(asr_model._cfg)
-    OmegaConf.set_struct(cfg.preprocessor, False)
-
-    # some changes for streaming scenario
-    cfg.preprocessor.dither = 0.0
-    cfg.preprocessor.pad_to = 0
-    cfg.preprocessor.normalize = "None"
-    
-    preprocessor = EncDecCTCModelBPE.from_config_dict(cfg.preprocessor)
-    preprocessor.to(asr_model.device)
-    #print("Exiting init_preprocessor")
-    return preprocessor
-
-preprocessor = init_preprocessor(asr_model)
-
-def preprocess_audio(audio, asr_model):
-    #print("Entering preprocess_audio")  # Debugging
-    #print(f"  Input audio shape: {audio.shape}, dtype: {audio.dtype}")  # Debugging
-    device = asr_model.device
-
-    # doing audio preprocessing
-    audio_signal = torch.from_numpy(audio).unsqueeze_(0).to(device)
-    audio_signal_len = torch.Tensor([audio.shape[0]]).to(device)
-    #print(f"  audio_signal shape: {audio_signal.shape}, dtype: {audio_signal.dtype}")  # Debugging
-    processed_signal, processed_signal_length = preprocessor(
-        input_signal=audio_signal, length=audio_signal_len
-    )
-    #print(f"  processed_signal shape: {processed_signal.shape}, dtype: {processed_signal.dtype}")  # Debugging
-    #print("Exiting preprocess_audio")  # Debugging
-    return processed_signal, processed_signal_length
-
-def transcribe_chunk(new_chunk):
-    #print("Entering transcribe_chunk")  # Debugging
-    #print(f"  Input new_chunk shape: {new_chunk.shape}, dtype: {new_chunk.dtype}")  # Debugging
-    global cache_last_channel, cache_last_time, cache_last_channel_len
-    global previous_hypotheses, pred_out_stream, step_num
-    global cache_pre_encode
-    
-    # new_chunk is provided as np.int16, so we convert it to np.float32
-    # as that is what our ASR models expect
-    audio_data = new_chunk.astype(np.float32)
-    audio_data = audio_data / 32768.0
-    #print(f"  audio_data shape: {audio_data.shape}, dtype: {audio_data.dtype}")  # Debugging
-
-    # get mel-spectrogram signal & length
-    processed_signal, processed_signal_length = preprocess_audio(audio_data, asr_model)
-     
-    # prepend with cache_pre_encode
-    processed_signal = torch.cat([cache_pre_encode, processed_signal], dim=-1)
-    processed_signal_length += cache_pre_encode.shape[1]
-    #print(f"  processed_signal (after cat) shape: {processed_signal.shape}, dtype: {processed_signal.dtype}")  # Debugging
-    
-    # save cache for next time
-    cache_pre_encode = processed_signal[:, :, -pre_encode_cache_size:]
-    
-    with torch.no_grad():
-        (
-            pred_out_stream,
-            transcribed_texts,
-            cache_last_channel,
-            cache_last_time,
-            cache_last_channel_len,
-            previous_hypotheses,
-        ) = asr_model.conformer_stream_step(
-            processed_signal=processed_signal,
-            processed_signal_length=processed_signal_length,
-            cache_last_channel=cache_last_channel,
-            cache_last_time=cache_last_time,
-            cache_last_channel_len=cache_last_channel_len,
-            keep_all_outputs=False,
-            previous_hypotheses=previous_hypotheses,
-            previous_pred_out=pred_out_stream,
-            drop_extra_pre_encoded=None,
-            return_transcription=True,
+    def _preprocess_audio(self, audio):
+        audio_signal = torch.from_numpy(audio).unsqueeze_(0).to(self.device)
+        audio_signal_len = torch.Tensor([audio.shape[0]]).to(self.device)
+        processed_signal, processed_signal_length = self.preprocessor(
+            input_signal=audio_signal, length=audio_signal_len
         )
-    #print(f"  transcribed_texts: {transcribed_texts}")  # Debugging
-    
-    final_streaming_tran = extract_transcriptions(transcribed_texts)
-    step_num += 1
-    
-    #print("Exiting transcribe_chunk")
-    return final_streaming_tran[0]
+        return processed_signal, processed_signal_length
 
-# define callback for the speech to text service
-class WatsonCallback(RecognizeCallback):
-    def __init__(self):
-        RecognizeCallback.__init__(self)
+    def _extract_transcriptions(self, hyps):
+        if isinstance(hyps[0], Hypothesis):
+            transcriptions = [hyp.text for hyp in hyps]
+        else:
+            transcriptions = hyps
+        return transcriptions
 
-    def on_transcription(self, transcript):
-        pass
+    def transcribe_chunk(self, new_chunk):
+        audio_data = new_chunk.astype(np.float32) / 32768.0
+        processed_signal, processed_signal_length = self._preprocess_audio(audio_data)
+        processed_signal = torch.cat([self.cache_pre_encode, processed_signal], dim=-1)
+        processed_signal_length += self.cache_pre_encode.shape[1]
+        self.cache_pre_encode = processed_signal[:, :, -self.pre_encode_cache_size:]
+        with torch.no_grad():
+            (
+                self.pred_out_stream,
+                transcribed_texts,
+                self.cache_last_channel,
+                self.cache_last_time,
+                self.cache_last_channel_len,
+                self.previous_hypotheses,
+            ) = self.asr_model.conformer_stream_step(
+                processed_signal=processed_signal,
+                processed_signal_length=processed_signal_length,
+                cache_last_channel=self.cache_last_channel,
+                cache_last_time=self.cache_last_time,
+                cache_last_channel_len=self.cache_last_channel_len,
+                keep_all_outputs=False,
+                previous_hypotheses=self.previous_hypotheses,
+                previous_pred_out=self.pred_out_stream,
+                drop_extra_pre_encoded=None,
+                return_transcription=True,
+            )
+        final_streaming_tran = self._extract_transcriptions(transcribed_texts)
+        self.step_num += 1
+        return final_streaming_tran[0]
 
-    def on_connected(self):
-        print('Connection was successful')
-
-    def on_error(self, error):
-        print('Error received: {}'.format(error))
-
-    def on_inactivity_timeout(self, error):
-        print('Inactivity timeout: {}'.format(error))
-
-    def on_listening(self):
-        print('Service is listening')
-
-    def on_hypothesis(self, hypothesis):
-        pass
-
-    def on_data(self, data):
-        print(data)
-        # Establish transcript JSON
-        transcript_text = data['results'][0]['alternatives'][0]['transcript']
-        is_final = data['results'][0]['final']
-        data_to_send = {
-            "speaker": SPEAKER,
-            "final": is_final,
-            "transcript": transcript_text
-        }
-        json_string = json.dumps(data_to_send)
-        # Send transcript as text/ JSON
-        #send_message_to_clients(json_string, client_id)
-        #if active_websockets:
-        asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
-        #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text, client_id))   
-        if(is_final):
-            print("Current speaker is done speaking")
-            # here is where to house all response routines
-            if 'the time' in transcript_text.lower():
-                print("Asked about the time")
-                strTime = datetime.datetime.now().strftime("%H:%M:%S")
-                response_text = f"Sir, the time is {strTime}"
-                data_to_send = {
-                    "speaker": SERVER,
-                    "final": "True",
-                    "transcript": response_text
-                }
-                json_string = json.dumps(data_to_send)  
-                # Send response as text/ JSON
-                #if active_websockets:
-                asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
-                # Send response as TTS audio
-                if not clientSideTTS and active_websockets:
-                    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(client_id, response_text))
-            if 'your name' in transcript_text.lower():
-                print("Asked about my name")
-                #response_text = f"Sir, my name is {SERVER}"
-                response_text = "My name is Neil Richard Gaiman."
-                data_to_send = {
-                    "speaker": SERVER,
-                    "final": "True",
-                    "transcript": response_text
-                }
-                json_string = json.dumps(data_to_send)
-                # Send response as text/ JSON
-                if active_websockets:
-                    asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
-                # Send response as TTS audio
-                #if not clientSideTTS and active_websockets:
-                    #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(response_text))
-                    #main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio(response_text,'/root/fawkes/audio_samples/neilgaiman_01.wav'))
-                #    main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio('Compiling response, please wait a moment...'))
-                #    main_loop.call_soon_threadsafe(asyncio.create_task, stream_xtts_audio('neil_gaiman',response_text))
-
-                #if not clientSideTTS and active_websockets:
-                #    async def speak_response_sequentially():
-                #        await stream_tts_audio("Please wait a moment...")
-                #        await stream_xtts_audio("neil_gaiman", response_text)
-
-                #    main_loop.call_soon_threadsafe(
-                #        lambda: asyncio.create_task(speak_response_sequentially())
-                #    )
-
-                if not clientSideTTS and active_websockets:
-                    #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(client_id,'Compiling response, please wait a moment...'))
-                    #main_loop.call_soon_threadsafe(asyncio.create_task, synthesize_stream_xtts_audio(client_id,'neil_gaiman',response_text))
-                    async def parallel_tts_pipeline():
-                        # Preload speaker data etc. up front, but defer generator work
-                        buffer = asyncio.Queue()
-                        # Kick off Coqui as a background task — it starts immediately!
-                        coqui_task = asyncio.create_task(synthesize_xtts_audio("neil_gaiman", response_text, buffer))
-                        #coqui_task = asyncio.to_thread(
-                        #    lambda: asyncio.run(synthesize_xtts_audio("neil_gaiman", response_text, buffer))
-                        #)
-                        # Do Piper TTS first (synchronous, placeholder speech)
-                        await stream_tts_audio(client_id, "Please wait...")
-                        # Once Piper is done, begin streaming the already-buffering Coqui output
-                        await stream_xtts_audio(client_id, buffer)
-                        # Optional: wait for Coqui task to fully complete if needed
-                        await coqui_task
-
-                    main_loop.call_soon_threadsafe(lambda: asyncio.create_task(parallel_tts_pipeline()))
-
-
-    def on_close(self):
-        print("Connection closed")
-
-###############################################
-#### Initalize queue to store the recordings ##
-###############################################
-CHUNK = 1024
-# Note: It will discard if the websocket client can't consumme fast enough
-# So, increase the max size as per your choice
-BUF_MAX_SIZE = CHUNK * 10
-# Buffer to store audio
-q = Queue(maxsize=int(round(BUF_MAX_SIZE / CHUNK)))
-
-# Create an instance of AudioSource
-audio_source = AudioSource(q, True, True)
-
-# this function will initiate the recognize service and pass in the AudioSource
-def recognize_using_websocket(*args):
-    stt.recognize_using_websocket(audio=audio_source,
-                                content_type='audio/l16; rate=16000',
-                                recognize_callback=WatsonCallback(),
-                                interim_results=True)
-
-async def websocket_server(websocket, client_id):
+async def websocket_server(websocket, client_id, nemo_transcriber):
     active_websockets[client_id] = websocket
     client_queues[client_id] = {
         "incoming_audio": asyncio.Queue(),
@@ -381,8 +195,8 @@ async def websocket_server(websocket, client_id):
         incoming_task = asyncio.create_task(handle_incoming(websocket, client_id))
         outgoing_task = asyncio.create_task(handle_outgoing(websocket, client_id))
         #asr_task = asyncio.create_task(run_streaming_asr(client_id))
-        audio_recorder = AudioRecorder()
-        asr_task = asyncio.create_task(process_audio_from_queue(client_id, audio_recorder))
+        #audio_recorder = AudioRecorder()
+        asr_task = asyncio.create_task(process_audio_from_queue(client_id, nemo_transcriber))
         await asyncio.gather(incoming_task, outgoing_task, asr_task)
     except asyncio.CancelledError:
         print(f"WebSocket task for {client_id} cancelled.")
@@ -401,14 +215,6 @@ async def handle_incoming(websocket, client_id):
         async for message in websocket:
             if isinstance(message, bytes):
                 await client_queues[client_id]["incoming_audio"].put(message)
-                '''
-                try:
-                    q.put(message)
-                    #print("Received audio data and added to queue")
-                except Full:
-                    print("WARNING: packets dropped!")
-                    pass # discard
-                '''
             else:
                 print(f"Text message received: {message}")
                 if(message == 'clientSideTTS'):
@@ -478,11 +284,6 @@ def prepare_for_streaming(chunk, type, rate):
             raise ValueError("Expected NumPy float32 array for type='float32'")
     else:
         raise ValueError(f"Unsupported audio type: {type}")
-
-async def transcribe_audio_service():
-    """Initiates IBM Watson transcription service."""
-    recognize_thread = Thread(target=recognize_using_websocket, args=())
-    recognize_thread.start()
 
 async def send_message_to_clients(client_id, message):
     """Send a message to all connected WebSocket clients."""
@@ -615,80 +416,56 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
     except Exception as e:
         print(f"[XTTS] Error streaming to {client_id}: {e}")
 
-class AudioRecorder:
-    def __init__(self, filename="sanity_check_2.wav", sample_rate=16000):
-        self.filename = filename
-        self.sample_rate = sample_rate
-        self.data = bytearray()  # Use bytearray for efficient appending
-        self.wf = None
-        self._open_wav()
-        atexit.register(self._close_wav)  # Ensure WAV is closed on exit
-
-    def _open_wav(self):
-        """Opens the WAV file for writing."""
-        self.wf = wave.open(self.filename, 'wb')
-        self.wf.setnchannels(1)  # Mono audio
-        self.wf.setsampwidth(2)  # 2 bytes per sample (16-bit)
-        self.wf.setframerate(self.sample_rate)
-
-    def _close_wav(self):
-        """Closes the WAV file."""
-        if self.wf:
-            try:
-                self.wf.setnframes(len(self.data) // 2)  # Correct frame count
-                self.wf.writeframes(self.data)
-                self.wf.close()
-                print(f"Saved audio to {self.filename}")
-            except Exception as e:
-                print(f"Error closing WAV file: {e}")
-
-    def add_data(self, data):
-        """Adds audio data to the WAV file."""
-        try:
-            self.data.extend(data)  # Append bytes directly
-        except Exception as e:
-            print(f"Error writing to WAV file: {e}")
-
-async def process_audio_from_queue(client_id, audio_recorder):
+async def process_audio_from_queue(client_id, nemo_transcriber):
     """
     Processes audio chunks from an asyncio.Queue.
     """
-    global cache_last_channel, cache_last_time, cache_last_channel_len
-    global previous_hypotheses, pred_out_stream, step_num
-    global cache_pre_encode
+    chunk_size_ms = NEMO_LOOKAHEAD_SIZE + NEMO_ENCODER_STEP_LENGTH
+    bytes_per_chunk = int(NEMO_SAMPLE_RATE * chunk_size_ms / 1000) * 2  # 2 bytes per sample (int16)
+    audio_buffer = b''  # Initialize an empty byte buffer
 
     try:
         while True:
             try:
                 #chunk_count = 0
-                audio_chunk = await client_queues[client_id]["incoming_audio"].get()  # Use await
+                #audio_chunk = await client_queues[client_id]["incoming_audio"].get()  # Use await
                 #text = transcribe_chunk(audio_chunk)
-                if audio_chunk is None or len(audio_chunk) == 0:
+                audio_data = await client_queues[client_id]["incoming_audio"].get()
+                if audio_data is None or len(audio_data) == 0:
                     await asyncio.sleep(0.001)  # Or handle empty chunk as appropriate
                     continue  # Skip processing empty chunk
-                if not isinstance(audio_chunk, np.ndarray):
-                    audio_chunk = np.frombuffer(audio_chunk, dtype=np.int16)
-                if audio_chunk.ndim != 1:
-                    audio_chunk = audio_chunk.squeeze()  # Or reshape as needed
-                if audio_chunk.dtype != np.int16:
-                    audio_chunk = audio_chunk.astype(np.int16)
+                audio_buffer += audio_data
+                #
+                #
+                while len(audio_buffer) >= bytes_per_chunk:
+                    chunk_bytes = audio_buffer[:bytes_per_chunk]
+                    audio_buffer = audio_buffer[bytes_per_chunk:]
+                    audio_chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
+                    if audio_chunk.ndim != 1:
+                        audio_chunk = audio_chunk.squeeze()
+                    if audio_chunk.dtype != np.int16:
+                        audio_chunk = audio_chunk.astype(np.int16)
+                    text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk)
+                    #print(text)
+                    is_final = False
+                    data_to_send = {
+                        "speaker": SPEAKER,
+                        "final": is_final,
+                        "transcript": text
+                    }
+                    json_string = json.dumps(data_to_send)
+                    await send_message_to_clients(client_id, json_string)
+                #
                 #print(f"Chunk {chunk_count} shape: {audio_chunk.shape}, dtype: {audio_chunk.dtype}")
                 #chunk_count += 1
                 #audio_recorder.add_data(audio_chunk)
                 #audio_recorder.add_data(audio_chunk.tobytes())
-                text = await asyncio.to_thread(transcribe_chunk, audio_chunk)
-                print(text, end='\r')
+                #text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk)
+                #print(text, end='\r')
+                #print(text)
                 #client_queues[client_id]["transcriptions"].put_nowait(text) # Assuming you have a transcriptions queue
                 #await client_queues[client_id]["outgoing_text"].put(text)
                 #client_queues[client_id]["outgoing_text"].put_nowait(text)
-                is_final = False
-                data_to_send = {
-                    "speaker": SPEAKER,
-                    "final": is_final,
-                    "transcript": text
-                }
-                json_string = json.dumps(data_to_send)
-                await send_message_to_clients(client_id, json_string)
 
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
                 await asyncio.sleep(0.01)  # Use asyncio.sleep
@@ -699,33 +476,41 @@ async def process_audio_from_queue(client_id, audio_recorder):
                 client_queues[client_id]["incoming_audio"].task_done() # Necessary for asyncio.Queue
 
     finally:
-        print()
         print("Async Audio processing stopped")
 
 async def connection_handler(websocket):
-    global client_id
+    global client_id, nemo_transcriber
     client_id = str(uuid.uuid4())
     print(f"New client connected: {client_id}")
-    await websocket_server(websocket, client_id)
+    await websocket_server(websocket, client_id, nemo_transcriber)
 
 async def main():
-    global main_loop
+    global main_loop,nemo_transcriber
     main_loop = asyncio.get_event_loop()  # Store the event loop
     #load all speakers one time into dictionary
     load_speakers_into_manager()
+        # Initialize the Nemo transcriber
+    nemo_transcriber = NemoStreamingTranscriber(
+        model_path=NEMO_MODEL_PATH,
+        decoder_type=NEMO_DECODER_TYPE,
+        lookahead_size=NEMO_LOOKAHEAD_SIZE,
+        encoder_step_length=NEMO_ENCODER_STEP_LENGTH,
+        device=DEVICE,
+        sample_rate=NEMO_SAMPLE_RATE
+    )
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{HOST}:{PORT}")
     server = await websockets.serve(connection_handler, HOST, PORT)
-    transcribe_task = asyncio.create_task(transcribe_audio_service())
+    #transcribe_task = asyncio.create_task(transcribe_audio_service())
     # Start and keep the server running
     await server.wait_closed()
     # Start the transcription process
-    await transcribe_task
+    #await transcribe_task
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())  # Proper event loop handling for Python 3.10+
     except KeyboardInterrupt:
         # stop recording
-        audio_source.completed_recording()  
+        #audio_source.completed_recording()  
         print("Server shutting down.")
