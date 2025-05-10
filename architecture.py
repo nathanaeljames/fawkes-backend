@@ -130,3 +130,23 @@ Buffer full utterance
 → Prettified final text → Send to UI
 '''
 
+'''
+ÜBER STT
+
+Ideally, completion detection would take into consideration much more that "silence period" or "frames without change" [in transcription]
+Finality detection should consider intonation, speech rate, prosody, grammatical completeness, turn-taking, etc
+Much of this is requires direct access to speech data, thus finality detection AT MINIMUM should be done by the ASR model
+Commas may also benefit from direct speech data, while most other punctuation is grammatically determined
+
+Other considerations of a robust ASR model/framework (which would benefit greatly from direct speech data):
+Finality detection
+Irrelevance detection
+Turn taking
+Interruption and resumption
+
+These may benefit from running on the same model OR could be additions to a pipeline but should really have access to 
+raw audio data and processing it could potentially represent duplication of work
+
+Many speaker diaization models implement very robust VAD, and I can use this in the future to signal finality even
+during simultaneous speaker events
+'''
