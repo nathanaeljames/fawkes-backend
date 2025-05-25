@@ -24,23 +24,25 @@ RUN pip3 install \
     #pyaudio\
     #scipy\
     #soundfile\
+    #ibm-watson \
+    #ibm_cloud_sdk_core \
     websockets \
     pydub \
-    ibm-watson \
-    ibm_cloud_sdk_core \
     piper-tts
-RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-#RUN pip3 install torch --index-url https://download.pytorch.org/whl/cpu
+# Explicitly install a compatible NumPy version first
+# Based on the error, nemo-toolkit requires numpy<2.0.0,>=1.22 # - numpy 1.26.4 is the latest 1.x version
+#RUN pip3 install numpy==1.26.4
+#RUN pip3 install numpy==2.1.3
+#SWITCH OUT FOR GPU
+#RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+RUN pip3 install torch==2.3.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cpu
 #RUN pip3 install nemo_toolkit[nlp]
-#RUN pip3 install nemo_toolkit[asr]
-RUN pip3 install nemo_toolkit[all]
+RUN pip3 install nemo_toolkit[asr]
+#RUN pip3 install nemo_toolkit[all]
 #RUN pip3 install nemo_toolkit[asr,nlp]
-#RUN pip3 install TTS
-# Need to downgrade transformers to work with current usage/ model of Coqui
-# In recent versions of transformers, the generation_config.pad_token_id is expected to be a GenerationConfig object — but XTTS passes it as a raw int
-# Must be installed after nemo_toolkit[nlp] which requires transformers >= 4.41.0, but should be able to remove nemo_toolkit in final production
-#RUN pip3 install transformers==4.35.2
-RUN pip3 install cuda-python>=12.3
+#TURN ON FOR GPU
+#RUN pip3 install cuda-python>=12.3
 RUN pip3 install coqui-tts
 
 

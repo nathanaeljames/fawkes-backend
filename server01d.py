@@ -1,4 +1,4 @@
-# hooking into rasa
+# code cleanup before adding microservices
 import asyncio
 from asyncio import Queue
 import websockets #pip install websockets
@@ -10,10 +10,10 @@ from pydub import AudioSegment
 import datetime
 import json
 #import subprocess
-from ibm_watson import SpeechToTextV1
-from ibm_watson.websocket import RecognizeCallback, AudioSource
-from threading import Thread
-from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
+#from ibm_watson import SpeechToTextV1
+#from ibm_watson.websocket import RecognizeCallback, AudioSource
+#from threading import Thread
+#from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from piper.voice import PiperVoice #pip install piper-tts
 import torch
 #import torchaudio
@@ -42,6 +42,7 @@ import copy
 import time
 import atexit  # To handle exits
 import struct  # For writing binary data to WAV
+import librosa
 
 # WebSocket server settings
 #HOST = "localhost"
@@ -273,7 +274,6 @@ def prepare_for_streaming(chunk, type, rate):
             # Resample to 16kHz if needed
             if rate != TARGET_RATE:
                 # Use linear interpolation resampling
-                import librosa
                 chunk = librosa.resample(chunk, orig_sr=rate, target_sr=TARGET_RATE)
             # Convert float32 [-1.0, 1.0] to int16 PCM
             chunk = np.clip(chunk, -1.0, 1.0)
