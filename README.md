@@ -18,11 +18,11 @@ Basic Python backend for Fawkes chatbot
 - [X] Voice cloning from speaker embeds/ gpt latents (as .pt files)
 - [X] Custom voice
 - [X] Multiclient support, asyncronous model/routine calls
-- [ ] Implement own local STT model
-- [ ] Fine-tune basline STT model
+- [X] Implement own local STT model
+- [X] Fine-tune basline STT model
+- [ ] Speaker diarization, segmentation, robust VAD for finality determination
 - [ ] Speaker recognition
 - [ ] Multiple speaker memory
-- [ ] Speaker diarization
 - [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
 - [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
 - [ ] Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation

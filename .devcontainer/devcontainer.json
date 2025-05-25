@@ -15,9 +15,13 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [9001,9001],
 
+	//SWITCH FOR GPU
+	//"runArgs": [
+	//	"-p=9001:9001",
+	//	"--gpus=all"
+	//],
 	"runArgs": [
-		"-p=9001:9001",
-		"--gpus=all"
+		"-p=9001:9001"
 	],
 
 	// Uncomment the next line to run commands after the container is created.
