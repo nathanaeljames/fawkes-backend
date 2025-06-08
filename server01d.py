@@ -156,7 +156,7 @@ class PiperTTS:
         self.voice = PiperVoice.load(model_path)
         print("Piper TTS model loaded successfully")
 
-    async def synthesize_stream_raw(self, text):
+    def synthesize_stream_raw(self, text):
         for chunk in self.voice.synthesize_stream_raw(text):
             yield chunk
         yield None # End of stream marker
@@ -327,7 +327,6 @@ def prepare_for_streaming(chunk, type, rate):
     TARGET_CHANNELS = 1  # mono
     # Handle None or empty chunks upfront for all types
     if chunk is None or (isinstance(chunk, (bytes, np.ndarray)) and len(chunk) == 0):
-        #print("DEBUG: prepare_for_streaming detected None/empty chunk, returning b''")
         return b'' # Always return empty bytes for empty input
     try:
         if type == "wav":
@@ -371,29 +370,59 @@ async def send_message_to_clients(client_id, message):
     #    print("No active clients to send messages to.")
 
 async def stream_tts_audio(client_id, text):
-    global pipertts_wrapper
+    global pipertts_wrapper, main_loop # Ensure main_loop is globally accessible if not already
     print(f"[TTS] Streaming (raw) to client {client_id}: {text}")
-    
+
     if client_id not in client_queues:
         print(f"[TTS] Client {client_id} not in client_queues")
         return
 
-    try:
-        async for chunk in pipertts_wrapper.synthesize_stream_raw(text):
-            # Use dict to indicate raw PCM
-            converted_chunk = await asyncio.to_thread(prepare_for_streaming, chunk, 'raw', pipertts_wrapper.sample_rate)
-            #await client_queues[client_id]["outgoing_audio"].put({"type": "raw_pcm", "data": chunk, "rate": pipervoice.config.sample_rate})
-            if converted_chunk:
-                await client_queues[client_id]["outgoing_audio"].put(converted_chunk)
-                await asyncio.sleep(0.015)
-            else:
-                print("empty chunk returned, ignoring...")
-                pass
+    # Define a synchronous function to run in a separate thread
+    def blocking_piper_inference():
+        try:
+            # Get the synchronous generator from Piper TTS
+            piper_chunks_generator = pipertts_wrapper.synthesize_stream_raw(text)
 
-        await client_queues[client_id]["outgoing_audio"].put(None)
+            # Iterate over the synchronous generator within this thread
+            for chunk in piper_chunks_generator:
+                # Prepare the chunk for streaming (this is also blocking if prepare_for_streaming isn't async)
+                converted_chunk = prepare_for_streaming(chunk, 'raw', pipertts_wrapper.sample_rate)
+
+                # Only put non-empty chunks into the queue
+                if converted_chunk:
+                    # Use run_coroutine_threadsafe to put the chunk into the asyncio queue
+                    # from this synchronous thread.
+                    asyncio.run_coroutine_threadsafe(
+                        client_queues[client_id]["outgoing_audio"].put(converted_chunk),
+                        main_loop # Reference to the main event loop
+                    )
+
+                else:
+                    #print(f"Skipping empty converted_chunk from Piper for client {client_id}")
+                    pass
+
+            # After all chunks are processed, send the end-of-stream marker
+            asyncio.run_coroutine_threadsafe(
+                client_queues[client_id]["outgoing_audio"].put(None),
+                main_loop
+            )
+            print(f"[TTS] Finished streaming to client {client_id} (from thread).")
+
+        except Exception as e:
+            print(f"[TTS] Error during Piper inference in thread for {client_id}: {e}")
+            # Ensure end-of-stream marker is sent even on error
+            asyncio.run_coroutine_threadsafe(
+                client_queues[client_id]["outgoing_audio"].put(None),
+                main_loop
+            )
+
+    try:
+        # Offload the entire blocking synchronous inference process to a separate thread
+        await asyncio.to_thread(blocking_piper_inference)
 
     except Exception as e:
-        print(f"[TTS] Error streaming to {client_id}: {e}")
+        # This outer catch will only catch errors related to setting up the thread,
+        print(f"[TTS] Error setting up Piper streaming to {client_id}: {e}")
 
 async def synthesize_xtts_audio(speaker_name, text, buffer):
     """
@@ -402,16 +431,10 @@ async def synthesize_xtts_audio(speaker_name, text, buffer):
     """
     global xtts_wrapper
     print(f"Computing XTTS for: {text}")
-    #speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
-    #if speaker_data is None:
-    #    raise ValueError("Speaker not found.")
-    #assert isinstance(speaker_data["gpt_cond_latent"], torch.Tensor), "gpt_cond_latent is not a Tensor"
-    #assert isinstance(speaker_data["speaker_embedding"], torch.Tensor), "speaker_embedding is not a Tensor"
 
-    def blocking_inference():
+    def blocking_direct_inference():
         try:
             # Call the XTTSWrapper's raw generator directly
-            # xtts_wrapper is assumed to be available from the outer scope
             chunks_raw = xtts_wrapper.synthesize_stream_raw(text, speaker_name)
 
             for chunk_np_float32 in chunks_raw: # chunk_np_float32 is already a NumPy array from synthesize_stream_raw
@@ -441,7 +464,7 @@ async def synthesize_xtts_audio(speaker_name, text, buffer):
             asyncio.run_coroutine_threadsafe(buffer.put(None), main_loop)
 
     # Run the blocking work in a background thread
-    await asyncio.to_thread(blocking_inference)
+    await asyncio.to_thread(blocking_direct_inference)
 
 async def stream_xtts_audio(client_id, buffer):
     """
@@ -456,7 +479,6 @@ async def stream_xtts_audio(client_id, buffer):
     try:
         while True:
             chunk = await buffer.get()
-            #print(f"[XTTS] Got chunk from buffer: {chunk}")
             if chunk is None:  # End-of-stream marker
                 break
             await queue.put(chunk)
@@ -472,10 +494,6 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
     """
     global xtts_wrapper
     print(f"Streaming XTTS directly for: {text}")
-    #speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
-
-    #if speaker_data is None:
-    #    raise ValueError(f"Speaker '{speaker_name}' not found in speaker_manager.")
 
     # This is the client's outgoing audio queue
     client_queue = client_queues[client_id]["outgoing_audio"]
@@ -504,8 +522,6 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
                     client_queue.put(converted_chunk),
                     main_loop
                 )
-                # Small sleep can be added if needed, but often not necessary here
-                # time.sleep(0.001)
 
             # After all chunks are processed, signal end-of-stream to the client's queue
             asyncio.run_coroutine_threadsafe(
