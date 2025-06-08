@@ -2,38 +2,22 @@
 import asyncio
 from asyncio import Queue
 import websockets #pip install websockets
-#import speech_recognition as sr #pip install speechRecognition
 import io
-#import pyttsx3 #pip install pyttsx3
 import wave
 from pydub import AudioSegment
 import datetime
 import json
-#import subprocess
-#from ibm_watson import SpeechToTextV1
-#from ibm_watson.websocket import RecognizeCallback, AudioSource
-#from threading import Thread
-#from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from piper.voice import PiperVoice #pip install piper-tts
 import torch
-#import torchaudio
-#from coqui_tts.models import XTTS
-#from xtts import XTTS
-#from TTS.api import TTS # Coqui XTTS API
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
-#from TTS.api import TTS
 import numpy as np
-#import soundfile as sf
 from pathlib import Path
-#from collections import defaultdict
-#import struct
 import uuid
 import audioop
 import nemo.collections.asr as nemo_asr
 from nemo.collections.asr.models.ctc_bpe_models import EncDecCTCModelBPE
 from nemo.collections.asr.models import EncDecRNNTBPEModel
-#from nemo.collections.asr.parts.streaming.frame_batch_asr import FrameBatchASR
 from nemo.collections.asr.parts.utils.streaming_utils import FrameBatchASR
 from omegaconf import OmegaConf, open_dict
 from nemo.collections.asr.parts.utils.streaming_utils import CacheAwareStreamingAudioBuffer
@@ -44,11 +28,26 @@ import atexit  # To handle exits
 import struct  # For writing binary data to WAV
 import librosa
 
-# WebSocket server settings
-#HOST = "localhost"
-HOST = "0.0.0.0"
-PORT = 9001
-#active_websockets = set()  # Store active clients
+
+# Establish the preferred device to run models on
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+if (DEVICE != "cuda"):
+    print('Warning! GPU not detected!')
+
+CONFIG = {
+    "websocket_host": "0.0.0.0",
+    "websocket_port": 9001,
+    "inference_device": DEVICE,
+    "piper_model_path": "/root/fawkes/models/piper_tts/en_GB-northern_english_male-medium.onnx",
+    "xtts_model_dir": "/root/fawkes/models/coqui_xtts/XTTS-v2/",
+    "speakers_dir": "speakers",
+    "nemo_model_path": "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid_large_streaming_multi.nemo",
+    "nemo_encoder_step_length": 80,
+    "nemo_lookahead_size": 480, # 0ms, 80ms, 480ms, 1040ms lookahead / 80ms, 160ms, 540ms, 1120ms chunk size
+    "nemo_decoder_type": 'rnnt',
+    "audio_sample_rate": 16000
+}
+
 active_websockets = {}  # client_id -> websocket
 client_queues = {}
 clientSideTTS = False
@@ -56,38 +55,6 @@ clientSideTTS = False
 # Dialogue partners
 SPEAKER = "Nathanael"
 SERVER = "Fawkes"
-
-# Establish the preferred device to run models on
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-if (DEVICE != "cuda"):
-    print('Warning! GPU not detected!')
-
-# Load Piper TTS with northern_english_male (med) voice
-model_path = "/root/fawkes/models/piper_tts/en_GB-northern_english_male-medium.onnx"
-pipervoice = PiperVoice.load(model_path)
-
-# Load the Coqui XTTS model
-MODEL_DIR = Path("/root/fawkes/models/coqui_xtts/XTTS-v2/")
-CONFIG_PATH = MODEL_DIR / "config.json"
-SPEAKERS_DIR = Path("speakers")
-# Load model
-xtts_config = XttsConfig()
-xtts_config.load_json(CONFIG_PATH)
-xtts_model = Xtts.init_from_config(xtts_config)
-xtts_model.load_checkpoint(
-    config=xtts_config,
-    checkpoint_dir=MODEL_DIR,
-    eval=True
-)
-xtts_model.to(DEVICE)
-
-# Load cache-aware STT model stt_en_fastconformer_hybrid_large_streaming_multi
-# --- NeMo ASR Configuration ---
-NEMO_MODEL_PATH = "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid_large_streaming_multi.nemo"
-NEMO_ENCODER_STEP_LENGTH = 80  # ms (for FastConformer)
-NEMO_LOOKAHEAD_SIZE = 480  # 0ms, 80ms, 480ms, 1040ms lookahead / 80ms, 160ms, 540ms, 1120ms chunk size
-NEMO_DECODER_TYPE = 'rnnt'
-NEMO_SAMPLE_RATE = 16000 # Hz
 
 class NemoStreamingTranscriber:
     def __init__(self, model_path, decoder_type, lookahead_size, encoder_step_length, device, sample_rate):
@@ -183,13 +150,114 @@ class NemoStreamingTranscriber:
         self.step_num += 1
         return final_streaming_tran[0]
 
+class PiperTTS:
+    def __init__(self, model_path):
+        print("Pre-loading Piper TTS model...")
+        self.voice = PiperVoice.load(model_path)
+        print("Piper TTS model loaded successfully")
+
+    async def synthesize_stream_raw(self, text):
+        for chunk in self.voice.synthesize_stream_raw(text):
+            yield chunk
+        yield None # End of stream marker
+
+    @property
+    def sample_rate(self):
+        return self.voice.config.sample_rate
+
+class XTTSWrapper:
+    """
+    Encapsulates the Coqui XTTS model, handling model loading, speaker management,
+    and raw audio stream inference.
+    """
+    def __init__(self, model_dir, device, speakers_dir):
+        """
+        Initializes the XTTS model and speaker manager.
+
+        Args:
+            model_dir (Path): Path to the directory containing XTTS model files (config.json, model.pth, vocab.json).
+            speakers_dir (Path): Path to the directory containing speaker audio files.
+            device (str): Device to load the model on ('cuda' for GPU, 'cpu' for CPU).
+        """
+        print("Pre-loading Coqui XTTS model...")
+        self.device = device
+        self.model_dir = Path(model_dir)
+        self.config_path = self.model_dir / "config.json"
+        self.speakers_dir = Path(speakers_dir)
+        self.config = XttsConfig()
+        self.config.load_json(self.config_path)
+        self.xtts_model = Xtts.init_from_config(self.config)
+        self.xtts_model.load_checkpoint(config=self.config, checkpoint_dir=self.model_dir, eval=True)
+        self.xtts_model.to(self.device)
+        self._load_speakers()
+
+        print(f"Coqui XTTS Model loaded on device: {self.device}")
+        #self._load_speakers()
+        #print(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} speakers.")
+
+    @property
+    def sample_rate(self) -> int:
+        """Returns the sample rate of the XTTS model."""
+        return self.config.audio["sample_rate"]
+
+    def _load_speakers(self):
+        """
+        Loads speaker embeddings from the specified speakers_dir into the XTTS model's
+        speaker manager. This is called during initialization.
+        """
+        self.xtts_model.speaker_manager.speakers = {}
+        for pt_file in self.speakers_dir.glob("*.pt"):
+            data = torch.load(pt_file, map_location="cpu")
+            self.xtts_model.speaker_manager.speakers[pt_file.stem] = {
+                "gpt_cond_latent": data["gpt_cond_latent"],
+                "speaker_embedding": data["speaker_embedding"]
+            }
+        print(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} speakers.")
+
+    def synthesize_stream_raw(self, text: str, speaker_name: str):
+        """
+        Performs raw XTTS inference and yields audio chunks.
+        This method is synchronous and yields PyTorch tensors or NumPy arrays.
+        It does NOT handle client-specific queues or network streaming.
+
+        Args:
+            text (str): The text to synthesize.
+            speaker_name (str): The name of the speaker to use.
+
+        Yields:
+            numpy.ndarray: Raw audio chunks (float32, 24kHz) as NumPy arrays.
+                           These will need further processing (e.g., 16-bit PCM conversion,
+                           resampling if target is different) by an orchestrator.
+        Raises:
+            ValueError: If the speaker is not found.
+        """
+        speaker_data = self.xtts_model.speaker_manager.speakers.get(speaker_name)
+        if speaker_data is None:
+            raise ValueError(f"Speaker '{speaker_name}' not found.")
+
+        # Ensure speaker embeddings are on the correct device
+        gpt_cond_latent = speaker_data["gpt_cond_latent"].to(self.device)
+        speaker_embedding = speaker_data["speaker_embedding"].to(self.device)
+
+        # The inference_stream from Coqui TTS typically returns a synchronous generator
+        # of torch.Tensor chunks.
+        for chunk in self.xtts_model.inference_stream(
+            text=text,
+            language="en", # Assuming English, adjust if your app supports multiple
+            gpt_cond_latent=gpt_cond_latent,
+            speaker_embedding=speaker_embedding,
+            stream_chunk_size=512, # You can adjust this for latency vs. throughput
+        ):
+            # Convert PyTorch tensor to NumPy array on CPU before yielding
+            # (assuming subsequent processing expects NumPy)
+            yield chunk.cpu().numpy()
+
 async def websocket_server(websocket, client_id, nemo_transcriber):
     active_websockets[client_id] = websocket
     client_queues[client_id] = {
         "incoming_audio": asyncio.Queue(),
         "outgoing_audio": asyncio.Queue(),
         "outgoing_text": asyncio.Queue(),
-        "raw_asr": asyncio.Queue(),
     }
     try:
         incoming_task = asyncio.create_task(handle_incoming(websocket, client_id))
@@ -257,32 +325,41 @@ def prepare_for_streaming(chunk, type, rate):
     TARGET_RATE = 16000
     TARGET_WIDTH = 2  # 16-bit
     TARGET_CHANNELS = 1  # mono
-    if type == "wav":
-        # Convert WAV bytes to AudioSegment
-        audio = AudioSegment.from_file(io.BytesIO(chunk), format="wav")
-        # Convert to desired format
-        audio = audio.set_frame_rate(TARGET_RATE).set_channels(TARGET_CHANNELS).set_sample_width(TARGET_WIDTH)
-        return audio.raw_data
-    elif type == "raw":
-        # Input is already PCM, just resample if needed
-        if rate != TARGET_RATE:
-            chunk = audioop.ratecv(chunk, TARGET_WIDTH, TARGET_CHANNELS, rate, TARGET_RATE, None)[0]
-        return chunk
-    elif type == "float32":
-        # Assume chunk is a NumPy float32 array in range [-1.0, 1.0]
-        if isinstance(chunk, np.ndarray) and chunk.dtype == np.float32:
-            # Resample to 16kHz if needed
+    # Handle None or empty chunks upfront for all types
+    if chunk is None or (isinstance(chunk, (bytes, np.ndarray)) and len(chunk) == 0):
+        #print("DEBUG: prepare_for_streaming detected None/empty chunk, returning b''")
+        return b'' # Always return empty bytes for empty input
+    try:
+        if type == "wav":
+            # Convert WAV bytes to AudioSegment
+            audio = AudioSegment.from_file(io.BytesIO(chunk), format="wav")
+            # Convert to desired format
+            audio = audio.set_frame_rate(TARGET_RATE).set_channels(TARGET_CHANNELS).set_sample_width(TARGET_WIDTH)
+            return audio.raw_data
+        elif type == "raw":
+            # Input is already PCM, just resample if needed
             if rate != TARGET_RATE:
-                # Use linear interpolation resampling
-                chunk = librosa.resample(chunk, orig_sr=rate, target_sr=TARGET_RATE)
-            # Convert float32 [-1.0, 1.0] to int16 PCM
-            chunk = np.clip(chunk, -1.0, 1.0)
-            chunk_int16 = (chunk * 32767).astype(np.int16)
-            return chunk_int16.tobytes()
+                chunk = audioop.ratecv(chunk, TARGET_WIDTH, TARGET_CHANNELS, rate, TARGET_RATE, None)[0]
+            return chunk
+        elif type == "float32":
+            # Assume chunk is a NumPy float32 array in range [-1.0, 1.0]
+            if isinstance(chunk, np.ndarray) and chunk.dtype == np.float32:
+                # Resample to 16kHz if needed
+                if rate != TARGET_RATE:
+                    # Use linear interpolation resampling
+                    chunk = librosa.resample(chunk, orig_sr=rate, target_sr=TARGET_RATE)
+                # Convert float32 [-1.0, 1.0] to int16 PCM
+                chunk = np.clip(chunk, -1.0, 1.0)
+                chunk_int16 = (chunk * 32767).astype(np.int16)
+                return chunk_int16.tobytes()
+            else:
+                raise ValueError("Expected NumPy float32 array for type='float32'")
+                return b''
         else:
-            raise ValueError("Expected NumPy float32 array for type='float32'")
-    else:
-        raise ValueError(f"Unsupported audio type: {type}")
+            raise ValueError(f"Unsupported audio type: {type}")
+    except Exception as e:
+        print(f"Error in prepare_for_streaming for type '{type}': {e}. Returning empty bytes.")
+        return b'' # Catch any unexpected errors during processing and return empty bytes
 
 async def send_message_to_clients(client_id, message):
     """Send a message to all connected WebSocket clients."""
@@ -294,6 +371,7 @@ async def send_message_to_clients(client_id, message):
     #    print("No active clients to send messages to.")
 
 async def stream_tts_audio(client_id, text):
+    global pipertts_wrapper
     print(f"[TTS] Streaming (raw) to client {client_id}: {text}")
     
     if client_id not in client_queues:
@@ -301,56 +379,50 @@ async def stream_tts_audio(client_id, text):
         return
 
     try:
-        for chunk in pipervoice.synthesize_stream_raw(text):
+        async for chunk in pipertts_wrapper.synthesize_stream_raw(text):
             # Use dict to indicate raw PCM
-            converted_chunk = await asyncio.to_thread(prepare_for_streaming, chunk, 'raw', pipervoice.config.sample_rate)
+            converted_chunk = await asyncio.to_thread(prepare_for_streaming, chunk, 'raw', pipertts_wrapper.sample_rate)
             #await client_queues[client_id]["outgoing_audio"].put({"type": "raw_pcm", "data": chunk, "rate": pipervoice.config.sample_rate})
-            await client_queues[client_id]["outgoing_audio"].put(converted_chunk)
-            await asyncio.sleep(0.015)
+            if converted_chunk:
+                await client_queues[client_id]["outgoing_audio"].put(converted_chunk)
+                await asyncio.sleep(0.015)
+            else:
+                print("empty chunk returned, ignoring...")
+                pass
 
         await client_queues[client_id]["outgoing_audio"].put(None)
 
     except Exception as e:
         print(f"[TTS] Error streaming to {client_id}: {e}")
-    
-def load_speakers_into_manager():
-    """
-    Load all .pt files in the speakers directory into speaker_manager.
-    """
-    for pt_file in SPEAKERS_DIR.glob("*.pt"):
-        data = torch.load(pt_file, map_location="cpu")
-        xtts_model.speaker_manager.speakers[pt_file.stem] = {
-            "gpt_cond_latent": data["gpt_cond_latent"],
-            "speaker_embedding": data["speaker_embedding"]
-        }
-    print(f"Loaded {len(xtts_model.speaker_manager.speakers)} speakers into speaker_manager.")
 
 async def synthesize_xtts_audio(speaker_name, text, buffer):
+    """
+    Kicks off XTTS inference in a background thread and puts processed audio chunks
+    into the provided asyncio.Queue buffer.
+    """
+    global xtts_wrapper
     print(f"Computing XTTS for: {text}")
-    speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
-    if speaker_data is None:
-        raise ValueError("Speaker not found.")
+    #speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
+    #if speaker_data is None:
+    #    raise ValueError("Speaker not found.")
     #assert isinstance(speaker_data["gpt_cond_latent"], torch.Tensor), "gpt_cond_latent is not a Tensor"
     #assert isinstance(speaker_data["speaker_embedding"], torch.Tensor), "speaker_embedding is not a Tensor"
 
     def blocking_inference():
-        #print(f"[XTTS] Executing blocking loop.")
         try:
-            chunks = xtts_model.inference_stream(
-                text=text,
-                language="en",
-                gpt_cond_latent=speaker_data["gpt_cond_latent"].to(xtts_model.device),
-                speaker_embedding=speaker_data["speaker_embedding"].to(xtts_model.device),
-                stream_chunk_size=512,
-            )
-            for chunk in chunks:
-                if chunk is None or len(chunk) == 0:
+            # Call the XTTSWrapper's raw generator directly
+            # xtts_wrapper is assumed to be available from the outer scope
+            chunks_raw = xtts_wrapper.synthesize_stream_raw(text, speaker_name)
+
+            for chunk_np_float32 in chunks_raw: # chunk_np_float32 is already a NumPy array from synthesize_stream_raw
+                if chunk_np_float32 is None or len(chunk_np_float32) == 0:
                     continue
-                # Move from GPU to CPU
-                chunk_np = chunk.cpu().numpy()
-                # Convert to streamable format (in thread)
-                converted_chunk = prepare_for_streaming(chunk_np, 'float32', 22050)
-                # Send it to the buffer queue from this thread
+
+                # Prepare the chunk for streaming (e.g., to 16-bit PCM bytes)
+                # Use xtts_wrapper.sample_rate for consistency
+                converted_chunk = prepare_for_streaming(chunk_np_float32, 'float32', xtts_wrapper.sample_rate)
+
+                # Send it to the buffer queue from this thread (thread-safe way)
                 asyncio.run_coroutine_threadsafe(
                     buffer.put(converted_chunk),
                     main_loop
@@ -360,15 +432,22 @@ async def synthesize_xtts_audio(speaker_name, text, buffer):
                 buffer.put(None),
                 main_loop
             )
-            print(f"[XTTS] Finished streaming to buffer for client {client_id}")
+            print(f"[XTTS] Finished streaming to buffer.") # client_id not directly in this function now
+        except ValueError as ve:
+            print(f"[XTTS] Speaker Error during inference: {ve}")
+            asyncio.run_coroutine_threadsafe(buffer.put(None), main_loop)
         except Exception as e:
-            print(f"[XTTS] Error during inference: {e}")
+            print(f"[XTTS] General Error during inference: {e}")
             asyncio.run_coroutine_threadsafe(buffer.put(None), main_loop)
 
     # Run the blocking work in a background thread
     await asyncio.to_thread(blocking_inference)
 
 async def stream_xtts_audio(client_id, buffer):
+    """
+    Streams pre-buffered XTTS audio chunks from an asyncio.Queue to a specific client's
+    outgoing_audio queue.
+    """
     print(f"[XTTS] Streaming from buffer queue to client {client_id}")
     queue = client_queues.get(client_id, {}).get("outgoing_audio")
     if not queue:
@@ -387,40 +466,72 @@ async def stream_xtts_audio(client_id, buffer):
         print(f"[XTTS] Error streaming to {client_id}: {e}")
 
 async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
-    """Generates speech using Coqui XTTS and streams it over WebSockets."""
-    print(f"Streaming XTTS for: {text}")
-    speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
+    """
+    Generates speech using Coqui XTTS and streams it directly over WebSockets
+    to a specific client without pre-buffering.
+    """
+    global xtts_wrapper
+    print(f"Streaming XTTS directly for: {text}")
+    #speaker_data = xtts_model.speaker_manager.speakers.get(speaker_name)
 
-    if speaker_data is None:
-        raise ValueError(f"Speaker '{speaker_name}' not found in speaker_manager.")
+    #if speaker_data is None:
+    #    raise ValueError(f"Speaker '{speaker_name}' not found in speaker_manager.")
 
-    chunks = xtts_model.inference_stream(
-        text=text,
-        language="en",
-        gpt_cond_latent=speaker_data["gpt_cond_latent"].to(xtts_model.device),
-        speaker_embedding=speaker_data["speaker_embedding"].to(xtts_model.device),
-        stream_chunk_size=512,  # optional, tune for latency/quality
-    )
+    # This is the client's outgoing audio queue
+    client_queue = client_queues[client_id]["outgoing_audio"]
 
-    try:
-        for chunk in chunks:
-            # chunk is a NumPy float32 array at 24kHz
-            if chunk is None or len(chunk) == 0:
-                continue
-            chunk_np = chunk.cpu().numpy()
-            converted_chunk = await asyncio.to_thread(prepare_for_streaming, chunk_np, 'float32', 22050)
-            await client_queues[client_id]["outgoing_audio"].put(converted_chunk)
-            await asyncio.sleep(0.015)
-        await client_queues[client_id]["outgoing_audio"].put(None)
-    except Exception as e:
-        print(f"[XTTS] Error streaming to {client_id}: {e}")
+    def blocking_direct_inference():
+        """
+        This synchronous function runs in a separate thread,
+        iterates the XTTS generator, and puts chunks into the asyncio queue.
+        """
+        try:
+            # Get the synchronous generator from the XTTSWrapper
+            chunks_raw_generator = xtts_wrapper.synthesize_stream_raw(text, speaker_name)
+
+            # Iterate over the synchronous generator in this background thread
+            for chunk_np_float32 in chunks_raw_generator:
+                if chunk_np_float32 is None or len(chunk_np_float32) == 0:
+                    continue # Skip empty/None chunks
+
+                # Prepare the chunk for streaming in this background thread
+                converted_chunk = prepare_for_streaming(chunk_np_float32, 'float32', xtts_wrapper.sample_rate)
+
+                # Send the processed chunk to the client's queue from this thread.
+                # asyncio.run_coroutine_threadsafe is used for thread-safe scheduling
+                # of a coroutine (queue.put) onto the main event loop.
+                asyncio.run_coroutine_threadsafe(
+                    client_queue.put(converted_chunk),
+                    main_loop
+                )
+                # Small sleep can be added if needed, but often not necessary here
+                # time.sleep(0.001)
+
+            # After all chunks are processed, signal end-of-stream to the client's queue
+            asyncio.run_coroutine_threadsafe(
+                client_queue.put(None),
+                main_loop
+            )
+            print(f"[XTTS] Finished direct streaming to client {client_id} (from thread).")
+
+        except ValueError as ve:
+            # Catch specific ValueErrors (like speaker not found from XTTSWrapper)
+            print(f"[XTTS] Speaker/Input Error during direct streaming to {client_id} (in thread): {ve}")
+            asyncio.run_coroutine_threadsafe(client_queue.put(None), main_loop) # Signal end on error
+        except Exception as e:
+            # Catch any other unexpected errors
+            print(f"[XTTS] General Error during direct streaming to {client_id} (in thread): {e}")
+            asyncio.run_coroutine_threadsafe(client_queue.put(None), main_loop) # Signal end on error
+
+    # Run the entire blocking_direct_inference function in a separate thread
+    await asyncio.to_thread(blocking_direct_inference)
 
 async def process_audio_from_queue(client_id, nemo_transcriber):
     """
     Processes audio chunks from an asyncio.Queue.
     """
-    chunk_size_ms = NEMO_LOOKAHEAD_SIZE + NEMO_ENCODER_STEP_LENGTH
-    bytes_per_chunk = int(NEMO_SAMPLE_RATE * chunk_size_ms / 1000) * 2  # 2 bytes per sample (int16)
+    chunk_size_ms = CONFIG["nemo_lookahead_size"] + CONFIG["nemo_encoder_step_length"]
+    bytes_per_chunk = int(CONFIG["audio_sample_rate"] * chunk_size_ms / 1000) * 2  # 2 bytes per sample (int16)
     audio_buffer = b''  # Initialize an empty byte buffer
     previous_transcriptions = []
     stability_threshold = 4  # (5) Number of chunks to consider for stability
@@ -487,8 +598,64 @@ async def process_audio_from_queue(client_id, nemo_transcriber):
                         json_string = json.dumps(data_to_send)
                         await send_message_to_clients(client_id, json_string)
                     if is_final:
+                        #print("Current speaker is done speaking")
                         previous_transcriptions = []  # Reset for the next utterance
                         previous_text = text  # Update previous_text
+                        if 'the time' in new_text.lower():
+                            print("Asked about the time")
+                            strTime = datetime.datetime.now().strftime("%H:%M:%S")
+                            response_text = f"Sir, the time is {strTime}"
+                            data_to_send = {
+                                "speaker": SERVER,
+                                "final": "True",
+                                "transcript": response_text
+                            }
+                            json_string = json.dumps(data_to_send)  
+                            # Send response as text/ JSON
+                            #asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
+                            await send_message_to_clients(client_id, json_string)
+                            # Send response as TTS audio
+                            if not clientSideTTS and active_websockets:
+                                #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(client_id, response_text))
+                                asyncio.create_task(stream_tts_audio(client_id, response_text))
+                        if 'your name' in new_text.lower():
+                            print("Asked about my name")
+                            #response_text = f"Sir, my name is {SERVER}"
+                            response_text = "My name is Neil Richard Gaiman."
+                            data_to_send = {
+                                "speaker": SERVER,
+                                "final": "True",
+                                "transcript": response_text
+                            }
+                            json_string = json.dumps(data_to_send)
+                            # Send response as text/ JSON
+                            if active_websockets:
+                                asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
+                            # Send response directly using synthesize_stream_xtts_audio
+                            if not clientSideTTS and active_websockets:
+                                #main_loop.call_soon_threadsafe(asyncio.create_task, synthesize_stream_xtts_audio('neil_gaiman',response_text))
+                                asyncio.create_task(synthesize_stream_xtts_audio(client_id, 'neil_gaiman', response_text))
+                            '''
+                            if not clientSideTTS and active_websockets:
+                                async def parallel_tts_pipeline():
+                                    # Preload speaker data etc. up front, but defer generator work
+                                    buffer = asyncio.Queue()
+
+                                    # Kick off Coqui as a background task — it starts immediately!
+                                    coqui_task = asyncio.create_task(synthesize_xtts_audio("neil_gaiman", response_text, buffer))
+
+                                    # Do Piper TTS first (synchronous, placeholder speech)
+                                    await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
+
+                                    # Once Piper is done, begin streaming the already-buffering Coqui output
+                                    await stream_xtts_audio(client_id, buffer)
+
+                                    # Optional: wait for Coqui task to fully complete if needed
+                                    await coqui_task
+
+                                #main_loop.call_soon_threadsafe(lambda: asyncio.create_task(parallel_tts_pipeline()))
+                                asyncio.create_task(parallel_tts_pipeline())
+                            '''
 
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
                 await asyncio.sleep(0.01)  # Use asyncio.sleep
@@ -508,32 +675,29 @@ async def connection_handler(websocket):
     await websocket_server(websocket, client_id, nemo_transcriber)
 
 async def main():
-    global main_loop,nemo_transcriber
+    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper
     main_loop = asyncio.get_event_loop()  # Store the event loop
-    #load all speakers one time into dictionary
-    load_speakers_into_manager()
-        # Initialize the Nemo transcriber
+    # Initialize PiperTTS instance
+    pipertts_wrapper = PiperTTS(CONFIG["piper_model_path"])
+    # Initialize Coqui XTTS instance
+    xtts_wrapper = XTTSWrapper(CONFIG["xtts_model_dir"], CONFIG["inference_device"], CONFIG["speakers_dir"])
+    # Initialize the Nemo transcriber
     nemo_transcriber = NemoStreamingTranscriber(
-        model_path=NEMO_MODEL_PATH,
-        decoder_type=NEMO_DECODER_TYPE,
-        lookahead_size=NEMO_LOOKAHEAD_SIZE,
-        encoder_step_length=NEMO_ENCODER_STEP_LENGTH,
-        device=DEVICE,
-        sample_rate=NEMO_SAMPLE_RATE
+        model_path=CONFIG["nemo_model_path"],
+        decoder_type=CONFIG["nemo_decoder_type"],
+        lookahead_size=CONFIG["nemo_lookahead_size"],
+        encoder_step_length=CONFIG["nemo_encoder_step_length"],
+        device=CONFIG["inference_device"],
+        sample_rate=CONFIG["audio_sample_rate"]
     )
     # Start the WebSocket server for receiving audio
-    print(f"Starting WebSocket server on ws://{HOST}:{PORT}")
-    server = await websockets.serve(connection_handler, HOST, PORT)
-    #transcribe_task = asyncio.create_task(transcribe_audio_service())
+    print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
+    server = await websockets.serve(connection_handler, CONFIG['websocket_host'], CONFIG['websocket_port'])
     # Start and keep the server running
     await server.wait_closed()
-    # Start the transcription process
-    #await transcribe_task
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())  # Proper event loop handling for Python 3.10+
-    except KeyboardInterrupt:
-        # stop recording
-        #audio_source.completed_recording()  
+    except KeyboardInterrupt: 
         print("Server shutting down.")

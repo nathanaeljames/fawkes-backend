@@ -16,13 +16,13 @@
 	"forwardPorts": [9001,9001],
 
 	//SWITCH FOR GPU
-	//"runArgs": [
-	//	"-p=9001:9001",
-	//	"--gpus=all"
-	//],
 	"runArgs": [
-		"-p=9001:9001"
+		"-p=9001:9001",
+		"--gpus=all"
 	],
+	//"runArgs": [
+	//	"-p=9001:9001"
+	//],
 
 	// Uncomment the next line to run commands after the container is created.
 	// "postCreateCommand": "cat /etc/os-release",
