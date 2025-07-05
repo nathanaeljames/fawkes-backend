@@ -35,3 +35,9 @@ Basic Python backend for Fawkes chatbot
 
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
 * ISSUE 2: Docker "rebuild" insists on using cache, instantly reusing broken container and ignoring any revisions to Dockerfile, must run `docker system prune -a`
+
+NOTES:
+* Currently using fastconformer hybrid cache-aware streaming transformer, which is state-of-the-art for transformer-based streaming ASR. However, may eventually replace this with Mamba state-space models which are showing much better promise for long-context STT, and especially speech seperation and diarization [1](https://arxiv.org/html/2410.06459v2) [2](https://www.researchgate.net/publication/384770025_Mamba-based_Segmentation_Model_for_Speaker_Diarization). SSM models are more in the research stage and may require some engineering for streaming audio support.
+* First pass: set up VAD, basic speaker recognition, transformer-based STT, context-aware LM rescoring.
+* VAD is usefull regardles of pipeline, can give a "soft" end-of-utterance for batch processing of N-best candidates/beam search by contextual LM. VAD finality can be second guessed by LM rescoring.
+* Second pass: Investigate SSM models, speech seperation (e.g. [svoice Multi-stage Gated NN](https://github.com/facebookresearch/svoice)) vs Mamba SSM, CASA/dereverberation [1](https://pmc.ncbi.nlm.nih.gov/articles/PMC7473777/), possible replacement of transformer ASR with SSM ASR
