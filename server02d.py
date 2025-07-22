@@ -47,7 +47,9 @@ CONFIG = {
     "nemo_lookahead_size": 480, # 0ms, 80ms, 480ms, 1040ms lookahead / 80ms, 160ms, 540ms, 1120ms chunk size
     "nemo_decoder_type": 'rnnt',
     "audio_sample_rate": 16000,
-    "vad_sample_rate": 16000
+    "vad_sample_rate": 16000,
+    "vad_threshold": 0.8, # Increased VAD threshold - COMMON FIX
+    "silence_duration_for_finality_ms": 500 # ms of silence to trigger finality
 }
 
 active_websockets = {}  # client_id -> websocket
@@ -643,7 +645,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                             data_to_send = {
                                 "speaker": SPEAKER,
                                 "final": False, # Always interim while speaking
-                                "transcript": new_text_part
+                                "transcript": text
                             }
                             json_string = json.dumps(data_to_send)
                             await send_message_to_clients(client_id, json_string)
@@ -710,7 +712,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
                 await asyncio.sleep(0.01)  # Use asyncio.sleep
             except Exception as e:
-               print(f"Error processing audio for {client_id}: {e}")
+                print(f"Error processing audio for {client_id}: {e}")
                 break
             finally:
                 #client_queues[client_id]["incoming_audio"].task_done() # Necessary for asyncio.Queue
@@ -732,7 +734,7 @@ async def connection_handler(websocket):
     await websocket_server(websocket, client_id, nemo_transcriber, nemo_vad)
 
 async def main():
-    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper
+    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper, nemo_vad
     main_loop = asyncio.get_event_loop()  # Store the event loop
     # Initialize PiperTTS instance
     pipertts_wrapper = PiperTTS(CONFIG["piper_model_path"])
