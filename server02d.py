@@ -48,7 +48,7 @@ CONFIG = {
     "nemo_decoder_type": 'rnnt',
     "audio_sample_rate": 16000,
     "vad_sample_rate": 16000,
-    "vad_threshold": 0.8, # Increased VAD threshold - COMMON FIX
+    "vad_threshold": 0.3, # Increased VAD threshold - COMMON FIX
     "silence_duration_for_finality_ms": 500 # ms of silence to trigger finality
 }
 
@@ -166,28 +166,38 @@ class NeMoVAD:
         print("NeMo VAD model loaded successfully")
 
     def detect_voice(self, audio_chunk_int16: np.ndarray):
-        # Ensure the audio chunk is 1D for processing if it's not already
+        # Ensure the audio chunk is 1D
         if audio_chunk_int16.ndim > 1:
             audio_chunk_int16 = audio_chunk_int16.squeeze()
 
-        # Convert int16 numpy array to float32 tensor in range [-1.0, 1.0]
+        # Convert to float32 in range [-1.0, 1.0]
         audio_signal = torch.from_numpy(audio_chunk_int16.astype(np.float32) / 32768.0).unsqueeze(0).to(self.device)
         audio_signal_len = torch.Tensor([audio_signal.shape[1]]).to(self.device)
 
         with torch.no_grad():
-            # Forward pass through the VAD model
+            # Get logits from the model
             logits = self.model.forward(input_signal=audio_signal, input_signal_length=audio_signal_len)
             
-            # Apply sigmoid to get probabilities. The output of MarbleNet VAD is usually a logit.
-            probabilities = torch.sigmoid(logits)
+            # MarbleNet outputs logits for speech vs non-speech
+            # Apply softmax to get probabilities
+            probabilities = torch.softmax(logits, dim=-1)
             
-            # Determine voice activity based on a threshold
-            # The VAD model typically outputs one probability per time frame (e.g., 10-20ms).
-            # We can consider voice active if ANY frame in the chunk crosses the threshold.
-            VAD_THRESHOLD = 0.5 # A common threshold, can be tuned
-            is_voice_active = (probabilities.squeeze().cpu().numpy() > VAD_THRESHOLD).any()
+            # Take the speech probability (usually index 1, non-speech is index 0)
+            if probabilities.shape[-1] > 1:
+                speech_prob = probabilities[..., 1]  # Speech class
+            else:
+                speech_prob = torch.sigmoid(logits.squeeze())
             
-            return is_voice_active # Returns a single boolean for the entire chunk
+            # Average probability across time frames
+            avg_speech_prob = speech_prob.mean().cpu().numpy()
+            
+            VAD_THRESHOLD = CONFIG["vad_threshold"]  # from config
+            is_voice_active = avg_speech_prob > VAD_THRESHOLD
+            
+            # Debug output (remove after testing)
+            #print(f"VAD: avg_prob={avg_speech_prob:.3f}, threshold={VAD_THRESHOLD}, active={is_voice_active}")
+            
+            return is_voice_active
 
 class PiperTTS:
     def __init__(self, model_path):
@@ -592,7 +602,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
     # A VAD threshold of ~0.5 to 1 second of continuous silence is usually good for finality.
     # So, 1 second / (chunk_size_ms / 1000) = chunks per second
     # For 560ms chunks, it's ~1.78 chunks/sec. 3 chunks ~ 1.68s. Adjust as needed.
-    SILENCE_CHUNKS_THRESHOLD = 3 # Number of consecutive silent ASR chunks to consider end of utterance
+    SILENCE_CHUNKS_THRESHOLD = 2 # Number of consecutive silent ASR chunks to consider end of utterance
     previous_text = ""  # Store the previously sent text (for incremental updates)
 
     try:
@@ -617,6 +627,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                     # Run VAD inference in a thread pool to avoid blocking the event loop
                     is_voice_active_in_chunk = await asyncio.to_thread(nemo_vad.detect_voice, audio_chunk_np)
 
+                    #print(f"Audio chunk stats: min={audio_chunk_np.min()}, max={audio_chunk_np.max()}, std={audio_chunk_np.std()}")
+
                     if is_voice_active_in_chunk:
                         current_utterance_buffer += chunk_bytes # Accumulate all speech
                         silence_counter = 0 # Reset silence counter
@@ -633,23 +645,31 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                                                                         device=nemo_transcriber.device)
                             nemo_transcriber.cache_last_channel, nemo_transcriber.cache_last_time, nemo_transcriber.cache_last_channel_len = \
                                 nemo_transcriber.asr_model.encoder.get_initial_cache_state(batch_size=1)
-                            previous_text = "" # Clear previous text for a new utterance
+                            #previous_text = "" # Clear previous text for a new utterance
+                            text = ""
 
                         # Perform ASR transcription on the *current audio chunk* if speech is active
                         # This gives incremental updates
                         text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk_np)
 
                         # Only send new parts of the transcription
-                        new_text_part = text[len(previous_text):].strip()
-                        if new_text_part:
-                            data_to_send = {
-                                "speaker": SPEAKER,
-                                "final": False, # Always interim while speaking
-                                "transcript": text
-                            }
-                            json_string = json.dumps(data_to_send)
-                            await send_message_to_clients(client_id, json_string)
-                        previous_text = text # Update previous_text for next incremental step
+                        #new_text_part = text[len(previous_text):].strip()
+                        #if new_text_part:
+                        #    data_to_send = {
+                        #        "speaker": SPEAKER,
+                        #        "final": False, # Always interim while speaking
+                        #        "transcript": text
+                        #    }
+                        #    json_string = json.dumps(data_to_send)
+                        #    await send_message_to_clients(client_id, json_string)
+                        #previous_text = text # Update previous_text for next incremental step
+                        data_to_send = {
+                            "speaker": SPEAKER,
+                            "final": False, # Always interim while speaking
+                            "transcript": text
+                        }
+                        json_string = json.dumps(data_to_send)
+                        await send_message_to_clients(client_id, json_string)
 
                     else: # VAD indicates silence
                         silence_counter += 1
@@ -666,7 +686,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                                 data_to_send = {
                                     "speaker": SPEAKER,
                                     "final": True,
-                                    "transcript": final_transcription
+                                    "transcript": f"Final transcription: {final_transcription}"
                                 }
                                 json_string = json.dumps(data_to_send)
                                 await send_message_to_clients(client_id, json_string)
@@ -707,7 +727,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                                 
                             # Reset for next utterance
                             current_utterance_buffer = b''
-                            previous_text = "" # Reset previous_text for the new utterance
+                            #previous_text = "" # Reset previous_text for the new utterance
+                            text = ""
 
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
                 await asyncio.sleep(0.01)  # Use asyncio.sleep
