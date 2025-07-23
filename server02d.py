@@ -603,7 +603,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
     # So, 1 second / (chunk_size_ms / 1000) = chunks per second
     # For 560ms chunks, it's ~1.78 chunks/sec. 3 chunks ~ 1.68s. Adjust as needed.
     SILENCE_CHUNKS_THRESHOLD = 2 # Number of consecutive silent ASR chunks to consider end of utterance
-    previous_text = ""  # Store the previously sent text (for incremental updates)
+    #previous_text = ""  # Store the previously sent text (for incremental updates)
+    final_transcription_text = ""
 
     try:
         while True:
@@ -635,7 +636,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
 
                         if not is_speaking:
                             is_speaking = True
-                            print(f"[{client_id}] Voice activity started.")
+                            #print(f"[{client_id}] Voice activity started.")
                             # Reset ASR state for a new utterance
                             nemo_transcriber.previous_hypotheses = None
                             nemo_transcriber.pred_out_stream = None
@@ -645,24 +646,13 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                                                                         device=nemo_transcriber.device)
                             nemo_transcriber.cache_last_channel, nemo_transcriber.cache_last_time, nemo_transcriber.cache_last_channel_len = \
                                 nemo_transcriber.asr_model.encoder.get_initial_cache_state(batch_size=1)
-                            #previous_text = "" # Clear previous text for a new utterance
                             text = ""
+                            final_transcription_text = ""  # Reset for new utterance
 
                         # Perform ASR transcription on the *current audio chunk* if speech is active
-                        # This gives incremental updates
                         text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk_np)
+                        final_transcription_text = text  # Keep updating the final transcription
 
-                        # Only send new parts of the transcription
-                        #new_text_part = text[len(previous_text):].strip()
-                        #if new_text_part:
-                        #    data_to_send = {
-                        #        "speaker": SPEAKER,
-                        #        "final": False, # Always interim while speaking
-                        #        "transcript": text
-                        #    }
-                        #    json_string = json.dumps(data_to_send)
-                        #    await send_message_to_clients(client_id, json_string)
-                        #previous_text = text # Update previous_text for next incremental step
                         data_to_send = {
                             "speaker": SPEAKER,
                             "final": False, # Always interim while speaking
@@ -675,23 +665,20 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                         silence_counter += 1
                         if is_speaking and silence_counter >= SILENCE_CHUNKS_THRESHOLD:
                             is_speaking = False
-                            print(f"[{client_id}] Voice activity ended. Processing final utterance.")
+                            #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
 
-                            # Simply use the last transcription from the incremental processing
-                            # No need to reprocess the entire buffer
-                            if text:  # If we have a transcription from the last chunk
-                                # Send the final transcription using the last incremental result
-                                final_transcription = text
+                            # Use the last transcription result
+                            if final_transcription_text:
                                 data_to_send = {
                                     "speaker": SPEAKER,
                                     "final": True,
-                                    "transcript": final_transcription  # Use the last incremental transcription
+                                    "transcript": final_transcription_text
                                 }
                                 json_string = json.dumps(data_to_send)
                                 await send_message_to_clients(client_id, json_string)
 
                                 # Trigger Time/Name responses only on final utterances from recognized SPEAKER
-                                if 'the time' in final_transcription.lower():
+                                if 'the time' in final_transcription_text.lower():
                                     print("Asked about the time")
                                     strTime = datetime.datetime.now().strftime("%H:%M:%S")
                                     response_text = f"Sir, the time is {strTime}"
@@ -704,7 +691,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                                     await send_message_to_clients(client_id, json_string)
                                     if not clientSideTTS and active_websockets:
                                         asyncio.create_task(stream_tts_audio(client_id, response_text))
-                                elif 'your name' in final_transcription.lower():
+                                elif 'your name' in final_transcription_text.lower():
                                     print("Asked about my name")
                                     response_text = "My name is Neil Richard Gaiman."
                                     data_to_send = {
