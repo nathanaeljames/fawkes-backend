@@ -677,16 +677,15 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                             is_speaking = False
                             print(f"[{client_id}] Voice activity ended. Processing final utterance.")
 
-                            # If there's accumulated speech, perform a final ASR transcription on it
-                            if current_utterance_buffer:
-                                final_utterance_np = np.frombuffer(current_utterance_buffer, dtype=np.int16)
-                                final_transcription = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, final_utterance_np)
-
-                                # Send the final transcription
+                            # Simply use the last transcription from the incremental processing
+                            # No need to reprocess the entire buffer
+                            if text:  # If we have a transcription from the last chunk
+                                # Send the final transcription using the last incremental result
+                                final_transcription = text
                                 data_to_send = {
                                     "speaker": SPEAKER,
                                     "final": True,
-                                    "transcript": f"Final transcription: {final_transcription}"
+                                    "transcript": final_transcription  # Use the last incremental transcription
                                 }
                                 json_string = json.dumps(data_to_send)
                                 await send_message_to_clients(client_id, json_string)
