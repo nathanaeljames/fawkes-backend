@@ -1,4 +1,4 @@
-# code cleanup before adding microservices
+# changing pipeline to process final utterances in offline beam-search mode in preparation for neural rescorer
 import asyncio
 from asyncio import Queue
 import websockets #pip install websockets
@@ -18,6 +18,7 @@ import audioop
 import nemo.collections.asr as nemo_asr
 from nemo.collections.asr.models.ctc_bpe_models import EncDecCTCModelBPE
 from nemo.collections.asr.models import EncDecRNNTBPEModel
+from nemo.collections.asr.models import EncDecHybridRNNTCTCBPEModel
 from nemo.collections.asr.parts.utils.streaming_utils import FrameBatchASR
 from omegaconf import OmegaConf, open_dict
 from nemo.collections.asr.parts.utils.streaming_utils import CacheAwareStreamingAudioBuffer
@@ -42,10 +43,14 @@ CONFIG = {
     "xtts_model_dir": "/root/fawkes/models/coqui_xtts/XTTS-v2/",
     "speakers_dir": "speakers",
     "nemo_model_path": "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid_large_streaming_multi.nemo",
+    "nemo_vad_model_path": "/root/fawkes/models/marblenet_vad_multi/frame_vad_multilingual_marblenet_v2.0.nemo",
     "nemo_encoder_step_length": 80,
     "nemo_lookahead_size": 480, # 0ms, 80ms, 480ms, 1040ms lookahead / 80ms, 160ms, 540ms, 1120ms chunk size
     "nemo_decoder_type": 'rnnt',
-    "audio_sample_rate": 16000
+    "audio_sample_rate": 16000,
+    "vad_sample_rate": 16000,
+    "vad_threshold": 0.3, # Increased VAD threshold - COMMON FIX
+    "silence_duration_for_finality_ms": 500 # ms of silence to trigger finality
 }
 
 active_websockets = {}  # client_id -> websocket
@@ -64,7 +69,11 @@ class NemoStreamingTranscriber:
         self.model_path = model_path
         self.decoder_type = decoder_type
         self.lookahead_size = lookahead_size
-        self.asr_model = self._load_model()
+        #self.asr_model = self._load_model()
+        # Load the streaming ASR model
+        self.asr_model = self._load_streaming_model()
+        # Load a separate, dedicated model for offline/n-best transcription
+        self.asr_offline_model = self._load_offline_model()
         self.preprocessor = self._init_preprocessor()
         self.cache_last_channel, self.cache_last_time, self.cache_last_channel_len = self.asr_model.encoder.get_initial_cache_state(
             batch_size=1)
@@ -93,6 +102,45 @@ class NemoStreamingTranscriber:
             asr_model.encoder.set_default_att_context_size(
                 [left_context_size, int(self.lookahead_size / self.encoder_step_length)])
         print("NeMo ASR model loaded successfully")
+        return asr_model
+
+    def _load_streaming_model(self):
+        print("Pre-loading NeMo Streaming ASR model...")
+        asr_model = EncDecHybridRNNTCTCBPEModel.restore_from(self.model_path, map_location=torch.device(self.device))
+        asr_model.eval()
+        decoding_cfg = asr_model.cfg.decoding
+        with open_dict(decoding_cfg):
+            decoding_cfg.strategy = "greedy"
+            decoding_cfg.preserve_alignments = False
+            if hasattr(asr_model, 'joint'):
+                decoding_cfg.greedy.max_symbols = 10
+                decoding_cfg.fused_batch_size = -1
+        asr_model.change_decoding_strategy(decoding_cfg)
+        if "multi" in self.model_path:
+            left_context_size = asr_model.encoder.att_context_size[0]
+            asr_model.encoder.set_default_att_context_size(
+                [left_context_size, int(self.lookahead_size / self.encoder_step_length)])
+        print("NeMo Streaming ASR model loaded successfully")
+        return asr_model
+
+    def _load_offline_model(self):
+        print("Pre-loading NeMo Offline ASR model for n-best list...")
+        asr_model = EncDecHybridRNNTCTCBPEModel.restore_from(self.model_path, map_location=torch.device(self.device))
+        asr_model.eval()
+        # Set beam search decoding and other parameters once, at load time
+        beam_size = 5  # You can adjust this value
+        offline_decoding_cfg = asr_model.cfg.decoding
+        with open_dict(offline_decoding_cfg):
+            offline_decoding_cfg.strategy = "beam"
+            offline_decoding_cfg.beam.beam_size = beam_size
+            offline_decoding_cfg.beam.return_best_hypothesis = False # This is key for n-best
+            # You may want to set preserve_alignments=True if you need word timestamps for the rescorer
+            offline_decoding_cfg.preserve_alignments = False
+            if hasattr(asr_model, 'joint'):
+                offline_decoding_cfg.greedy.max_symbols = 10
+                offline_decoding_cfg.fused_batch_size = -1
+        asr_model.change_decoding_strategy(offline_decoding_cfg)
+        print("NeMo Offline ASR model for n-best list loaded successfully")
         return asr_model
 
     def _init_preprocessor(self):
@@ -149,6 +197,51 @@ class NemoStreamingTranscriber:
         final_streaming_tran = self._extract_transcriptions(transcribed_texts)
         self.step_num += 1
         return final_streaming_tran[0]
+
+class NeMoVAD:
+    def __init__(self, model_path, device, sample_rate=16000):
+        print("Pre-loading NeMo VAD model...")
+        self.device = device
+        self.sample_rate = sample_rate
+        # The VAD model is an EncDecClassificationModel
+        self.model = nemo_asr.models.EncDecClassificationModel.restore_from(model_path, map_location=torch.device(self.device))
+        self.model.eval()
+        self.model.to(self.device)
+        print("NeMo VAD model loaded successfully")
+
+    def detect_voice(self, audio_chunk_int16: np.ndarray):
+        # Ensure the audio chunk is 1D
+        if audio_chunk_int16.ndim > 1:
+            audio_chunk_int16 = audio_chunk_int16.squeeze()
+
+        # Convert to float32 in range [-1.0, 1.0]
+        audio_signal = torch.from_numpy(audio_chunk_int16.astype(np.float32) / 32768.0).unsqueeze(0).to(self.device)
+        audio_signal_len = torch.Tensor([audio_signal.shape[1]]).to(self.device)
+
+        with torch.no_grad():
+            # Get logits from the model
+            logits = self.model.forward(input_signal=audio_signal, input_signal_length=audio_signal_len)
+            
+            # MarbleNet outputs logits for speech vs non-speech
+            # Apply softmax to get probabilities
+            probabilities = torch.softmax(logits, dim=-1)
+            
+            # Take the speech probability (usually index 1, non-speech is index 0)
+            if probabilities.shape[-1] > 1:
+                speech_prob = probabilities[..., 1]  # Speech class
+            else:
+                speech_prob = torch.sigmoid(logits.squeeze())
+            
+            # Average probability across time frames
+            avg_speech_prob = speech_prob.mean().cpu().numpy()
+            
+            VAD_THRESHOLD = CONFIG["vad_threshold"]  # from config
+            is_voice_active = avg_speech_prob > VAD_THRESHOLD
+            
+            # Debug output (remove after testing)
+            #print(f"VAD: avg_prob={avg_speech_prob:.3f}, threshold={VAD_THRESHOLD}, active={is_voice_active}")
+            
+            return is_voice_active
 
 class PiperTTS:
     def __init__(self, model_path):
@@ -252,7 +345,7 @@ class XTTSWrapper:
             # (assuming subsequent processing expects NumPy)
             yield chunk.cpu().numpy()
 
-async def websocket_server(websocket, client_id, nemo_transcriber):
+async def websocket_server(websocket, client_id, nemo_transcriber, nemo_vad):
     active_websockets[client_id] = websocket
     client_queues[client_id] = {
         "incoming_audio": asyncio.Queue(),
@@ -262,9 +355,7 @@ async def websocket_server(websocket, client_id, nemo_transcriber):
     try:
         incoming_task = asyncio.create_task(handle_incoming(websocket, client_id))
         outgoing_task = asyncio.create_task(handle_outgoing(websocket, client_id))
-        #asr_task = asyncio.create_task(run_streaming_asr(client_id))
-        #audio_recorder = AudioRecorder()
-        asr_task = asyncio.create_task(process_audio_from_queue(client_id, nemo_transcriber))
+        asr_task = asyncio.create_task(process_audio_from_queue(client_id, nemo_transcriber, nemo_vad))
         await asyncio.gather(incoming_task, outgoing_task, asr_task)
     except asyncio.CancelledError:
         print(f"WebSocket task for {client_id} cancelled.")
@@ -362,12 +453,7 @@ def prepare_for_streaming(chunk, type, rate):
 
 async def send_message_to_clients(client_id, message):
     """Send a message to all connected WebSocket clients."""
-    #print("Send message to clients called.")
     client_queues[client_id]["outgoing_text"].put_nowait(message)
-    #if active_websockets:
-    #    await asyncio.gather(*[ws.send(message) for ws in active_websockets])
-    #else:
-    #    print("No active clients to send messages to.")
 
 async def stream_tts_audio(client_id, text):
     global pipertts_wrapper, main_loop # Ensure main_loop is globally accessible if not already
@@ -429,7 +515,7 @@ async def synthesize_xtts_audio(speaker_name, text, buffer):
     Kicks off XTTS inference in a background thread and puts processed audio chunks
     into the provided asyncio.Queue buffer.
     """
-    global xtts_wrapper
+    global xtts_wrapper, main_loop
     print(f"Computing XTTS for: {text}")
 
     def blocking_direct_inference():
@@ -492,7 +578,7 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
     Generates speech using Coqui XTTS and streams it directly over WebSockets
     to a specific client without pre-buffering.
     """
-    global xtts_wrapper
+    global xtts_wrapper, main_loop
     print(f"Streaming XTTS directly for: {text}")
 
     # This is the client's outgoing audio queue
@@ -542,25 +628,31 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
     # Run the entire blocking_direct_inference function in a separate thread
     await asyncio.to_thread(blocking_direct_inference)
 
-async def process_audio_from_queue(client_id, nemo_transcriber):
+async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
     """
     Processes audio chunks from an asyncio.Queue.
     """
     chunk_size_ms = CONFIG["nemo_lookahead_size"] + CONFIG["nemo_encoder_step_length"]
     bytes_per_chunk = int(CONFIG["audio_sample_rate"] * chunk_size_ms / 1000) * 2  # 2 bytes per sample (int16)
     audio_buffer = b''  # Initialize an empty byte buffer
-    previous_transcriptions = []
-    stability_threshold = 4  # (5) Number of chunks to consider for stability
-    #silence_threshold_ms = 300  # (750) Silence threshold in milliseconds
-    #last_speech_time = time.time()  # Initialize last speech time
-    previous_text = ""  # Store the previously sent text 
+
+    # New VAD-related state variables
+    current_utterance_buffer = b''
+    is_speaking = False
+    silence_counter = 0
+    # Determine silence threshold in terms of VAD chunks.
+    # If your VAD processes in, say, 20ms frames, and your audio_chunk is 560ms,
+    # then one audio_chunk corresponds to 28 VAD frames.
+    # A VAD threshold of ~0.5 to 1 second of continuous silence is usually good for finality.
+    # So, 1 second / (chunk_size_ms / 1000) = chunks per second
+    # For 560ms chunks, it's ~1.78 chunks/sec. 3 chunks ~ 1.68s. Adjust as needed.
+    SILENCE_CHUNKS_THRESHOLD = 2 # Number of consecutive silent ASR chunks to consider end of utterance
+    #previous_text = ""  # Store the previously sent text (for incremental updates)
+    final_transcription_text = ""
 
     try:
         while True:
             try:
-                #chunk_count = 0
-                #audio_chunk = await client_queues[client_id]["incoming_audio"].get()  # Use await
-                #text = transcribe_chunk(audio_chunk)
                 audio_data = await client_queues[client_id]["incoming_audio"].get()
                 if audio_data is None or len(audio_data) == 0:
                     await asyncio.sleep(0.001)  # Or handle empty chunk as appropriate
@@ -569,129 +661,154 @@ async def process_audio_from_queue(client_id, nemo_transcriber):
                 while len(audio_buffer) >= bytes_per_chunk:
                     chunk_bytes = audio_buffer[:bytes_per_chunk]
                     audio_buffer = audio_buffer[bytes_per_chunk:]
-                    audio_chunk = np.frombuffer(chunk_bytes, dtype=np.int16)
-                    if audio_chunk.ndim != 1:
-                        audio_chunk = audio_chunk.squeeze()
-                    if audio_chunk.dtype != np.int16:
-                        audio_chunk = audio_chunk.astype(np.int16)
-                    text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk)
-                    #print(text)
-                    # --- Finality Detection Logic ---
-                    # 1. Update previous transcriptions
-                    previous_transcriptions.append(text)
-                    if len(previous_transcriptions) > stability_threshold:
-                        previous_transcriptions.pop(0)  # Keep only the last N transcriptions
-                    # 2. Check for stability
-                    is_stable = False
-                    if len(previous_transcriptions) == stability_threshold:
-                        is_stable = all(t == previous_transcriptions[0] for t in previous_transcriptions)
-                    # 3. Check for silence (crude approximation)
-                    #is_silent = len(audio_chunk) < 200  # (100) Adjust this threshold
-                    #print(f"chunk_len: {len(audio_chunk)}, is_silent: {is_silent}")
-                    #print("is silent")
-                    #current_time = time.time()
-                    #time_since_last_speech = current_time - last_speech_time
-                    #print("time since last speech = " + time_since_last_speech)
-                    # Hybrid Finality Decision
-                    #if is_stable:
-                    #    print("transcription stability event")
-                    #if is_silent and time_since_last_speech > silence_threshold_ms / 1000:
-                    #    print("silence event")
-                    #is_final = is_stable or (is_silent and time_since_last_speech > silence_threshold_ms / 1000)
-                    is_final = is_stable
-                    # Update last speech time if we detect speech
-                    #if not is_silent:
-                    #    last_speech_time = current_time
-                    #    print(f"Speech detected, last_speech_time updated to: {last_speech_time}")
-                    new_text = text[len(previous_text):].strip()  # Extract the new part
-                    # Send data (either final or interim)
-                    if new_text:
+                    audio_chunk_np = np.frombuffer(chunk_bytes, dtype=np.int16)
+                    # Ensure the audio_chunk_np is 1D for VAD
+                    if audio_chunk_np.ndim != 1:
+                        audio_chunk_np = audio_chunk_np.squeeze()
+                    #if audio_chunk_np.dtype != np.int16:
+                    #    audio_chunk_np = audio_chunk_np.astype(np.int16)
+                    
+                    # --- VAD Detection ---
+                    # Run VAD inference in a thread pool to avoid blocking the event loop
+                    is_voice_active_in_chunk = await asyncio.to_thread(nemo_vad.detect_voice, audio_chunk_np)
+
+                    #print(f"Audio chunk stats: min={audio_chunk_np.min()}, max={audio_chunk_np.max()}, std={audio_chunk_np.std()}")
+
+                    if is_voice_active_in_chunk:
+                        current_utterance_buffer += chunk_bytes # Accumulate all speech
+                        silence_counter = 0 # Reset silence counter
+
+                        if not is_speaking:
+                            is_speaking = True
+                            #print(f"[{client_id}] Voice activity started.")
+                            # Reset ASR state for a new utterance
+                            nemo_transcriber.previous_hypotheses = None
+                            nemo_transcriber.pred_out_stream = None
+                            nemo_transcriber.step_num = 0
+                            num_channels = nemo_transcriber.asr_model.cfg.preprocessor.features
+                            nemo_transcriber.cache_pre_encode = torch.zeros((1, num_channels, nemo_transcriber.pre_encode_cache_size),
+                                                                        device=nemo_transcriber.device)
+                            nemo_transcriber.cache_last_channel, nemo_transcriber.cache_last_time, nemo_transcriber.cache_last_channel_len = \
+                                nemo_transcriber.asr_model.encoder.get_initial_cache_state(batch_size=1)
+                            text = ""
+                            final_transcription_text = ""  # Reset for new utterance
+
+                        # Perform ASR transcription on the *current audio chunk* if speech is active
+                        text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk_np)
+                        final_transcription_text = text  # Keep updating the final transcription
+
                         data_to_send = {
                             "speaker": SPEAKER,
-                            "final": is_final,
-                            "transcript": new_text  # Send only the new part
+                            "final": False, # Always interim while speaking
+                            "transcript": text
                         }
                         json_string = json.dumps(data_to_send)
                         await send_message_to_clients(client_id, json_string)
-                    if is_final:
-                        #print("Current speaker is done speaking")
-                        previous_transcriptions = []  # Reset for the next utterance
-                        previous_text = text  # Update previous_text
-                        if 'the time' in new_text.lower():
-                            print("Asked about the time")
-                            strTime = datetime.datetime.now().strftime("%H:%M:%S")
-                            response_text = f"Sir, the time is {strTime}"
-                            data_to_send = {
-                                "speaker": SERVER,
-                                "final": "True",
-                                "transcript": response_text
-                            }
-                            json_string = json.dumps(data_to_send)  
-                            # Send response as text/ JSON
-                            #asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
-                            await send_message_to_clients(client_id, json_string)
-                            # Send response as TTS audio
-                            if not clientSideTTS and active_websockets:
-                                #main_loop.call_soon_threadsafe(asyncio.create_task, stream_tts_audio(client_id, response_text))
-                                asyncio.create_task(stream_tts_audio(client_id, response_text))
-                        if 'your name' in new_text.lower():
-                            print("Asked about my name")
-                            #response_text = f"Sir, my name is {SERVER}"
-                            response_text = "My name is Neil Richard Gaiman."
-                            data_to_send = {
-                                "speaker": SERVER,
-                                "final": "True",
-                                "transcript": response_text
-                            }
-                            json_string = json.dumps(data_to_send)
-                            # Send response as text/ JSON
-                            if active_websockets:
-                                asyncio.run_coroutine_threadsafe(send_message_to_clients(client_id, json_string), main_loop)
-                            # Send response directly using synthesize_stream_xtts_audio
-                            if not clientSideTTS and active_websockets:
-                                #main_loop.call_soon_threadsafe(asyncio.create_task, synthesize_stream_xtts_audio('neil_gaiman',response_text))
-                                asyncio.create_task(synthesize_stream_xtts_audio(client_id, 'neil_gaiman', response_text))
-                            '''
-                            if not clientSideTTS and active_websockets:
-                                async def parallel_tts_pipeline():
-                                    # Preload speaker data etc. up front, but defer generator work
-                                    buffer = asyncio.Queue()
 
-                                    # Kick off Coqui as a background task — it starts immediately!
-                                    coqui_task = asyncio.create_task(synthesize_xtts_audio("neil_gaiman", response_text, buffer))
+                    else: # VAD indicates silence
+                        silence_counter += 1
+                        if is_speaking and silence_counter >= SILENCE_CHUNKS_THRESHOLD:
+                            #is_speaking = False
+                            #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
+                            print("Acoustic finality detected. Processing full utterance with offline model...")
 
-                                    # Do Piper TTS first (synchronous, placeholder speech)
-                                    await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
+                            # We now have accoustic finality. Perform final offline n-best beam search
+                            # Then send to rescorer and P&C to determine linguistic finality
 
-                                    # Once Piper is done, begin streaming the already-buffering Coqui output
-                                    await stream_xtts_audio(client_id, buffer)
+                            # Get the bytes from the current_utterance_buffer
+                            audio_bytes = current_utterance_buffer
+                            # Convert the raw bytes to a numpy array of 16-bit integers
+                            audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+                            # Convert the 16-bit integers to 32-bit floats and normalize (as is standard for ASR)
+                            audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
-                                    # Optional: wait for Coqui task to fully complete if needed
-                                    await coqui_task
+                            with torch.no_grad():
+                                n_best_hypotheses = nemo_transcriber.asr_offline_model.transcribe(
+                                    audio_float32,
+                                    return_hypotheses=True,
+                                    batch_size=1
+                                )
+                            # n_best_hypotheses is a list of lists. We're only transcribing one file.
+                            n_best_list = [hyp.text for hyp in n_best_hypotheses[0]]
+                            print(f"Generated n-best list: {n_best_list}")
 
-                                #main_loop.call_soon_threadsafe(lambda: asyncio.create_task(parallel_tts_pipeline()))
-                                asyncio.create_task(parallel_tts_pipeline())
-                            '''
+                            # OLD METHOD Use the last transcription result
+                            if final_transcription_text:
+                                data_to_send = {
+                                    "speaker": SPEAKER,
+                                    "final": True,
+                                    "transcript": final_transcription_text
+                                }
+                                json_string = json.dumps(data_to_send)
+                                await send_message_to_clients(client_id, json_string)
+
+                                # Trigger Time/Name responses only on final utterances from recognized SPEAKER
+                                if 'the time' in final_transcription_text.lower():
+                                    print("Asked about the time")
+                                    strTime = datetime.datetime.now().strftime("%H:%M:%S")
+                                    response_text = f"Sir, the time is {strTime}"
+                                    data_to_send = {
+                                        "speaker": SERVER,
+                                        "final": "True",
+                                        "transcript": response_text
+                                    }
+                                    json_string = json.dumps(data_to_send)
+                                    await send_message_to_clients(client_id, json_string)
+                                    if not clientSideTTS and active_websockets:
+                                        asyncio.create_task(stream_tts_audio(client_id, response_text))
+                                elif 'your name' in final_transcription_text.lower():
+                                    print("Asked about my name")
+                                    response_text = "My name is Neil Richard Gaiman."
+                                    data_to_send = {
+                                        "speaker": SERVER,
+                                        "final": "True",
+                                        "transcript": response_text
+                                    }
+                                    json_string = json.dumps(data_to_send)
+                                    if active_websockets:
+                                        await send_message_to_clients(client_id, json_string)
+                                    if not clientSideTTS and active_websockets:
+                                        async def parallel_tts_pipeline():
+                                            buffer = asyncio.Queue()
+                                            coqui_task = asyncio.create_task(synthesize_xtts_audio("neil_gaiman", response_text, buffer))
+                                            await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
+                                            await stream_xtts_audio(client_id, buffer)
+                                            await coqui_task
+                                        asyncio.create_task(parallel_tts_pipeline())
+                                
+                            # Reset the buffer and state for the next utterance
+                            is_speaking = False
+                            silence_counter = 0
+                            current_utterance_buffer = b''
+                            #previous_text = "" # Reset previous_text for the new utterance
+                            text = ""
 
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
                 await asyncio.sleep(0.01)  # Use asyncio.sleep
             except Exception as e:
-                print(f"Error processing audio: {e}")
+                print(f"Error processing audio for {client_id}: {e}")
                 break
             finally:
-                client_queues[client_id]["incoming_audio"].task_done() # Necessary for asyncio.Queue
+                #client_queues[client_id]["incoming_audio"].task_done() # Necessary for asyncio.Queue
+                pass
 
     finally:
         print("Async Audio processing stopped")
 
 async def connection_handler(websocket):
-    global client_id, nemo_transcriber
+    global client_id, nemo_transcriber, nemo_vad
+    # For multiclient support (direct instantiation) you would actually initialize stateful models per-client here (EXPENSIVE)
+    # Realistically would need several "free-floating" instances that could be quick-attached to new streams (esp. w/ speech separation)
+    # Long-term: add model serving framework (e.g. NVIDIA Triton Inference Server, TorchServe, FastAPI/MLflow with custom logic)
+    # Shared weights, separate contexts - maintain separate internal states for each client
+    # Dynamic batching with clients' individual states managed separately by the serving layer
+    # Triton can manage transformer and SSM models, can also help organize adapter layers
     client_id = str(uuid.uuid4())
     print(f"New client connected: {client_id}")
-    await websocket_server(websocket, client_id, nemo_transcriber)
+    await websocket_server(websocket, client_id, nemo_transcriber, nemo_vad)
 
 async def main():
-    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper
+    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper, nemo_vad
     main_loop = asyncio.get_event_loop()  # Store the event loop
     # Initialize PiperTTS instance
     pipertts_wrapper = PiperTTS(CONFIG["piper_model_path"])
@@ -705,6 +822,12 @@ async def main():
         encoder_step_length=CONFIG["nemo_encoder_step_length"],
         device=CONFIG["inference_device"],
         sample_rate=CONFIG["audio_sample_rate"]
+    )
+    # Initialize the NeMo VAD model
+    nemo_vad = NeMoVAD(
+        model_path=CONFIG["nemo_vad_model_path"],
+        device=CONFIG["inference_device"],
+        sample_rate=CONFIG["vad_sample_rate"]
     )
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
