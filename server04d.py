@@ -1,4 +1,11 @@
-# changing pipeline to process final utterances in offline beam-search mode in preparation for neural rescorer
+# Pivoting away from NVIDIA Streaming Conformer-Hybrid Large (stt_en_fastconformer_hybrid_large_streaming_multi)
+# Moving final inference to Speech-augmented Language Model (SALM) transformer nvidia/canary-qwen-2.5b
+
+# CLEANUP IDEAS
+# move imports to required models loading class
+# rename classes send_message_to_clients() to send_message_to_client()
+# rename "NeMo" model"s classes/functions for more explicit
+# Write utterances to files in non-blocking manner for testing
 import asyncio
 from asyncio import Queue
 import websockets #pip install websockets
@@ -23,11 +30,14 @@ from nemo.collections.asr.parts.utils.streaming_utils import FrameBatchASR
 from omegaconf import OmegaConf, open_dict
 from nemo.collections.asr.parts.utils.streaming_utils import CacheAwareStreamingAudioBuffer
 from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer
+from nemo.collections.speechlm2.models import SALM
 import copy
 import time
 import atexit  # To handle exits
 import struct  # For writing binary data to WAV
 import librosa
+from scipy.io.wavfile import write as wav_write
 
 
 # Establish the preferred device to run models on
@@ -50,7 +60,8 @@ CONFIG = {
     "audio_sample_rate": 16000,
     "vad_sample_rate": 16000,
     "vad_threshold": 0.3, # Increased VAD threshold - COMMON FIX
-    "silence_duration_for_finality_ms": 500 # ms of silence to trigger finality
+    "silence_duration_for_finality_ms": 500, # ms of silence to trigger finality
+    "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/"
 }
 
 active_websockets = {}  # client_id -> websocket
@@ -73,7 +84,7 @@ class NemoStreamingTranscriber:
         # Load the streaming ASR model
         self.asr_model = self._load_streaming_model()
         # Load a separate, dedicated model for offline/n-best transcription
-        self.asr_offline_model = self._load_offline_model()
+        #self.asr_offline_model = self._load_offline_model()
         self.preprocessor = self._init_preprocessor()
         self.cache_last_channel, self.cache_last_time, self.cache_last_channel_len = self.asr_model.encoder.get_initial_cache_state(
             batch_size=1)
@@ -105,7 +116,7 @@ class NemoStreamingTranscriber:
         return asr_model
 
     def _load_streaming_model(self):
-        print("Pre-loading NeMo Streaming ASR model...")
+        print("Pre-loading NVIDIA NeMo Streaming Conformer-Hybrid Large...")
         asr_model = EncDecHybridRNNTCTCBPEModel.restore_from(self.model_path, map_location=torch.device(self.device))
         asr_model.eval()
         decoding_cfg = asr_model.cfg.decoding
@@ -120,7 +131,7 @@ class NemoStreamingTranscriber:
             left_context_size = asr_model.encoder.att_context_size[0]
             asr_model.encoder.set_default_att_context_size(
                 [left_context_size, int(self.lookahead_size / self.encoder_step_length)])
-        print("NeMo Streaming ASR model loaded successfully")
+        print("NVIDIA NeMo Streaming Conformer-Hybrid Large loaded successfully")
         return asr_model
 
     def _load_offline_model(self):
@@ -198,13 +209,286 @@ class NemoStreamingTranscriber:
         self.step_num += 1
         return final_streaming_tran[0]
 
+class CanaryQwenTranscriber:
+    def __init__(self, model_path, device):
+        print("Pre-loading Canary-Qwen-2.5b model...")
+        self.device = device
+        self.model_path = Path(model_path)
+        
+        try:
+            # Method 1: Try loading from local HuggingFace format (.safetensors + config.json)
+            self.model = SALM.from_pretrained(str(self.model_path))
+            print("Loaded from HuggingFace format (.safetensors)")
+        except Exception as e1:
+            print(f"HuggingFace format loading failed: {e1}")
+            try:
+                # Method 2: Try NeMo restore_from if there's a .nemo file
+                nemo_files = list(self.model_path.glob("*.nemo"))
+                if nemo_files:
+                    self.model = SALM.restore_from(str(nemo_files[0]))
+                    print("Loaded from .nemo format")
+                else:
+                    raise FileNotFoundError("No .nemo file found")
+            except Exception as e2:
+                print(f"NeMo format loading failed: {e2}")
+                try:
+                    # Method 3: Manual loading with explicit config
+                    config_path = self.model_path / "config.json"
+                    model_file = self.model_path / "model.safetensors"
+                    
+                    if config_path.exists() and model_file.exists():
+                        # Load using the config file path directly
+                        self.model = SALM.from_pretrained(
+                            pretrained_model_name=str(self.model_path),
+                            local_files_only=True,
+                            trust_remote_code=False
+                        )
+                        print("Loaded using explicit local config")
+                    else:
+                        raise FileNotFoundError("Required model files not found")
+                except Exception as e3:
+                    raise RuntimeError(f"All loading methods failed: {e1}, {e2}, {e3}")
+        
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        
+        # Store the audio locator tag for convenience
+        self.audio_locator_tag = getattr(self.model, 'audio_locator_tag', '<|audio|>')
+        
+        print("Canary-Qwen-2.5b model loaded successfully")
+
+    def transcribe_final(self, audio_float32, sample_rate=16000):
+        """
+        Perform final transcription with ITN and P&C using Canary-Qwen-2.5b
+        Uses in-memory processing only - no disk I/O
+        
+        Args:
+            audio_float32 (np.ndarray): Audio data as float32 normalized to [-1, 1]
+            sample_rate (int): Sample rate of the audio
+            
+        Returns:
+            str: Final transcription with punctuation and capitalization
+        """
+        try:
+            # Ensure audio is in the correct format
+            if audio_float32.dtype != np.float32:
+                audio_float32 = audio_float32.astype(np.float32)
+            
+            # Canary-Qwen expects 16kHz audio
+            if sample_rate != 16000:
+                audio_float32 = librosa.resample(audio_float32, orig_sr=sample_rate, target_sr=16000)
+            
+            # Convert to tensor
+            audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
+            audio_length = torch.tensor([len(audio_float32)]).to(self.device)
+            
+            # Method 1: Try direct transcribe method (simplest approach)
+            try:
+                print("[Canary-Qwen] Attempting Method 1: Direct transcribe")
+                transcription = self.model.transcribe([audio_float32])
+                if isinstance(transcription, list) and len(transcription) > 0:
+                    result = transcription[0].strip()
+                    if result and not result.startswith('<|'):  # Check for template artifacts
+                        print(f"[Canary-Qwen] Method 1 SUCCESS: {result}")
+                        return result
+                    else:
+                        raise ValueError(f"Method 1 returned template artifacts: {result}")
+                else:
+                    raise ValueError("Method 1 returned empty or invalid result")
+                        
+            except Exception as e1:
+                print(f"[Canary-Qwen] Method 1 FAILED: {e1}")
+                
+                # Method 2: Try with tensor input and transcribe
+                try:
+                    print("[Canary-Qwen] Attempting Method 2: Tensor transcribe")
+                    transcription = self.model.transcribe(
+                        audio_signal=audio_tensor,
+                        audio_signal_length=audio_length
+                    )
+                    
+                    if isinstance(transcription, list) and len(transcription) > 0:
+                        result = transcription[0].strip()
+                    else:
+                        result = str(transcription).strip()
+                        
+                    if result and not result.startswith('<|'):  # Check for template artifacts
+                        print(f"[Canary-Qwen] Method 2 SUCCESS: {result}")
+                        return result
+                    else:
+                        raise ValueError(f"Method 2 returned template artifacts: {result}")
+                    
+                except Exception as e2:
+                    print(f"[Canary-Qwen] Method 2 FAILED: {e2}")
+                    
+                    # Method 3: Use generate method with proper prompt structure
+                    try:
+                        print("[Canary-Qwen] Attempting Method 3: Generate with audio prompt")
+                        
+                        # Create a proper prompt for Canary-Qwen
+                        # The model expects audio data to be referenced properly
+                        prompt_text = "Transcribe the audio:"
+                        
+                        # Try using the model's tokenizer to encode the prompt
+                        if hasattr(self.model, 'tokenizer'):
+                            # Create input with audio signal
+                            inputs = {
+                                'input_ids': self.model.tokenizer.encode(prompt_text, return_tensors='pt').to(self.device),
+                                'audio_signal': audio_tensor,
+                                'audio_signal_length': audio_length
+                            }
+                            
+                            with torch.no_grad():
+                                # Generate with reasonable parameters
+                                outputs = self.model.generate(
+                                    input_ids=inputs['input_ids'],
+                                    audio_signal=inputs['audio_signal'],
+                                    audio_signal_length=inputs['audio_signal_length'],
+                                    max_new_tokens=64,
+                                    do_sample=False,
+                                    num_beams=1,
+                                    temperature=1.0,
+                                    pad_token_id=self.model.tokenizer.eos_token_id if hasattr(self.model.tokenizer, 'eos_token_id') else 0
+                                )
+                            
+                            # Decode only the new tokens (skip the input prompt)
+                            new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+                            result = self.model.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+                            
+                            if result and not result.startswith('<|'):
+                                print(f"[Canary-Qwen] Method 3 SUCCESS: {result}")
+                                return result
+                            else:
+                                raise ValueError(f"Method 3 returned template artifacts: {result}")
+                        else:
+                            raise AttributeError("Model has no tokenizer attribute")
+                            
+                    except Exception as e3:
+                        print(f"[Canary-Qwen] Method 3 FAILED: {e3}")
+                        
+                        # Method 4: Try forward pass with manual decoding
+                        try:
+                            print("[Canary-Qwen] Attempting Method 4: Forward pass")
+                            
+                            with torch.no_grad():
+                                # Simple forward pass
+                                outputs = self.model(
+                                    audio_signal=audio_tensor,
+                                    audio_signal_length=audio_length
+                                )
+                                
+                                # Try to extract text from outputs
+                                if hasattr(outputs, 'logits'):
+                                    # Get the most likely tokens
+                                    predicted_ids = torch.argmax(outputs.logits, dim=-1)
+                                    if hasattr(self.model, 'tokenizer'):
+                                        result = self.model.tokenizer.decode(predicted_ids[0], skip_special_tokens=True).strip()
+                                        if result and not result.startswith('<|'):
+                                            print(f"[Canary-Qwen] Method 4 SUCCESS: {result}")
+                                            return result
+                                        else:
+                                            raise ValueError(f"Method 4 returned template artifacts: {result}")
+                                    else:
+                                        raise AttributeError("No tokenizer for decoding")
+                                else:
+                                    raise AttributeError("Outputs have no logits attribute")
+                                    
+                        except Exception as e4:
+                            print(f"[Canary-Qwen] Method 4 FAILED: {e4}")
+                            
+                            # Method 5: Last resort - try inference method if it exists
+                            try:
+                                print("[Canary-Qwen] Attempting Method 5: Inference method")
+                                
+                                if hasattr(self.model, 'inference'):
+                                    result = self.model.inference(
+                                        audio_signal=audio_tensor,
+                                        audio_signal_length=audio_length
+                                    )
+                                    
+                                    if isinstance(result, (list, tuple)):
+                                        result = result[0] if len(result) > 0 else ""
+                                    
+                                    result = str(result).strip()
+                                    if result and not result.startswith('<|'):
+                                        print(f"[Canary-Qwen] Method 5 SUCCESS: {result}")
+                                        return result
+                                    else:
+                                        raise ValueError(f"Method 5 returned template artifacts: {result}")
+                                else:
+                                    raise AttributeError("Model has no inference method")
+                                    
+                            except Exception as e5:
+                                print(f"[Canary-Qwen] Method 5 FAILED: {e5}")
+                                print("[Canary-Qwen] All transcription methods failed")
+                                return ""
+                
+        except Exception as e:
+            print(f"[Canary-Qwen] Critical error in transcription: {e}")
+            return ""
+
+    def transcribe_with_beam_search(self, audio_float32, sample_rate=16000, num_beams=3):
+        """
+        Alternative method with beam search for potentially better quality
+        """
+        try:
+            print(f"[Canary-Qwen] Attempting beam search transcription with {num_beams} beams")
+            
+            if audio_float32.dtype != np.float32:
+                audio_float32 = audio_float32.astype(np.float32)
+            
+            if sample_rate != 16000:
+                audio_float32 = librosa.resample(audio_float32, orig_sr=sample_rate, target_sr=16000)
+            
+            audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
+            audio_length = torch.tensor([len(audio_float32)]).to(self.device)
+            
+            # Try beam search if model supports it
+            if hasattr(self.model, 'tokenizer') and hasattr(self.model, 'generate'):
+                prompt_text = "Transcribe:"
+                inputs = {
+                    'input_ids': self.model.tokenizer.encode(prompt_text, return_tensors='pt').to(self.device),
+                    'audio_signal': audio_tensor,
+                    'audio_signal_length': audio_length
+                }
+                
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        input_ids=inputs['input_ids'],
+                        audio_signal=inputs['audio_signal'],
+                        audio_signal_length=inputs['audio_signal_length'],
+                        max_new_tokens=64,
+                        do_sample=False,
+                        num_beams=num_beams,
+                        temperature=1.0,
+                        pad_token_id=self.model.tokenizer.eos_token_id if hasattr(self.model.tokenizer, 'eos_token_id') else 0
+                    )
+                
+                new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+                result = self.model.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+                
+                if result and not result.startswith('<|'):
+                    print(f"[Canary-Qwen] Beam search SUCCESS: {result}")
+                    return result
+                else:
+                    print(f"[Canary-Qwen] Beam search returned template artifacts: {result}")
+                    return ""
+            else:
+                print("[Canary-Qwen] Beam search not supported - missing tokenizer or generate method")
+                return ""
+                
+        except Exception as e:
+            print(f"[Canary-Qwen] Error in beam search transcription: {e}")
+            return ""
+
 class NeMoVAD:
     def __init__(self, model_path, device, sample_rate=16000):
         print("Pre-loading NeMo VAD model...")
         self.device = device
         self.sample_rate = sample_rate
         # The VAD model is an EncDecClassificationModel
-        self.model = nemo_asr.models.EncDecClassificationModel.restore_from(model_path, map_location=torch.device(self.device))
+        # Replace with EncDecSpeakerLabelModel older model deprecated
+        self.model = nemo_asr.models.EncDecSpeakerLabelModel.restore_from(model_path, map_location=torch.device(self.device))
         self.model.eval()
         self.model.to(self.device)
         print("NeMo VAD model loaded successfully")
@@ -345,7 +629,7 @@ class XTTSWrapper:
             # (assuming subsequent processing expects NumPy)
             yield chunk.cpu().numpy()
 
-async def websocket_server(websocket, client_id, nemo_transcriber, nemo_vad):
+async def websocket_server(websocket, client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber):
     active_websockets[client_id] = websocket
     client_queues[client_id] = {
         "incoming_audio": asyncio.Queue(),
@@ -355,7 +639,7 @@ async def websocket_server(websocket, client_id, nemo_transcriber, nemo_vad):
     try:
         incoming_task = asyncio.create_task(handle_incoming(websocket, client_id))
         outgoing_task = asyncio.create_task(handle_outgoing(websocket, client_id))
-        asr_task = asyncio.create_task(process_audio_from_queue(client_id, nemo_transcriber, nemo_vad))
+        asr_task = asyncio.create_task(process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber))
         await asyncio.gather(incoming_task, outgoing_task, asr_task)
     except asyncio.CancelledError:
         print(f"WebSocket task for {client_id} cancelled.")
@@ -628,7 +912,7 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
     # Run the entire blocking_direct_inference function in a separate thread
     await asyncio.to_thread(blocking_direct_inference)
 
-async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
+async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber):
     """
     Processes audio chunks from an asyncio.Queue.
     """
@@ -722,15 +1006,17 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
                             # Convert the 16-bit integers to 32-bit floats and normalize (as is standard for ASR)
                             audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
-                            with torch.no_grad():
-                                n_best_hypotheses = nemo_transcriber.asr_offline_model.transcribe(
-                                    audio_float32,
-                                    return_hypotheses=True,
-                                    batch_size=1
-                                )
-                            # n_best_hypotheses is a list of lists. We're only transcribing one file.
-                            n_best_list = [hyp.text for hyp in n_best_hypotheses[0]]
-                            print(f"Generated n-best list: {n_best_list}")
+                            # Use Canary-Qwen for final transcription with ITN and P&C
+                            final_canary_transcription = await asyncio.to_thread(
+                                canary_qwen_transcriber.transcribe_final, 
+                                audio_float32,
+                                CONFIG["audio_sample_rate"]
+                            )
+                            print(f"Canary-Qwen final transcription: {final_canary_transcription}")
+
+                            # Use Canary-Qwen result as the final transcription
+                            if final_canary_transcription:
+                                final_transcription_text = final_canary_transcription
 
                             # OLD METHOD Use the last transcription result
                             if final_transcription_text:
@@ -796,7 +1082,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad):
         print("Async Audio processing stopped")
 
 async def connection_handler(websocket):
-    global client_id, nemo_transcriber, nemo_vad
+    global client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber
     # For multiclient support (direct instantiation) you would actually initialize stateful models per-client here (EXPENSIVE)
     # Realistically would need several "free-floating" instances that could be quick-attached to new streams (esp. w/ speech separation)
     # Long-term: add model serving framework (e.g. NVIDIA Triton Inference Server, TorchServe, FastAPI/MLflow with custom logic)
@@ -805,16 +1091,16 @@ async def connection_handler(websocket):
     # Triton can manage transformer and SSM models, can also help organize adapter layers
     client_id = str(uuid.uuid4())
     print(f"New client connected: {client_id}")
-    await websocket_server(websocket, client_id, nemo_transcriber, nemo_vad)
+    await websocket_server(websocket, client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber)
 
 async def main():
-    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper, nemo_vad
+    global main_loop, nemo_transcriber, pipertts_wrapper, xtts_wrapper, nemo_vad, canary_qwen_transcriber
     main_loop = asyncio.get_event_loop()  # Store the event loop
     # Initialize PiperTTS instance
     pipertts_wrapper = PiperTTS(CONFIG["piper_model_path"])
     # Initialize Coqui XTTS instance
     xtts_wrapper = XTTSWrapper(CONFIG["xtts_model_dir"], CONFIG["inference_device"], CONFIG["speakers_dir"])
-    # Initialize the Nemo transcriber
+    # Initialize the NVIDIA Streaming Conformer-Hybrid Large transcriber (for interim results)
     nemo_transcriber = NemoStreamingTranscriber(
         model_path=CONFIG["nemo_model_path"],
         decoder_type=CONFIG["nemo_decoder_type"],
@@ -822,6 +1108,11 @@ async def main():
         encoder_step_length=CONFIG["nemo_encoder_step_length"],
         device=CONFIG["inference_device"],
         sample_rate=CONFIG["audio_sample_rate"]
+    )
+    # Initialize Canary-Qwen-2.5b transcriber (for final results)
+    canary_qwen_transcriber = CanaryQwenTranscriber(
+        model_path=CONFIG["canary_qwen_model_path"],
+        device=CONFIG["inference_device"]
     )
     # Initialize the NeMo VAD model
     nemo_vad = NeMoVAD(

@@ -37,11 +37,15 @@ RUN pip3 install \
 #RUN pip3 install numpy==1.26.4
 #RUN pip3 install numpy==2.1.3
 #SWITCH OUT FOR GPU
-RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+RUN pip3 install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 #RUN pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 #RUN pip3 install torch==2.3.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cpu
 #RUN pip3 install nemo_toolkit[nlp]
-RUN pip3 install nemo_toolkit[asr]
+#RUN pip3 install nemo_toolkit[asr]
+#RUN pip3 install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git"
+# Need latest directly from github to run Canary-qwen
+RUN pip3 install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git" sacrebleu
 #RUN pip3 install nemo_toolkit[all]
 #RUN pip3 install nemo_toolkit[asr,nlp]
 #TURN ON FOR GPU
