@@ -12,7 +12,7 @@ print(f"Attempting to download and save vad_multilingual_marblenet to {LOCAL_VAD
 
 try:
     # Download the model from NGC
-    vad_model = nemo_asr.models.EncDecClassificationModel.from_pretrained(model_name="vad_multilingual_marblenet")
+    vad_model = nemo_asr.models.EncDecSpeakerLabelModel.from_pretrained(model_name="vad_multilingual_marblenet")
 
     # Save the model to the specified local path
     vad_model.save_to(LOCAL_VAD_MODEL_PATH)

@@ -37,7 +37,6 @@ import time
 import atexit  # To handle exits
 import struct  # For writing binary data to WAV
 import librosa
-from scipy.io.wavfile import write as wav_write
 
 
 # Establish the preferred device to run models on
@@ -215,6 +214,9 @@ class CanaryQwenTranscriber:
         self.device = device
         self.model_path = Path(model_path)
         
+        # Import NeMo's SALM model
+        #from nemo.collections.speechlm2.models import SALM
+        
         try:
             # Method 1: Try loading from local HuggingFace format (.safetensors + config.json)
             self.model = SALM.from_pretrained(str(self.model_path))
@@ -278,153 +280,70 @@ class CanaryQwenTranscriber:
             if sample_rate != 16000:
                 audio_float32 = librosa.resample(audio_float32, orig_sr=sample_rate, target_sr=16000)
             
-            # Convert to tensor
-            audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
-            audio_length = torch.tensor([len(audio_float32)]).to(self.device)
-            
-            # Method 1: Try direct transcribe method (simplest approach)
+            # Method 1: Try direct numpy array transcription
             try:
-                print("[Canary-Qwen] Attempting Method 1: Direct transcribe")
+                # Many NeMo models accept numpy arrays directly
                 transcription = self.model.transcribe([audio_float32])
-                if isinstance(transcription, list) and len(transcription) > 0:
-                    result = transcription[0].strip()
-                    if result and not result.startswith('<|'):  # Check for template artifacts
-                        print(f"[Canary-Qwen] Method 1 SUCCESS: {result}")
-                        return result
-                    else:
-                        raise ValueError(f"Method 1 returned template artifacts: {result}")
-                else:
-                    raise ValueError("Method 1 returned empty or invalid result")
+                if isinstance(transcription, list):
+                    return transcription[0].strip()
+                return transcription.strip()
                         
-            except Exception as e1:
-                print(f"[Canary-Qwen] Method 1 FAILED: {e1}")
-                
-                # Method 2: Try with tensor input and transcribe
+            except (AttributeError, TypeError, RuntimeError):
+                # Method 2: Try with tensor input
                 try:
-                    print("[Canary-Qwen] Attempting Method 2: Tensor transcribe")
-                    transcription = self.model.transcribe(
-                        audio_signal=audio_tensor,
-                        audio_signal_length=audio_length
-                    )
+                    audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
+                    audio_length = torch.tensor([len(audio_float32)]).to(self.device)
                     
-                    if isinstance(transcription, list) and len(transcription) > 0:
-                        result = transcription[0].strip()
-                    else:
-                        result = str(transcription).strip()
-                        
-                    if result and not result.startswith('<|'):  # Check for template artifacts
-                        print(f"[Canary-Qwen] Method 2 SUCCESS: {result}")
-                        return result
-                    else:
-                        raise ValueError(f"Method 2 returned template artifacts: {result}")
+                    with torch.no_grad():
+                        transcription = self.model.transcribe(
+                            audio_signal=audio_tensor,
+                            audio_signal_length=audio_length
+                        )
                     
-                except Exception as e2:
-                    print(f"[Canary-Qwen] Method 2 FAILED: {e2}")
+                    if isinstance(transcription, list):
+                        return transcription[0].strip()
+                    return transcription.strip()
                     
-                    # Method 3: Use generate method with proper prompt structure
+                except (AttributeError, TypeError, RuntimeError):
+                    # Method 3: Use SALM generate method with in-memory audio
                     try:
-                        print("[Canary-Qwen] Attempting Method 3: Generate with audio prompt")
+                        # Create in-memory audio representation
+                        # Some SALM models can work with raw audio data in prompts
                         
-                        # Create a proper prompt for Canary-Qwen
-                        # The model expects audio data to be referenced properly
-                        prompt_text = "Transcribe the audio:"
+                        # Convert audio to the expected format
+                        audio_dict = {
+                            "audio_data": audio_float32,
+                            "sample_rate": 16000
+                        }
                         
-                        # Try using the model's tokenizer to encode the prompt
-                        if hasattr(self.model, 'tokenizer'):
-                            # Create input with audio signal
-                            inputs = {
-                                'input_ids': self.model.tokenizer.encode(prompt_text, return_tensors='pt').to(self.device),
-                                'audio_signal': audio_tensor,
-                                'audio_signal_length': audio_length
-                            }
-                            
-                            with torch.no_grad():
-                                # Generate with reasonable parameters
-                                outputs = self.model.generate(
-                                    input_ids=inputs['input_ids'],
-                                    audio_signal=inputs['audio_signal'],
-                                    audio_signal_length=inputs['audio_signal_length'],
-                                    max_new_tokens=64,
-                                    do_sample=False,
-                                    num_beams=1,
-                                    temperature=1.0,
-                                    pad_token_id=self.model.tokenizer.eos_token_id if hasattr(self.model.tokenizer, 'eos_token_id') else 0
-                                )
-                            
-                            # Decode only the new tokens (skip the input prompt)
-                            new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
-                            result = self.model.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-                            
-                            if result and not result.startswith('<|'):
-                                print(f"[Canary-Qwen] Method 3 SUCCESS: {result}")
-                                return result
-                            else:
-                                raise ValueError(f"Method 3 returned template artifacts: {result}")
-                        else:
-                            raise AttributeError("Model has no tokenizer attribute")
-                            
-                    except Exception as e3:
-                        print(f"[Canary-Qwen] Method 3 FAILED: {e3}")
+                        prompts = [
+                            [{
+                                "role": "user", 
+                                "content": f"Transcribe the following: {self.audio_locator_tag}",
+                                "audio_signal": audio_tensor,
+                                "audio_signal_length": audio_length
+                            }]
+                        ]
                         
-                        # Method 4: Try forward pass with manual decoding
-                        try:
-                            print("[Canary-Qwen] Attempting Method 4: Forward pass")
-                            
-                            with torch.no_grad():
-                                # Simple forward pass
-                                outputs = self.model(
-                                    audio_signal=audio_tensor,
-                                    audio_signal_length=audio_length
-                                )
-                                
-                                # Try to extract text from outputs
-                                if hasattr(outputs, 'logits'):
-                                    # Get the most likely tokens
-                                    predicted_ids = torch.argmax(outputs.logits, dim=-1)
-                                    if hasattr(self.model, 'tokenizer'):
-                                        result = self.model.tokenizer.decode(predicted_ids[0], skip_special_tokens=True).strip()
-                                        if result and not result.startswith('<|'):
-                                            print(f"[Canary-Qwen] Method 4 SUCCESS: {result}")
-                                            return result
-                                        else:
-                                            raise ValueError(f"Method 4 returned template artifacts: {result}")
-                                    else:
-                                        raise AttributeError("No tokenizer for decoding")
-                                else:
-                                    raise AttributeError("Outputs have no logits attribute")
-                                    
-                        except Exception as e4:
-                            print(f"[Canary-Qwen] Method 4 FAILED: {e4}")
-                            
-                            # Method 5: Last resort - try inference method if it exists
-                            try:
-                                print("[Canary-Qwen] Attempting Method 5: Inference method")
-                                
-                                if hasattr(self.model, 'inference'):
-                                    result = self.model.inference(
-                                        audio_signal=audio_tensor,
-                                        audio_signal_length=audio_length
-                                    )
-                                    
-                                    if isinstance(result, (list, tuple)):
-                                        result = result[0] if len(result) > 0 else ""
-                                    
-                                    result = str(result).strip()
-                                    if result and not result.startswith('<|'):
-                                        print(f"[Canary-Qwen] Method 5 SUCCESS: {result}")
-                                        return result
-                                    else:
-                                        raise ValueError(f"Method 5 returned template artifacts: {result}")
-                                else:
-                                    raise AttributeError("Model has no inference method")
-                                    
-                            except Exception as e5:
-                                print(f"[Canary-Qwen] Method 5 FAILED: {e5}")
-                                print("[Canary-Qwen] All transcription methods failed")
-                                return ""
+                        with torch.no_grad():
+                            answer_ids = self.model.generate(
+                                prompts=prompts,
+                                max_new_tokens=128,
+                                do_sample=False,
+                                num_beams=1,  # Greedy decoding for speed
+                                temperature=1.0,
+                            )
+                        
+                        # Decode the result
+                        transcription = self.model.tokenizer.ids_to_text(answer_ids[0].cpu())
+                        return transcription.strip()
+                        
+                    except Exception as inner_e:
+                        print(f"All transcription methods failed. Last error: {inner_e}")
+                        return ""
                 
         except Exception as e:
-            print(f"[Canary-Qwen] Critical error in transcription: {e}")
+            print(f"Error in Canary-Qwen transcription: {e}")
             return ""
 
     def transcribe_with_beam_search(self, audio_float32, sample_rate=16000, num_beams=3):
@@ -432,8 +351,6 @@ class CanaryQwenTranscriber:
         Alternative method with beam search for potentially better quality
         """
         try:
-            print(f"[Canary-Qwen] Attempting beam search transcription with {num_beams} beams")
-            
             if audio_float32.dtype != np.float32:
                 audio_float32 = audio_float32.astype(np.float32)
             
@@ -443,42 +360,29 @@ class CanaryQwenTranscriber:
             audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
             audio_length = torch.tensor([len(audio_float32)]).to(self.device)
             
-            # Try beam search if model supports it
-            if hasattr(self.model, 'tokenizer') and hasattr(self.model, 'generate'):
-                prompt_text = "Transcribe:"
-                inputs = {
-                    'input_ids': self.model.tokenizer.encode(prompt_text, return_tensors='pt').to(self.device),
-                    'audio_signal': audio_tensor,
-                    'audio_signal_length': audio_length
-                }
-                
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        input_ids=inputs['input_ids'],
-                        audio_signal=inputs['audio_signal'],
-                        audio_signal_length=inputs['audio_signal_length'],
-                        max_new_tokens=64,
-                        do_sample=False,
-                        num_beams=num_beams,
-                        temperature=1.0,
-                        pad_token_id=self.model.tokenizer.eos_token_id if hasattr(self.model.tokenizer, 'eos_token_id') else 0
-                    )
-                
-                new_tokens = outputs[0][inputs['input_ids'].shape[1]:]
-                result = self.model.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-                
-                if result and not result.startswith('<|'):
-                    print(f"[Canary-Qwen] Beam search SUCCESS: {result}")
-                    return result
-                else:
-                    print(f"[Canary-Qwen] Beam search returned template artifacts: {result}")
-                    return ""
-            else:
-                print("[Canary-Qwen] Beam search not supported - missing tokenizer or generate method")
-                return ""
-                
+            prompts = [
+                [{
+                    "role": "user", 
+                    "content": f"Transcribe the following: {self.audio_locator_tag}",
+                    "audio_signal": audio_tensor,
+                    "audio_signal_length": audio_length
+                }]
+            ]
+            
+            with torch.no_grad():
+                answer_ids = self.model.generate(
+                    prompts=prompts,
+                    max_new_tokens=128,
+                    do_sample=False,
+                    num_beams=num_beams,  # Enable beam search
+                    temperature=1.0,
+                )
+            
+            transcription = self.model.tokenizer.ids_to_text(answer_ids[0].cpu())
+            return transcription.strip()
+            
         except Exception as e:
-            print(f"[Canary-Qwen] Error in beam search transcription: {e}")
+            print(f"Error in beam search transcription: {e}")
             return ""
 
 class NeMoVAD:
@@ -995,7 +899,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             #is_speaking = False
                             #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
                             print("Acoustic finality detected. Processing full utterance with offline model...")
-
+                            '''
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
 
@@ -1017,7 +921,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             # Use Canary-Qwen result as the final transcription
                             if final_canary_transcription:
                                 final_transcription_text = final_canary_transcription
-
+                            '''
                             # OLD METHOD Use the last transcription result
                             if final_transcription_text:
                                 data_to_send = {
@@ -1099,7 +1003,8 @@ async def main():
     # Initialize PiperTTS instance
     pipertts_wrapper = PiperTTS(CONFIG["piper_model_path"])
     # Initialize Coqui XTTS instance
-    xtts_wrapper = XTTSWrapper(CONFIG["xtts_model_dir"], CONFIG["inference_device"], CONFIG["speakers_dir"])
+    #xtts_wrapper = XTTSWrapper(CONFIG["xtts_model_dir"], CONFIG["inference_device"], CONFIG["speakers_dir"])
+    xtts_wrapper = None
     # Initialize the NVIDIA Streaming Conformer-Hybrid Large transcriber (for interim results)
     nemo_transcriber = NemoStreamingTranscriber(
         model_path=CONFIG["nemo_model_path"],
@@ -1110,10 +1015,13 @@ async def main():
         sample_rate=CONFIG["audio_sample_rate"]
     )
     # Initialize Canary-Qwen-2.5b transcriber (for final results)
+    '''
     canary_qwen_transcriber = CanaryQwenTranscriber(
         model_path=CONFIG["canary_qwen_model_path"],
         device=CONFIG["inference_device"]
     )
+    '''
+    canary_qwen_transcriber = None
     # Initialize the NeMo VAD model
     nemo_vad = NeMoVAD(
         model_path=CONFIG["nemo_vad_model_path"],

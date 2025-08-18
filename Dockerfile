@@ -31,7 +31,8 @@ RUN pip3 install \
     #ibm_cloud_sdk_core \
     websockets \
     pydub \
-    piper-tts
+    piper-tts\
+    duckdb
 # Explicitly install a compatible NumPy version first
 # Based on the error, nemo-toolkit requires numpy<2.0.0,>=1.22 # - numpy 1.26.4 is the latest 1.x version
 #RUN pip3 install numpy==1.26.4
