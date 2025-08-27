@@ -1,8 +1,8 @@
-# Adding speaker-recognition
+# This is the first version implementing duckdb and storing/retrieving xtts tensors and shapes in db
 
 # CLEANUP IDEAS
-# move imports to required models loading class
-# rename classes send_message_to_clients() to send_message_to_client()
+# move imports to required models loading class(?)
+# //rename classes send_message_to_clients() to send_message_to_client()
 # rename "NeMo" model's classes/functions for more explicit
 # Write utterances to files in non-blocking manner for testing
 # NOTES
@@ -86,9 +86,11 @@ def setup_database():
             uid INTEGER PRIMARY KEY DEFAULT nextval('seq_uid'),
             firstname VARCHAR NOT NULL,
             surname VARCHAR,
-            gpt_cond_latent BLOB NOT NULL,
-            xtts_embedding BLOB NOT NULL,
-            ecapa_embedding BLOB
+            gpt_cond_latent FLOAT[],
+            gpt_shape VARCHAR,
+            xtts_embedding FLOAT[],
+            xtts_shape VARCHAR,
+            ecapa_embedding FLOAT[]
         );
     """)
     print("DuckDB table 'speakers' is ready.")
@@ -496,54 +498,10 @@ class XTTSWrapper:
         """Returns the sample rate of the XTTS model."""
         return self.config.audio["sample_rate"]
 
-    '''
-    def _load_speakers(self):
-        """
-        Loads speaker embeddings from the specified speakers_dir into the XTTS model's
-        speaker manager. This is called during initialization.
-        """
-        self.xtts_model.speaker_manager.speakers = {}
-        for pt_file in self.speakers_dir.glob("*.pt"):
-            data = torch.load(pt_file, map_location="cpu")
-            self.xtts_model.speaker_manager.speakers[pt_file.stem] = {
-                "gpt_cond_latent": data["gpt_cond_latent"],
-                "speaker_embedding": data["speaker_embedding"]
-            }
-        print(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} speakers.")
-    '''
-    def _load_speakers_from_db(self):
-        """
-        Loads XTTS speaker embeddings from the DuckDB database.
-        """
-        print("Loading XTTS speakers from DuckDB...")
-        speakers_query = con.execute(
-            "SELECT firstname, surname, gpt_cond_latent, xtts_embedding FROM speakers WHERE gpt_cond_latent IS NOT NULL AND xtts_embedding IS NOT NULL"
-        ).fetchall()
-        
-        # Reset the speaker manager dictionary
-        self.xtts_model.speaker_manager.speakers = {}
-        
-        for row in speakers_query:
-            firstname, surname, gpt_latent_blob, xtts_emb_blob = row
-            
-            # Reconstruct the speaker name
-            speaker_name = f"{firstname}_{surname}" if surname else firstname
-            
-            # Convert BLOB data back to torch tensors
-            gpt_latent = torch.from_numpy(np.frombuffer(gpt_latent_blob, dtype=np.float32)).to(self.device).view(1, 1, -1)
-            xtts_embedding = torch.from_numpy(np.frombuffer(xtts_emb_blob, dtype=np.float32)).to(self.device).view(1, -1)
-            
-            self.xtts_model.speaker_manager.speakers[speaker_name] = {
-                "gpt_cond_latent": gpt_latent,
-                "speaker_embedding": xtts_embedding
-            }
-        
-        print(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} XTTS speakers from DuckDB.")
-    
-    # Extract and save XTTS embeddings to the database
     async def extract_xtts_embed(self, wav_path, firstname, surname=None):
         """
-        Extracts XTTS embeddings from a WAV file and stores them in the DuckDB database.
+        Extracts XTTS embeddings from a WAV file and stores them in the DuckDB database
+        using native arrays and separate shape fields.
         
         Args:
             wav_path (str or Path): Path to the WAV file.
@@ -556,20 +514,88 @@ class XTTSWrapper:
         with torch.no_grad():
             gpt_cond_latent, speaker_embedding = self.xtts_model.get_conditioning_latents(str(wav_path), 16000)
         
-        # Convert tensors to numpy arrays and then to bytes for storage
-        gpt_latent_blob = gpt_cond_latent.cpu().numpy().tobytes()
-        xtts_embedding_blob = speaker_embedding.cpu().numpy().tobytes()
+        print(f"Extracted shapes - GPT: {gpt_cond_latent.shape}, Speaker: {speaker_embedding.shape}")
+        
+        # Convert tensors to Python lists (flattened) for DuckDB array storage
+        gpt_latent_flat = gpt_cond_latent.cpu().numpy().flatten().tolist()
+        xtts_embedding_flat = speaker_embedding.cpu().numpy().flatten().tolist()
+        
+        # Convert shapes to JSON strings for storage
+        import json
+        gpt_shape_json = json.dumps(list(gpt_cond_latent.shape))
+        xtts_shape_json = json.dumps(list(speaker_embedding.shape))
         
         # Use asyncio's to_thread to run the blocking DB operation in a separate thread
         def insert_data():
-            con.execute(
-                "INSERT INTO speakers (firstname, surname, gpt_cond_latent, xtts_embedding) VALUES (?, ?, ?, ?)",
-                (firstname, surname, gpt_latent_blob, xtts_embedding_blob)
-            )
+            con.execute("""
+                INSERT INTO speakers 
+                (firstname, surname, gpt_cond_latent, gpt_shape, xtts_embedding, xtts_shape) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                firstname, 
+                surname, 
+                gpt_latent_flat,     # Native FLOAT[] array (flattened)
+                gpt_shape_json,      # JSON string of original shape
+                xtts_embedding_flat, # Native FLOAT[] array (flattened)
+                xtts_shape_json      # JSON string of original shape
+            ))
         
         await asyncio.to_thread(insert_data)
         
-        print(f"Successfully stored XTTS embeddings for {firstname} in DuckDB.")
+        print(f"Successfully stored XTTS embeddings for {firstname} in DuckDB using native arrays.")
+
+    def _load_speakers_from_db(self):
+        """
+        Loads XTTS speaker embeddings from the DuckDB database using native arrays
+        and separate shape fields.
+        Private method called during initialization.
+        """
+        print("Loading XTTS speakers from DuckDB native arrays...")
+        
+        speakers_query = con.execute("""
+            SELECT firstname, surname, gpt_cond_latent, gpt_shape, xtts_embedding, xtts_shape 
+            FROM speakers 
+            WHERE gpt_cond_latent IS NOT NULL AND xtts_embedding IS NOT NULL
+        """).fetchall()
+        
+        # Reset the speaker manager dictionary
+        # COMMENT OUT if you want to maintain preloaded voices from XTTS
+        self.xtts_model.speaker_manager.speakers = {}
+        
+        for row in speakers_query:
+            firstname, surname, gpt_latent_list, gpt_shape_json, xtts_emb_list, xtts_shape_json = row
+            
+            # Reconstruct the speaker name
+            speaker_name = f"{firstname}_{surname}" if surname else firstname
+            
+            try:
+                import json
+                
+                # Parse the shape information from JSON
+                gpt_shape = tuple(json.loads(gpt_shape_json))
+                xtts_shape = tuple(json.loads(xtts_shape_json))
+                
+                # Convert from DuckDB arrays (Python lists) back to numpy arrays with proper shapes
+                gpt_latent = torch.from_numpy(
+                    np.array(gpt_latent_list, dtype=np.float32).reshape(gpt_shape)
+                ).to(self.device)
+                
+                xtts_embedding = torch.from_numpy(
+                    np.array(xtts_emb_list, dtype=np.float32).reshape(xtts_shape)
+                ).to(self.device)
+                
+                self.xtts_model.speaker_manager.speakers[speaker_name] = {
+                    "gpt_cond_latent": gpt_latent,
+                    "speaker_embedding": xtts_embedding
+                }
+                
+                print(f"Loaded {speaker_name} with shapes - GPT: {gpt_latent.shape}, Speaker: {xtts_embedding.shape}")
+                
+            except Exception as e:
+                print(f"Error loading speaker {speaker_name}: {e}")
+                continue
+        
+        print(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} XTTS speakers from DuckDB native arrays.")
 
     def synthesize_stream_raw(self, text: str, speaker_name: str):
         """
@@ -600,7 +626,7 @@ class XTTSWrapper:
         # of torch.Tensor chunks.
         for chunk in self.xtts_model.inference_stream(
             text=text,
-            language="en", # Assuming English, adjust if your app supports multiple
+            language="en", # Assuming English for now
             gpt_cond_latent=gpt_cond_latent,
             speaker_embedding=speaker_embedding,
             stream_chunk_size=512, # You can adjust this for latency vs. throughput
@@ -715,7 +741,7 @@ def prepare_for_streaming(chunk, type, rate):
         print(f"Error in prepare_for_streaming for type '{type}': {e}. Returning empty bytes.")
         return b'' # Catch any unexpected errors during processing and return empty bytes
 
-async def send_message_to_clients(client_id, message):
+async def send_message_to_client(client_id, message):
     """Send a message to all connected WebSocket clients."""
     client_queues[client_id]["outgoing_text"].put_nowait(message)
 
@@ -967,7 +993,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             "transcript": text
                         }
                         json_string = json.dumps(data_to_send)
-                        await send_message_to_clients(client_id, json_string)
+                        await send_message_to_client(client_id, json_string)
 
                     else: # VAD indicates silence
                         silence_counter += 1
@@ -1008,7 +1034,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     "transcript": final_transcription_text
                                 }
                                 json_string = json.dumps(data_to_send)
-                                await send_message_to_clients(client_id, json_string)
+                                await send_message_to_client(client_id, json_string)
 
                                 # Trigger Time/Name responses only on final utterances from recognized SPEAKER
                                 if 'the time' in final_transcription_text.lower():
@@ -1021,7 +1047,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                         "transcript": response_text
                                     }
                                     json_string = json.dumps(data_to_send)
-                                    await send_message_to_clients(client_id, json_string)
+                                    await send_message_to_client(client_id, json_string)
                                     if not clientSideTTS and active_websockets:
                                         asyncio.create_task(stream_tts_audio(client_id, response_text))
                                 elif 'your name' in final_transcription_text.lower():
@@ -1034,7 +1060,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     }
                                     json_string = json.dumps(data_to_send)
                                     if active_websockets:
-                                        await send_message_to_clients(client_id, json_string)
+                                        await send_message_to_client(client_id, json_string)
                                     if not clientSideTTS and active_websockets:
                                         async def parallel_tts_pipeline():
                                             buffer = asyncio.Queue()
@@ -1089,7 +1115,7 @@ async def main():
         CONFIG["speakers_dir"]
     )
     #xtts_wrapper = None
-
+    '''
     # 1. Query the database to see how many speakers are there before adding
     print("--- Number of speakers BEFORE adding new speaker ---")
     results_before = con.execute("SELECT COUNT(*) FROM speakers").fetchall()
@@ -1110,6 +1136,7 @@ async def main():
         print(f"- {row[0]} {row[1]}")
     # Re-load the speakers into the model's speaker manager to make the new speaker available
     xtts_wrapper._load_speakers_from_db()
+    '''
 
     # Initialize the NeMo VAD model
     nemo_vad = NeMoVAD(
