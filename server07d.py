@@ -45,6 +45,7 @@ from scipy.io.wavfile import write as wav_write
 import duckdb
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import Tuple, Optional, List, Dict
+import torchaudio
 
 
 # Establish the preferred device to run models on
@@ -908,81 +909,63 @@ class ECAPASpeakerProcessor:
     
     def extract_embedding_from_file(self, wav_path, sample_rate=None):
         """
-        Extract ECAPA embedding from a WAV file.
-        
-        Args:
-            wav_path (str or Path): Path to the WAV file
-            sample_rate (int, optional): Expected sample rate (defaults to instance sample_rate)
-            
-        Returns:
-            np.ndarray: ECAPA embedding as numpy array, or None on error
+        Extract ECAPA embedding from a WAV file using the model's built-in file handling.
         """
         if sample_rate is None:
             sample_rate = self.sample_rate
-            
         try:
-            wav_path = str(wav_path)
             print(f"[ECAPA] Extracting embedding from file: {wav_path}")
             
-            # Load audio file using librosa (handles various formats and resampling)
-            audio_data, sr = librosa.load(wav_path, sr=sample_rate, mono=True)
-            
-            # Convert to torch tensor and add batch dimension
-            audio_tensor = torch.from_numpy(audio_data).unsqueeze(0).to(self.device)
-            audio_len = torch.tensor([audio_tensor.shape[1]], dtype=torch.long).to(self.device)
-            
+            # The model's get_embedding method is designed to handle file paths.
             with torch.no_grad():
-                # Extract embeddings using the ECAPA model
-                embeddings = self.model.forward(input_signal=audio_tensor, input_signal_length=audio_len)
-                
-                # Convert to numpy array on CPU
-                embedding_np = embeddings.cpu().numpy().squeeze()
-                
+                embeddings = self.model.get_embedding(wav_path)
+            
+            embedding_np = embeddings.cpu().numpy().squeeze()
+            
             print(f"[ECAPA] Extracted embedding shape: {embedding_np.shape}")
             return embedding_np
-            
         except Exception as e:
             print(f"[ECAPA] Error extracting embedding from file {wav_path}: {e}")
             return None
-    
+
     def extract_embedding_from_buffer(self, audio_int16, sample_rate=None):
         """
-        Extract ECAPA embedding from int16 PCM audio buffer.
-        
-        Args:
-            audio_int16 (np.ndarray): Audio data as int16 PCM
-            sample_rate (int, optional): Sample rate (defaults to instance sample_rate)
-            
-        Returns:
-            np.ndarray: ECAPA embedding as numpy array, or None on error
+        Extract ECAPA embedding from int16 PCM audio buffer by manually pre-processing.
         """
         if sample_rate is None:
             sample_rate = self.sample_rate
-            
         try:
             print(f"[ECAPA] Extracting embedding from buffer: shape={audio_int16.shape}, sample_rate={sample_rate}")
             
             # Convert int16 to float32 in range [-1, 1]
             audio_float32 = audio_int16.astype(np.float32) / 32768.0
             
-            # Convert to torch tensor and add batch dimension
+            # Convert to torch tensor, ensure 2-dimensional, and move to device
             audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
-            audio_len = torch.tensor([audio_tensor.shape[1]], dtype=torch.long).to(self.device)
+            if audio_tensor.dim() > 2:
+                audio_tensor = audio_tensor.squeeze()
+                if audio_tensor.dim() == 1:
+                    audio_tensor = audio_tensor.unsqueeze(0)
             
+            audio_len = torch.tensor([audio_tensor.shape[1]], dtype=torch.long).to(self.device)
+
             with torch.no_grad():
-                # Extract embeddings using the ECAPA model
-                embeddings = self.model.forward(input_signal=audio_tensor, input_signal_length=audio_len)
+                # Manually pre-process the audio tensor to get features
+                processed_features, processed_len = self.model.preprocessor(
+                    input_signal=audio_tensor, length=audio_len
+                )
                 
-                # Convert to numpy array on CPU
-                embedding_np = embeddings.cpu().numpy().squeeze()
+                # Pass the features to the model's encoder to get the final embedding
+                embeddings = self.model.encoder(processed_features)
                 
+            embedding_np = embeddings.cpu().numpy().squeeze()
+            
             print(f"[ECAPA] Extracted embedding shape from buffer: {embedding_np.shape}")
             return embedding_np
-            
         except Exception as e:
             print(f"[ECAPA] Error extracting embedding from buffer: {e}")
             return None
-    
+
     async def create_initial_speaker_imprint(self, wav_path, firstname, surname=None):
         """
         Extract both XTTS and ECAPA embeddings from a WAV file and store them in the database.
@@ -1496,10 +1479,22 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 nemo_transcriber.asr_model.encoder.get_initial_cache_state(batch_size=1)
                             text = ""
                             final_transcription_text = ""  # Reset for new utterance
+                            # Reset ECAPA processor for new utterance
+                            ecapa_processor.reset_for_new_utterance()
 
                         # Perform ASR transcription on the *current audio chunk* if speech is active
                         text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk_np)
                         final_transcription_text = text  # Keep updating the final transcription
+
+                        # Check if we should extract ECAPA embedding
+                        if ecapa_processor.should_extract_now(len(current_utterance_buffer)):
+                            ecapa_result = await ecapa_processor.extract_and_match_from_buffer(
+                                current_utterance_buffer, 
+                                reason="scheduled"
+                            )
+                            # You can log or process the ecapa_result as needed
+                            if "error" not in ecapa_result:
+                                print(f"[Speaker ID] {ecapa_result['speaker_result']}")
 
                         data_to_send = {
                             "speaker": SPEAKER,
@@ -1515,6 +1510,15 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             #is_speaking = False
                             #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
                             print("Acoustic finality detected. Processing full utterance with offline model...")
+
+                            # Extract final ECAPA embedding before clearing buffer
+                            if len(current_utterance_buffer) > 0:
+                                final_ecapa_result = await ecapa_processor.extract_and_match_from_buffer(
+                                    current_utterance_buffer,
+                                    reason="silence"
+                                )
+                                if "error" not in final_ecapa_result:
+                                    print(f"[Final Speaker ID] {final_ecapa_result['speaker_result']}")
 
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
@@ -1566,7 +1570,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                         asyncio.create_task(stream_tts_audio(client_id, response_text))
                                 elif 'your name' in final_transcription_text.lower():
                                     print("Asked about my name")
-                                    response_text = "My name is Neil Richard Gaiman."
+                                    #response_text = "My name is Neil Richard Gaiman."
+                                    response_text = "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent."
                                     data_to_send = {
                                         "speaker": SERVER,
                                         "final": "True",
@@ -1578,7 +1583,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     if not clientSideTTS and active_websockets:
                                         async def parallel_tts_pipeline():
                                             buffer = asyncio.Queue()
-                                            coqui_task = asyncio.create_task(synthesize_xtts_audio("neil_gaiman", response_text, buffer))
+                                            coqui_task = asyncio.create_task(synthesize_xtts_audio("nathanael_warren", response_text, buffer))
                                             await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
                                             await stream_xtts_audio(client_id, buffer)
                                             await coqui_task
@@ -1590,6 +1595,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             current_utterance_buffer = b''
                             #previous_text = "" # Reset previous_text for the new utterance
                             text = ""
+                            # Reset ECAPA processor
+                            ecapa_processor.reset_for_new_utterance()
 
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
                 await asyncio.sleep(0.01)  # Use asyncio.sleep
@@ -1668,10 +1675,11 @@ async def main():
     print("--- Number of speakers BEFORE adding new speaker ---")
     results_before = con.execute("SELECT COUNT(*) FROM speakers").fetchall()
     print(f"Current speaker count: {results_before[0][0]}")
+    '''
     # 2. Call the extract_embed function
-    wav_path_1 = "/root/fawkes/audio_samples/nathanael_01.wav"
-    wav_path_2 = "/root/fawkes/audio_samples/courtney_02.wav"
-    wav_path_3 = "/root/fawkes/audio_samples/neilgaiman_01.wav"
+    wav_path_1 = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
+    wav_path_2 = "/root/fawkes/audio_samples/_preprocessed/courtney_02.wav"
+    wav_path_3 = "/root/fawkes/audio_samples/_preprocessed/neilgaiman_01.wav"
     try:
         #await xtts_wrapper.extract_xtts_embed(wav_path, firstname="neil", surname="gaiman")
         #await ecapa_processor.create_initial_speaker_imprint(wav_path, firstname="nathanael", surname="warren")
@@ -1692,6 +1700,7 @@ async def main():
         print(f"- {row[0]} {row[1]}")
     # Re-load the speakers into the model's speaker manager to make the new speaker available
     xtts_wrapper._load_speakers_from_db()
+    '''
 
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
