@@ -46,6 +46,7 @@ import duckdb
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import Tuple, Optional, List, Dict
 import torchaudio
+from typing import BinaryIO
 
 
 # Establish the preferred device to run models on
@@ -71,7 +72,11 @@ CONFIG = {
     "silence_duration_for_finality_ms": 500, # ms of silence to trigger finality
     "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/",
     "ecapa_tdnn_model_path": "/root/fawkes/models/ecapa_tdnn_embed/ecapa_tdnn.nemo",
-    "duckdb_path": "./speakers/speakers.duckdb"
+    "duckdb_path": "./speakers/speakers.duckdb",
+    "server_name": "Fawkes",
+    "default_speaker": "unknown speaker",
+    "default_speaker_confidence": "uncertain",
+    "default_asr_confidence": "certain"
 }
 
 # Initialize DuckDB connection at the top level
@@ -93,7 +98,10 @@ def setup_database():
             gpt_shape VARCHAR,
             xtts_embedding FLOAT[],
             xtts_shape VARCHAR,
-            ecapa_embedding FLOAT[]
+            ecapa_embedding FLOAT[],
+            total_duration_sec FLOAT DEFAULT 0.0,
+            sample_count INTEGER DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     print("DuckDB table 'speakers' is ready.")
@@ -106,8 +114,10 @@ client_queues = {}
 clientSideTTS = False
 
 # Dialogue partners
-SPEAKER = "Nathanael"
-SERVER = "Fawkes"
+#SPEAKER = "unknown speaker"
+#SPEAKER_CONFIDENCE = "certain"
+#SERVER = "Fawkes"
+#ASR_CONFIDENCE = "certain"
 
 class NemoStreamingTranscriber:
     def __init__(self, model_path, decoder_type, lookahead_size, encoder_step_length, device, sample_rate):
@@ -902,8 +912,8 @@ class ECAPASpeakerProcessor:
         self.extraction_count = 0
         
         # Thresholds for speaker identification
-        self.MAYBE_THRESHOLD = 0.70
-        self.DEFINITELY_THRESHOLD = 0.85
+        self.UNCERTAIN_THRESHOLD = 0.70
+        self.CERTAIN_THRESHOLD = 0.85
         
         print("ECAPA-TDNN speaker processor loaded successfully")
     
@@ -930,38 +940,53 @@ class ECAPASpeakerProcessor:
 
     def extract_embedding_from_buffer(self, audio_int16, sample_rate=None):
         """
-        Extract ECAPA embedding from int16 PCM audio buffer by manually pre-processing.
+        Extract ECAPA embedding from int16 PCM audio buffer using the model's forward method.
+        Fixed to follow the working patterns from claudeECAPAfromTensor2.py
         """
         if sample_rate is None:
             sample_rate = self.sample_rate
         try:
             print(f"[ECAPA] Extracting embedding from buffer: shape={audio_int16.shape}, sample_rate={sample_rate}")
             
-            # Convert int16 to float32 in range [-1, 1]
+            # Convert int16 to float32 in range [-1, 1] (same as working version)
             audio_float32 = audio_int16.astype(np.float32) / 32768.0
             
-            # Convert to torch tensor, ensure 2-dimensional, and move to device
-            audio_tensor = torch.from_numpy(audio_float32).unsqueeze(0).to(self.device)
-            if audio_tensor.dim() > 2:
-                audio_tensor = audio_tensor.squeeze()
-                if audio_tensor.dim() == 1:
-                    audio_tensor = audio_tensor.unsqueeze(0)
+            # Convert to torch tensor
+            waveform = torch.from_numpy(audio_float32)
             
-            audio_len = torch.tensor([audio_tensor.shape[1]], dtype=torch.long).to(self.device)
-
+            # Ensure single channel (mono) - follow claudeECAPAfromTensor2.py pattern
+            if waveform.shape[0] > 1 if waveform.dim() > 1 else False:
+                waveform = torch.mean(waveform, dim=0, keepdim=True)
+            elif waveform.dim() == 1:
+                # Add channel dimension if it's missing: [T] -> [1, T]
+                waveform = waveform.unsqueeze(0)
+            
+            # Resample if necessary (ECAPA-TDNN typically expects 16kHz)
+            target_sr = 16000
+            if sample_rate != target_sr:
+                resampler = torchaudio.transforms.Resample(sample_rate, target_sr)
+                waveform = resampler(waveform)
+            
+            print(f"[ECAPA] Prepared waveform tensor shape: {waveform.shape}")
+            print(f"[ECAPA] Sample rate: {target_sr}")
+            
+            # Move tensors to the same device as the model
+            device = next(self.model.parameters()).device
+            waveform = waveform.to(device)
+            
+            # Generate embedding using the SAME pattern as claudeECAPAfromTensor2.py
             with torch.no_grad():
-                # Manually pre-process the audio tensor to get features
-                processed_features, processed_len = self.model.preprocessor(
-                    input_signal=audio_tensor, length=audio_len
-                )
+                # NeMo models typically expect audio length in samples as second parameter
+                audio_length = torch.tensor([waveform.shape[1]], dtype=torch.long).to(device)
                 
-                # Pass the features to the model's encoder to get the final embedding
-                embeddings = self.model.encoder(processed_features)
-                
-            embedding_np = embeddings.cpu().numpy().squeeze()
+                # Use the EXACT same forward call pattern as the working version
+                _, embedding = self.model.forward(waveform, audio_length)
+            
+            embedding_np = embedding.cpu().numpy().squeeze()
             
             print(f"[ECAPA] Extracted embedding shape from buffer: {embedding_np.shape}")
             return embedding_np
+            
         except Exception as e:
             print(f"[ECAPA] Error extracting embedding from buffer: {e}")
             return None
@@ -1048,6 +1073,53 @@ class ECAPASpeakerProcessor:
             print(f"[ECAPA] Error creating speaker imprint for {firstname}: {e}")
             return False
     
+    async def update_speaker_imprint(self, wav_path, uid):
+        """
+        Updates the ECAPA embedding for a given user UID from a WAV file.
+        If the UID does not exist, it prints an error and returns.
+        """
+        try:
+            # Check if a member with the given UID already exists
+            existing_member = self.db.find_one(uid)
+            
+            if existing_member is None:
+                print(f"Error: Speaker with UID {uid} not found. Cannot update.")
+                return {"error": "Speaker not found."}
+
+            # Process the audio file to get the new embedding
+            if not wav_path.exists():
+                print(f"Error: WAV file not found at {wav_path}")
+                return {"error": "WAV file not found."}
+                
+            audio_buffer = np.fromfile(wav_path, dtype=np.int16)
+            
+            # Assuming your ecapa_model has a method to get embeddings
+            new_emb = self.ecapa_model.extract_embedding(audio_buffer).detach().cpu().numpy().flatten()
+            
+            # Get the duration of the new audio
+            with wave.open(str(wav_path), 'rb') as wf:
+                new_data_duration_sec = wf.getnframes() / wf.getframerate()
+            
+            # Update ECAPA embedding with weighted average
+            old_emb = np.array(existing_member['ecapa_embedding'])
+            old_duration = existing_member.get('total_duration_sec', 0)
+            
+            # Perform the weighted average
+            updated_ecapa = ((old_emb * old_duration) + (new_emb * new_data_duration_sec)) / (old_duration + new_data_duration_sec)
+            
+            updates = {
+                'ecapa_embedding': updated_ecapa.tolist(),
+                'total_duration_sec': old_duration + new_data_duration_sec
+            }
+            
+            self.db.update_one(uid, updates)
+            print(f"Speaker imprint for UID {uid} has been updated.")
+            return {"success": f"Speaker imprint for UID {uid} updated successfully."}
+
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            return {"error": f"An unexpected error occurred: {e}"}
+
     def reset_for_new_utterance(self):
         """Reset the online processor state for a new utterance."""
         self.last_extraction_bytes = 0
@@ -1102,24 +1174,28 @@ class ECAPASpeakerProcessor:
             speaker_name, uid, confidence = self.ecapa_matcher.find_best_match(ecapa_embedding)
             
             # Determine speaker identification result
-            if confidence < self.MAYBE_THRESHOLD:
+            if confidence < self.UNCERTAIN_THRESHOLD:
                 speaker_result = "unknown speaker"
-            elif confidence < self.DEFINITELY_THRESHOLD:
+                speaker_confidence = "uncertain"
+            elif confidence < self.CERTAIN_THRESHOLD:
                 speaker_result = f"{speaker_name}(?)"
+                speaker_confidence = "uncertain"
             else:
                 speaker_result = f"{speaker_name}"
+                speaker_confidence = "certain"
             
             result = {
                 "speaker_name": speaker_name,
                 "uid": uid,
                 "confidence": confidence,
+                "speaker_confidence": speaker_confidence,
                 "speaker_result": speaker_result,
                 "buffer_duration": buffer_duration,
                 "extraction_reason": reason,
                 "extraction_count": self.extraction_count + 1
             }
             
-            print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f})")
+            print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
             
             # Update extraction tracking if this was a scheduled extraction
             if reason == "scheduled":
@@ -1415,6 +1491,48 @@ async def synthesize_stream_xtts_audio(client_id, speaker_name, text):
     # Run the entire blocking_direct_inference function in a separate thread
     await asyncio.to_thread(blocking_direct_inference)
 
+async def save_utterance_async(audio_bytes: bytes) -> str:
+    """
+    Saves a complete audio utterance to a 16-bit, 16kHz, mono WAV file
+    in a non-blocking manner.
+
+    This function uses `asyncio.to_thread()` to run the file I/O
+    in a separate thread, preventing it from blocking the main event loop.
+
+    Args:
+        audio_bytes (bytes): The complete audio utterance as bytes.
+
+    Returns:
+        str: The full path to the saved file.
+    """
+    # Define the target audio parameters
+    OUTPUT_DIR = "utterances"
+    SAMPLE_RATE = 16000
+    SAMPLE_WIDTH = 2 # 16-bit
+    NUM_CHANNELS = 1
+    # Generate a unique filename using a UUID
+    filename = f"utterance_{uuid.uuid4()}.wav"
+    filepath = f"{OUTPUT_DIR}/{filename}"
+
+    # Use a thread pool executor to run the blocking I/O operation
+    def _save_file():
+        try:
+            with wave.open(filepath, 'wb') as wf:
+                wf.setnchannels(NUM_CHANNELS)
+                wf.setsampwidth(SAMPLE_WIDTH)
+                wf.setframerate(SAMPLE_RATE)
+                wf.writeframes(audio_bytes)
+            print(f"Successfully saved utterance to {filepath}")
+        except Exception as e:
+            # If the directory doesn't exist, this will raise a FileNotFoundError
+            print(f"Error saving utterance to {filepath}: {e}")
+            raise e # Re-raise the exception
+
+    # Run the blocking file-saving function in a separate thread
+    await asyncio.to_thread(_save_file)
+    
+    return filepath
+
 async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber):
     """
     Processes audio chunks from an asyncio.Queue.
@@ -1436,6 +1554,10 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
     SILENCE_CHUNKS_THRESHOLD = 2 # Number of consecutive silent ASR chunks to consider end of utterance
     #previous_text = ""  # Store the previously sent text (for incremental updates)
     final_transcription_text = ""
+    SPEAKER = CONFIG["default_speaker"]
+    SPEAKER_CONFIDENCE = CONFIG["default_speaker_confidence"]
+    ASR_CONFIDENCE = CONFIG["default_asr_confidence"]
+    SERVER = CONFIG["server_name"]
 
     try:
         while True:
@@ -1495,11 +1617,15 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             # You can log or process the ecapa_result as needed
                             if "error" not in ecapa_result:
                                 print(f"[Speaker ID] {ecapa_result['speaker_result']}")
+                                SPEAKER = ecapa_result['speaker_result']
+                                SPEAKER_CONFIDENCE = ecapa_result['speaker_confidence']
 
                         data_to_send = {
                             "speaker": SPEAKER,
+                            "speaker_confidence": SPEAKER_CONFIDENCE,
                             "final": False, # Always interim while speaking
-                            "transcript": text
+                            "transcript": text,
+                            "asr_confidence": ASR_CONFIDENCE
                         }
                         json_string = json.dumps(data_to_send)
                         await send_message_to_client(client_id, json_string)
@@ -1510,6 +1636,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             #is_speaking = False
                             #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
                             print("Acoustic finality detected. Processing full utterance with offline model...")
+                            #asyncio.create_task(save_utterance_async(current_utterance_buffer))
 
                             # Extract final ECAPA embedding before clearing buffer
                             if len(current_utterance_buffer) > 0:
@@ -1519,6 +1646,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 )
                                 if "error" not in final_ecapa_result:
                                     print(f"[Final Speaker ID] {final_ecapa_result['speaker_result']}")
+                                    SPEAKER = final_ecapa_result['speaker_result']
+                                    SPEAKER_CONFIDENCE = final_ecapa_result['speaker_confidence']
 
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
@@ -1548,8 +1677,10 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             if final_transcription_text:
                                 data_to_send = {
                                     "speaker": SPEAKER,
+                                    "speaker_confidence": SPEAKER_CONFIDENCE,
                                     "final": True,
-                                    "transcript": final_transcription_text
+                                    "transcript": final_transcription_text,
+                                    "asr_confidence": ASR_CONFIDENCE
                                 }
                                 json_string = json.dumps(data_to_send)
                                 await send_message_to_client(client_id, json_string)
@@ -1561,8 +1692,10 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     response_text = f"Sir, the time is {strTime}"
                                     data_to_send = {
                                         "speaker": SERVER,
+                                        "speaker_confidence": "certain",
                                         "final": "True",
-                                        "transcript": response_text
+                                        "transcript": response_text,
+                                        "asr_confidence": "certain"
                                     }
                                     json_string = json.dumps(data_to_send)
                                     await send_message_to_client(client_id, json_string)
@@ -1574,8 +1707,10 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     response_text = "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent."
                                     data_to_send = {
                                         "speaker": SERVER,
+                                        "speaker_confidence": "certain",
                                         "final": "True",
-                                        "transcript": response_text
+                                        "transcript": response_text,
+                                        "asr_confidence": "certain"
                                     }
                                     json_string = json.dumps(data_to_send)
                                     if active_websockets:
@@ -1596,6 +1731,9 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             #previous_text = "" # Reset previous_text for the new utterance
                             text = ""
                             # Reset ECAPA processor
+                            SPEAKER = CONFIG["default_speaker"]
+                            SPEAKER_CONFIDENCE = CONFIG["default_speaker_confidence"]
+                            #ASR_CONFIDENCE = CONFIG["default_asr_confidence"]
                             ecapa_processor.reset_for_new_utterance()
 
             except asyncio.QueueEmpty:  # asyncio uses asyncio.QueueEmpty
@@ -1671,11 +1809,12 @@ async def main():
         sample_rate=CONFIG["audio_sample_rate"]
     )
 
+    # ADD SPEAKERS TO DB
+    '''
     # 1. Query the database to see how many speakers are there before adding
     print("--- Number of speakers BEFORE adding new speaker ---")
     results_before = con.execute("SELECT COUNT(*) FROM speakers").fetchall()
     print(f"Current speaker count: {results_before[0][0]}")
-    '''
     # 2. Call the extract_embed function
     wav_path_1 = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
     wav_path_2 = "/root/fawkes/audio_samples/_preprocessed/courtney_02.wav"
@@ -1701,7 +1840,97 @@ async def main():
     # Re-load the speakers into the model's speaker manager to make the new speaker available
     xtts_wrapper._load_speakers_from_db()
     '''
+    
+    # TESTING SOUNDNESS OF FASTECAPASPEAKERMATCHER AND DB EMBEDDINGS
+    '''
+    print("\n--- ECAPA Embedding Extraction and Matching Test ---")
+    # Define the path to the audio file
+    #test_wav_path = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
+    test_wav_path = "./utterances/utterance_badf5312-e8a3-4f91-8279-ef490b4235bb.wav"
+    
+    try:
+        # Extract the ECAPA embedding from the test WAV file
+        print(f"Extracting embedding from test file: {test_wav_path}")
+        # The extract_embedding_from_file method is synchronous, so we use to_thread
+        test_embedding = await asyncio.to_thread(ecapa_processor.extract_embedding_from_file, test_wav_path)
 
+        if test_embedding is not None:
+            # Find the best match for the extracted embedding
+            print("Finding best speaker match...")
+            match_result = ecapa_matcher.find_best_match_with_details(test_embedding)
+            
+            # Print the results
+            print("\nECAPA Match Result:")
+            print(f"Best Match: {match_result.get('speaker')}")
+            print(f"Confidence Score: {match_result.get('confidence'):.3f}")
+            if 'details' in match_result:
+                print("--- Details ---")
+                for key, value in match_result['details'].items():
+                    if isinstance(value, float):
+                        print(f"  {key}: {value:.3f}")
+                    else:
+                        print(f"  {key}: {value}")
+        else:
+            print("Failed to extract embedding from the test file.")
+
+    except FileNotFoundError:
+        print(f"Error: The test file was not found at {test_wav_path}. Please check the path.")
+    except Exception as e:
+        print(f"An unexpected error occurred during the test: {e}")
+    '''
+
+    # WAV TO BUFFER TO TENSOR TEST
+    '''
+    print("\n--- ECAPA Buffer Method Test ---")
+    test_wav_path = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
+
+    try:
+        # Load the WAV file into memory as an audio buffer (same as your working standalone)
+        print(f"Loading audio file: {test_wav_path}")
+        waveform, sample_rate = torchaudio.load(test_wav_path)
+        
+        # Ensure single channel (mono) - following your working pattern
+        if waveform.shape[0] > 1:
+            waveform = torch.mean(waveform, dim=0, keepdim=True)
+        
+        # Resample if necessary (ECAPA-TDNN typically expects 16kHz)
+        target_sr = 16000
+        if sample_rate != target_sr:
+            resampler = torchaudio.transforms.Resample(sample_rate, target_sr)
+            waveform = resampler(waveform)
+        
+        # Convert to int16 PCM format (as your server receives it)
+        audio_float32 = waveform.squeeze().numpy()  # Remove channel dimension for int16 conversion
+        audio_int16 = (audio_float32 * 32767).astype(np.int16)
+        
+        # Convert to bytes (simulating what comes from the client)
+        audio_buffer_bytes = audio_int16.tobytes()
+        
+        print(f"Created audio buffer: {len(audio_buffer_bytes)} bytes ({len(audio_buffer_bytes)/32000:.2f} seconds)")
+        
+        # Test the fixed extract_and_match_from_buffer method
+        print("Testing extract_and_match_from_buffer with audio buffer...")
+        buffer_result = await ecapa_processor.extract_and_match_from_buffer(
+            audio_buffer_bytes, 
+            reason="test"
+        )
+        
+        # Print the results
+        print("\nBuffer Method Test Result:")
+        if "error" in buffer_result:
+            print(f"Error: {buffer_result['error']}")
+        else:
+            print(f"Speaker Match: {buffer_result['speaker_result']}")
+            print(f"Confidence: {buffer_result['confidence']:.3f}")
+            print(f"Speaker Name: {buffer_result['speaker_name']}")
+            print(f"Buffer Duration: {buffer_result['buffer_duration']:.2f}s")
+        
+    except FileNotFoundError:
+        print(f"Error: Test file not found at {test_wav_path}")
+    except Exception as e:
+        print(f"Error during buffer test: {e}")
+    '''
+    
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
     server = await websockets.serve(connection_handler, CONFIG['websocket_host'], CONFIG['websocket_port'])
