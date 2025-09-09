@@ -875,6 +875,141 @@ class FastECAPASpeakerMatcher:
         self.embedding_matrix = None
         self.load_embeddings_to_memory()
 
+    def update_embedding_in_matrix(self, uid: int, speaker_name: str, new_embedding: np.ndarray) -> bool:
+        """
+        Update a specific speaker's embedding in the matrix without full rebuild.
+        
+        Args:
+            uid: Speaker's UID in database (used for lookup)
+            speaker_name: Speaker name for logging purposes only
+            new_embedding: New ECAPA embedding as numpy array
+            
+        Returns:
+            bool: True if successful, False if speaker not found
+        """
+        try:
+            # Check if we have embeddings loaded
+            if self.embedding_matrix is None or len(self.speaker_embeddings) == 0:
+                print(f"[ECAPA Matcher] No embeddings loaded for {speaker_name}, performing full rebuild...")
+                self.rebuild_embedding_matrix()
+                return True
+            
+            # Find speaker by UID
+            try:
+                speaker_idx = self.speaker_uids.index(uid)
+                actual_speaker_name = self.speaker_names[speaker_idx]
+            except ValueError:
+                print(f"[ECAPA Matcher] Speaker {speaker_name} (UID: {uid}) not found in matrix, adding new speaker...")
+                # There should really be no reason this could ever happen
+                return self.add_new_speaker_to_matrix(uid, speaker_name, new_embedding)
+            
+            # Normalize the new embedding
+            embedding_normalized = new_embedding / np.linalg.norm(new_embedding)
+            
+            # Update the dictionary (use actual speaker name from matrix)
+            self.speaker_embeddings[actual_speaker_name] = embedding_normalized
+            
+            # Update the matrix in-place
+            self.embedding_matrix[speaker_idx] = embedding_normalized
+            
+            print(f"[ECAPA Matcher] Updated embedding for {speaker_name} (UID: {uid}) in-place")
+            return True
+            
+        except Exception as e:
+            print(f"[ECAPA Matcher] Error updating speaker embedding for {speaker_name} (UID: {uid}): {e}")
+            return False
+
+    def add_new_speaker_to_matrix(self, uid: int, speaker_name: str, new_embedding: np.ndarray) -> bool:
+        """
+        Add a completely new speaker to the matrix.
+        
+        Args:
+            uid: Speaker's UID in database
+            speaker_name: Speaker name
+            new_embedding: ECAPA embedding as numpy array
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            # Check if UID already exists (shouldn't happen, but safety check)
+            if uid in self.speaker_uids:
+                existing_idx = self.speaker_uids.index(uid)
+                existing_name = self.speaker_names[existing_idx]
+                print(f"[ECAPA Matcher] Warning: UID {uid} already exists for {existing_name}, updating instead...")
+                return self.update_embedding_in_matrix(uid, speaker_name, new_embedding)
+            
+            # Normalize the embedding
+            embedding_normalized = new_embedding / np.linalg.norm(new_embedding)
+            
+            # Add to dictionary
+            self.speaker_embeddings[speaker_name] = embedding_normalized
+            
+            # Add to lists
+            self.speaker_names.append(speaker_name)
+            self.speaker_uids.append(uid)
+            
+            # Expand the matrix
+            if self.embedding_matrix is None:
+                # First speaker
+                self.embedding_matrix = embedding_normalized.reshape(1, -1)
+            else:
+                # Add new row to existing matrix
+                new_row = embedding_normalized.reshape(1, -1)
+                self.embedding_matrix = np.vstack([self.embedding_matrix, new_row])
+            
+            print(f"[ECAPA Matcher] Added new speaker {speaker_name} (UID: {uid}) to matrix (new size: {self.embedding_matrix.shape})")
+            return True
+            
+        except Exception as e:
+            print(f"[ECAPA Matcher] Error adding new speaker {speaker_name} (UID: {uid}): {e}")
+            return False
+
+    def remove_speaker_from_matrix(self, uid: int, speaker_name: str = None) -> bool:
+        """
+        Remove a speaker from the matrix by UID.
+        
+        Args:
+            uid: Speaker's UID to remove
+            speaker_name: Optional speaker name for logging purposes
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            # Find speaker by UID
+            try:
+                speaker_idx = self.speaker_uids.index(uid)
+                actual_speaker_name = self.speaker_names[speaker_idx]
+            except ValueError:
+                log_name = speaker_name if speaker_name else f"UID {uid}"
+                print(f"[ECAPA Matcher] Speaker {log_name} not found for removal")
+                return False
+            
+            # Remove from dictionary
+            del self.speaker_embeddings[actual_speaker_name]
+            
+            # Remove from lists
+            self.speaker_names.pop(speaker_idx)
+            self.speaker_uids.pop(speaker_idx)
+            
+            # Remove row from matrix
+            if self.embedding_matrix.shape[0] == 1:
+                # Last speaker
+                self.embedding_matrix = None
+            else:
+                # Remove specific row
+                self.embedding_matrix = np.delete(self.embedding_matrix, speaker_idx, axis=0)
+            
+            log_name = speaker_name if speaker_name else actual_speaker_name
+            print(f"[ECAPA Matcher] Removed speaker {log_name} (UID: {uid}) from matrix")
+            return True
+            
+        except Exception as e:
+            log_name = speaker_name if speaker_name else f"UID {uid}"
+            print(f"[ECAPA Matcher] Error removing speaker {log_name}: {e}")
+            return False
+
 class ECAPASpeakerProcessor:
     """
     Unified ECAPA-TDNN speaker processor that handles both file-based extraction 
@@ -947,7 +1082,7 @@ class ECAPASpeakerProcessor:
         if sample_rate is None:
             sample_rate = self.sample_rate
         try:
-            print(f"[ECAPA] Extracting embedding from buffer: shape={audio_int16.shape}, sample_rate={sample_rate}")
+            #print(f"[ECAPA] Extracting embedding from buffer: shape={audio_int16.shape}, sample_rate={sample_rate}")
             
             # Convert int16 to float32 in range [-1, 1] (same as working version)
             audio_float32 = audio_int16.astype(np.float32) / 32768.0
@@ -968,14 +1103,14 @@ class ECAPASpeakerProcessor:
                 resampler = torchaudio.transforms.Resample(sample_rate, target_sr)
                 waveform = resampler(waveform)
             
-            print(f"[ECAPA] Prepared waveform tensor shape: {waveform.shape}")
-            print(f"[ECAPA] Sample rate: {target_sr}")
+            #print(f"[ECAPA] Prepared waveform tensor shape: {waveform.shape}")
+            #print(f"[ECAPA] Sample rate: {target_sr}")
             
             # Move tensors to the same device as the model
             device = next(self.model.parameters()).device
             waveform = waveform.to(device)
             
-            # Generate embedding using the SAME pattern as claudeECAPAfromTensor2.py
+            # Generate embedding
             with torch.no_grad():
                 # NeMo models typically expect audio length in samples as second parameter
                 audio_length = torch.tensor([waveform.shape[1]], dtype=torch.long).to(device)
@@ -985,7 +1120,7 @@ class ECAPASpeakerProcessor:
             
             embedding_np = embedding.cpu().numpy().squeeze()
             
-            print(f"[ECAPA] Extracted embedding shape from buffer: {embedding_np.shape}")
+            #print(f"[ECAPA] Extracted embedding shape from buffer: {embedding_np.shape}")
             return embedding_np
             
         except Exception as e:
@@ -1087,7 +1222,7 @@ class ECAPASpeakerProcessor:
             print(f"[ECAPA] Error creating speaker imprint for {firstname}: {e}")
             return False
 
-    async def update_speaker_imprint(self, wav_path, uid):
+    async def update_speaker_imprint_from_file(self, wav_path, uid):
         """
         Perform a cumulative update to an existing speaker's ECAPA embedding.
         Uses weighted averaging based on audio duration to combine old and new embeddings.
@@ -1202,11 +1337,131 @@ class ECAPASpeakerProcessor:
             print(f"[ECAPA] Error updating speaker imprint for UID {uid}: {e}")
             return False
 
+    async def update_speaker_imprint_from_buffer(self, uid, ecapa_embedding, audio_int16, sample_rate=None):
+        """
+        Perform a cumulative update to an existing speaker's ECAPA embedding using audio buffer data.
+        Uses weighted averaging based on audio duration to combine old and new embeddings.
+        
+        Args:
+            uid (int): The UID of the existing speaker
+            ecapa_embedding (np.ndarray): Pre-computed ECAPA embedding
+            audio_int16 (np.ndarray): Audio data as int16 PCM array
+            sample_rate (int, optional): Sample rate of the audio. Defaults to self.sample_rate.
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if sample_rate is None:
+            sample_rate = self.sample_rate
+            
+        print(f"[ECAPA] Updating speaker imprint for UID {uid} from audio buffer...")
+        
+        try:
+            # 1. Check if the speaker exists
+            def check_speaker_exists():
+                result = con.execute("""
+                    SELECT uid, firstname, surname, ecapa_embedding, total_duration_sec, sample_count 
+                    FROM speakers 
+                    WHERE uid = ?
+                """, (uid,)).fetchone()
+                return result
+            
+            existing_speaker = await asyncio.to_thread(check_speaker_exists)
+            
+            if existing_speaker is None:
+                print(f"[ECAPA] Error: Speaker with UID {uid} does not exist in database")
+                return False
+            
+            uid_db, firstname, surname, existing_embedding_list, total_duration, sample_count = existing_speaker
+            speaker_name = f"{firstname}_{surname}" if surname else firstname
+            print(f"[ECAPA] Found existing speaker: {speaker_name}")
+            
+            # 2. Calculate duration from audio buffer
+            try:
+                # Calculate duration: number of samples / sample rate
+                audio_duration_samples = len(audio_int16)
+                new_audio_duration = audio_duration_samples / sample_rate
+                print(f"[ECAPA] Audio buffer duration: {new_audio_duration:.2f} seconds ({audio_duration_samples} samples at {sample_rate}Hz)")
+            except Exception as e:
+                print(f"[ECAPA] Error calculating audio duration: {e}")
+                return False
+            
+            # 3. Validate the pre-computed embedding
+            if ecapa_embedding is None:
+                print(f"[ECAPA] Error: Pre-computed ECAPA embedding is None")
+                return False
+                
+            if not isinstance(ecapa_embedding, np.ndarray):
+                print(f"[ECAPA] Error: ECAPA embedding must be a numpy array, got {type(ecapa_embedding)}")
+                return False
+                
+            print(f"[ECAPA] Using pre-computed embedding shape: {ecapa_embedding.shape}")
+            
+            # 4. Combine embeddings using weighted average
+            if existing_embedding_list is not None and total_duration > 0:
+                # Convert existing embedding from database list back to numpy array
+                existing_embedding = np.array(existing_embedding_list, dtype=np.float32)
+                
+                # Calculate weights based on duration
+                existing_weight = total_duration / (total_duration + new_audio_duration)
+                new_weight = new_audio_duration / (total_duration + new_audio_duration)
+                
+                # Perform weighted average
+                combined_embedding = (existing_weight * existing_embedding + 
+                                    new_weight * ecapa_embedding)
+                
+                print(f"[ECAPA] Combined embeddings - existing weight: {existing_weight:.3f}, "
+                    f"new weight: {new_weight:.3f}")
+                
+            else:
+                # No existing embedding or duration, use the new embedding as-is
+                combined_embedding = ecapa_embedding
+                print(f"[ECAPA] No existing embedding data, using new embedding as baseline")
+            
+            # 5. Update database with combined embedding and metadata
+            def update_speaker_data():
+                combined_embedding_list = combined_embedding.flatten().tolist()
+                new_total_duration = (total_duration if total_duration else 0.0) + new_audio_duration
+                new_sample_count = (sample_count if sample_count else 0) + 1
+                
+                con.execute("""
+                    UPDATE speakers 
+                    SET ecapa_embedding = ?, 
+                        total_duration_sec = ?, 
+                        sample_count = ?,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE uid = ?
+                """, (
+                    combined_embedding_list,
+                    new_total_duration,
+                    new_sample_count,
+                    uid
+                ))
+                
+                return new_total_duration, new_sample_count
+            
+            new_total_duration, new_sample_count = await asyncio.to_thread(update_speaker_data)
+            
+            print(f"[ECAPA] Successfully updated speaker {speaker_name} (UID: {uid}) from buffer")
+            print(f"[ECAPA] New totals - Duration: {new_total_duration:.2f}s, Samples: {new_sample_count}")
+            
+            # 6. Update the ECAPA matcher embedding matrix incrementally (much faster than rebuild)
+            update_success = self.ecapa_matcher.update_embedding_in_matrix(uid, speaker_name, combined_embedding)
+            if not update_success:
+                print(f"[ECAPA] Warning: Failed to update embedding matrix, falling back to full rebuild...")
+                self.ecapa_matcher.rebuild_embedding_matrix()
+            
+            return True
+            
+        except Exception as e:
+            print(f"[ECAPA] Error updating speaker imprint for UID {uid} from buffer: {e}")
+            return False
+
     def reset_for_new_utterance(self):
         """Reset the online processor state for a new utterance."""
         self.last_extraction_bytes = 0
         self.extraction_count = 0
-        print("[ECAPA] Reset for new utterance")
+        #print("[ECAPA] Reset for new utterance")
     
     def should_extract_now(self, buffer_size_bytes):
         """
@@ -1265,6 +1520,18 @@ class ECAPASpeakerProcessor:
             else:
                 speaker_result = f"{speaker_name}"
                 speaker_confidence = "certain"
+                # We have a (near)certain match, let's cumulatively enrich the embedding for that user
+                # NOTE this involves i/o and can add up quickly for large databases may need a queueing system in the future
+                # Only update embedding on final utterance (when silence triggers extraction)
+                if reason == "silence":
+                    try:
+                        success = await self.update_speaker_imprint_from_buffer(uid, ecapa_embedding, audio_int16)
+                        if success:
+                            print(f"[ECAPA] Successfully updated imprint for {speaker_name}")
+                        else:
+                            print(f"[ECAPA] Failed to update imprint for {speaker_name}")
+                    except Exception as e:
+                        print(f"[ECAPA] Error updating imprint: {e}")
             
             result = {
                 "speaker_name": speaker_name,
@@ -1676,7 +1943,7 @@ async def manual_sequential_ecapa(firstname, surname, update_wav_paths):
             print(f"\nProcessing update {i}/{len(update_wav_paths)}: {Path(wav_path).name}")
             
             try:
-                success = await ecapa_processor.update_speaker_imprint(wav_path, speaker_uid)
+                success = await ecapa_processor.update_speaker_imprint_from_file(wav_path, speaker_uid)
                 if success:
                     successful_updates += 1
                     print(f"✓ Update {i} completed successfully")
@@ -2050,7 +2317,7 @@ async def main():
     xtts_wrapper._load_speakers_from_db()
     '''
 
-    # ADD SEQUENTIAL UPDATES MANUALLY
+    # ADD SEQUENTIAL ECAPA UPDATES MANUALLY
     '''
     nathanael_wavs = [
         "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav",
