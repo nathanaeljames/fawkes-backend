@@ -24,7 +24,7 @@ Basic Python backend for Fawkes chatbot
 - [ ] Speaker diarization & segmentation
 - [X] Speaker recognition
 - [X] Multiple speaker memory using duckdb for embeddings
-- [ ] Incremental ECAPA embeddings using high-scoring utterances
+- [X] Incremental ECAPA embeddings using high-scoring utterances
 - [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
 - [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
 - [ ] ~~Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation~~
