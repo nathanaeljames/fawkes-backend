@@ -4,7 +4,7 @@
 # move imports to required models loading class(?)
 # //rename classes send_message_to_clients() to send_message_to_client()
 # rename "NeMo" model's classes/functions for more explicit(?)
-# Write utterances to files in non-blocking manner for testing
+# //Write utterances to files in non-blocking manner for testing
 # NOTES
 # Canary is working but GPU memory paging even with other models diabled. Need more VRAM
 # May circle back for Lexical/Audio P&C using NeMo's models (Canary is underperforming)
@@ -47,6 +47,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from typing import Tuple, Optional, List, Dict
 import torchaudio
 from typing import BinaryIO
+import librosa
 
 
 # Establish the preferred device to run models on
@@ -908,7 +909,7 @@ class ECAPASpeakerProcessor:
         self.bytes_per_second = sample_rate * 2  # 16-bit audio = 2 bytes per sample
         self.last_extraction_bytes = 0
         self.extraction_interval_bytes = self.bytes_per_second  # Extract every 1 second
-        self.max_extractions = 3  # Stop after 3 seconds
+        self.max_extractions = 7  # Stop after 3 seconds
         self.extraction_count = 0
         
         # Thresholds for speaker identification
@@ -1010,7 +1011,16 @@ class ECAPASpeakerProcessor:
         print(f"[ECAPA] Creating initial speaker imprint for {firstname} {surname if surname else ''} from {wav_path}...")
         
         try:
-            # Extract XTTS embeddings (existing functionality)
+            # Get duration of audio file
+            try:
+                #import librosa
+                audio_duration = librosa.get_duration(path=str(wav_path))
+                print(f"[ECAPA] Audio duration: {audio_duration:.2f} seconds")
+            except Exception as e:
+                print(f"[ECAPA] Error getting audio duration: {e}")
+                audio_duration = 0.0
+            
+            # Extract XTTS embeddings
             print(f"[ECAPA] Extracting XTTS embeddings...")
             with torch.no_grad():
                 gpt_cond_latent, speaker_embedding = xtts_wrapper.xtts_model.get_conditioning_latents(str(wav_path), 16000)
@@ -1025,7 +1035,7 @@ class ECAPASpeakerProcessor:
             gpt_shape_json = json.dumps(list(gpt_cond_latent.shape))
             xtts_shape_json = json.dumps(list(speaker_embedding.shape))
             
-            # Extract ECAPA embedding (new functionality)
+            # Extract ECAPA embedding
             print(f"[ECAPA] Extracting ECAPA embedding...")
             ecapa_embedding = await asyncio.to_thread(
                 self.extract_embedding_from_file, 
@@ -1045,8 +1055,9 @@ class ECAPASpeakerProcessor:
             def insert_speaker_data():
                 con.execute("""
                     INSERT INTO speakers 
-                    (firstname, surname, gpt_cond_latent, gpt_shape, xtts_embedding, xtts_shape, ecapa_embedding) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (firstname, surname, gpt_cond_latent, gpt_shape, xtts_embedding, xtts_shape, 
+                    ecapa_embedding, total_duration_sec, sample_count, last_updated) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, (
                     firstname, 
                     surname, 
@@ -1054,12 +1065,15 @@ class ECAPASpeakerProcessor:
                     gpt_shape_json,      # XTTS GPT shape as JSON
                     xtts_embedding_flat, # XTTS speaker embedding (flattened)
                     xtts_shape_json,     # XTTS speaker shape as JSON
-                    ecapa_embedding_flat # ECAPA embedding (flattened)
+                    ecapa_embedding_flat,# ECAPA embedding (flattened)
+                    audio_duration,      # Initial duration
+                    1,                   # Initial sample count
                 ))
             
             await asyncio.to_thread(insert_speaker_data)
             
             print(f"[ECAPA] Successfully stored complete speaker imprint for {firstname} in DuckDB")
+            print(f"[ECAPA] Initial metadata - Duration: {audio_duration:.2f}s, Sample count: 1")
             
             # Reload the XTTS speaker manager to include the new speaker
             xtts_wrapper._load_speakers_from_db()
@@ -1072,53 +1086,121 @@ class ECAPASpeakerProcessor:
         except Exception as e:
             print(f"[ECAPA] Error creating speaker imprint for {firstname}: {e}")
             return False
-    
+
     async def update_speaker_imprint(self, wav_path, uid):
         """
-        Updates the ECAPA embedding for a given user UID from a WAV file.
-        If the UID does not exist, it prints an error and returns.
+        Perform a cumulative update to an existing speaker's ECAPA embedding.
+        Uses weighted averaging based on audio duration to combine old and new embeddings.
+        
+        Args:
+            wav_path (str or Path): Path to the new WAV file
+            uid (int): The UID of the existing speaker
+            
+        Returns:
+            bool: True if successful, False otherwise
         """
+        wav_path = Path(wav_path)
+        print(f"[ECAPA] Updating speaker imprint for UID {uid} with {wav_path}...")
+        
         try:
-            # Check if a member with the given UID already exists
-            existing_member = self.db.find_one(uid)
+            # 1. Check if the speaker exists
+            def check_speaker_exists():
+                result = con.execute("""
+                    SELECT uid, firstname, surname, ecapa_embedding, total_duration_sec, sample_count 
+                    FROM speakers 
+                    WHERE uid = ?
+                """, (uid,)).fetchone()
+                return result
             
-            if existing_member is None:
-                print(f"Error: Speaker with UID {uid} not found. Cannot update.")
-                return {"error": "Speaker not found."}
-
-            # Process the audio file to get the new embedding
-            if not wav_path.exists():
-                print(f"Error: WAV file not found at {wav_path}")
-                return {"error": "WAV file not found."}
+            existing_speaker = await asyncio.to_thread(check_speaker_exists)
+            
+            if existing_speaker is None:
+                print(f"[ECAPA] Error: Speaker with UID {uid} does not exist in database")
+                return False
+            
+            uid_db, firstname, surname, existing_embedding_list, total_duration, sample_count = existing_speaker
+            speaker_name = f"{firstname}_{surname}" if surname else firstname
+            print(f"[ECAPA] Found existing speaker: {speaker_name}")
+            
+            # 2. Get duration of new audio file
+            try:
+                #import librosa
+                new_audio_duration = librosa.get_duration(path=str(wav_path))
+                print(f"[ECAPA] New audio duration: {new_audio_duration:.2f} seconds")
+            except Exception as e:
+                print(f"[ECAPA] Error getting audio duration: {e}")
+                return False
+            
+            # 3. Extract new ECAPA embedding from the WAV file
+            new_embedding = await asyncio.to_thread(
+                self.extract_embedding_from_file, 
+                wav_path, 
+                self.sample_rate
+            )
+            
+            if new_embedding is None:
+                print(f"[ECAPA] Failed to extract ECAPA embedding from {wav_path}")
+                return False
+            
+            print(f"[ECAPA] Successfully extracted new embedding shape: {new_embedding.shape}")
+            
+            # 4. Combine embeddings using weighted average
+            if existing_embedding_list is not None and total_duration > 0:
+                # Convert existing embedding from database list back to numpy array
+                existing_embedding = np.array(existing_embedding_list, dtype=np.float32)
                 
-            audio_buffer = np.fromfile(wav_path, dtype=np.int16)
+                # Calculate weights based on duration
+                existing_weight = total_duration / (total_duration + new_audio_duration)
+                new_weight = new_audio_duration / (total_duration + new_audio_duration)
+                
+                # Perform weighted average
+                combined_embedding = (existing_weight * existing_embedding + 
+                                    new_weight * new_embedding)
+                
+                print(f"[ECAPA] Combined embeddings - existing weight: {existing_weight:.3f}, "
+                    f"new weight: {new_weight:.3f}")
+                
+            else:
+                # No existing embedding or duration, use the new embedding as-is
+                combined_embedding = new_embedding
+                print(f"[ECAPA] No existing embedding data, using new embedding as baseline")
             
-            # Assuming your ecapa_model has a method to get embeddings
-            new_emb = self.ecapa_model.extract_embedding(audio_buffer).detach().cpu().numpy().flatten()
+            # 5. Update database with combined embedding and metadata
+            def update_speaker_data():
+                combined_embedding_list = combined_embedding.flatten().tolist()
+                new_total_duration = (total_duration if total_duration else 0.0) + new_audio_duration
+                new_sample_count = (sample_count if sample_count else 0) + 1
+                
+                con.execute("""
+                    UPDATE speakers 
+                    SET ecapa_embedding = ?, 
+                        total_duration_sec = ?, 
+                        sample_count = ?,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE uid = ?
+                """, (
+                    combined_embedding_list,
+                    new_total_duration,
+                    new_sample_count,
+                    uid
+                ))
+                
+                return new_total_duration, new_sample_count
             
-            # Get the duration of the new audio
-            with wave.open(str(wav_path), 'rb') as wf:
-                new_data_duration_sec = wf.getnframes() / wf.getframerate()
+            new_total_duration, new_sample_count = await asyncio.to_thread(update_speaker_data)
             
-            # Update ECAPA embedding with weighted average
-            old_emb = np.array(existing_member['ecapa_embedding'])
-            old_duration = existing_member.get('total_duration_sec', 0)
+            print(f"[ECAPA] Successfully updated speaker {speaker_name} (UID: {uid})")
+            print(f"[ECAPA] New totals - Duration: {new_total_duration:.2f}s, Samples: {new_sample_count}")
             
-            # Perform the weighted average
-            updated_ecapa = ((old_emb * old_duration) + (new_emb * new_data_duration_sec)) / (old_duration + new_data_duration_sec)
+            # 6. Rebuild the ECAPA matcher embedding matrix to include updated embedding
+            print(f"[ECAPA] Rebuilding embedding matrix with updated data...")
+            self.ecapa_matcher.rebuild_embedding_matrix()
             
-            updates = {
-                'ecapa_embedding': updated_ecapa.tolist(),
-                'total_duration_sec': old_duration + new_data_duration_sec
-            }
+            return True
             
-            self.db.update_one(uid, updates)
-            print(f"Speaker imprint for UID {uid} has been updated.")
-            return {"success": f"Speaker imprint for UID {uid} updated successfully."}
-
         except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            return {"error": f"An unexpected error occurred: {e}"}
+            print(f"[ECAPA] Error updating speaker imprint for UID {uid}: {e}")
+            return False
 
     def reset_for_new_utterance(self):
         """Reset the online processor state for a new utterance."""
@@ -1533,6 +1615,132 @@ async def save_utterance_async(audio_bytes: bytes) -> str:
     
     return filepath
 
+async def manual_sequential_ecapa(firstname, surname, update_wav_paths):
+    """
+    Perform sequential ECAPA embedding updates for a specific speaker.
+    
+    Args:
+        firstname (str): First name of the speaker
+        surname (str): Last name of the speaker (can be None)
+        update_wav_paths (list): List of WAV file paths for updating the speaker's embedding
+        
+    Returns:
+        dict: Results summary with success/failure information
+    """
+    print(f"\n--- Sequential ECAPA updates for {firstname} {surname if surname else ''} ---")
+    
+    # Query to get the speaker's UID
+    if surname:
+        uid_result = con.execute("""
+            SELECT uid FROM speakers 
+            WHERE firstname = ? AND surname = ?
+        """, (firstname, surname)).fetchone()
+        speaker_display_name = f"{firstname} {surname}"
+    else:
+        uid_result = con.execute("""
+            SELECT uid FROM speakers 
+            WHERE firstname = ? AND surname IS NULL
+        """, (firstname,)).fetchone()
+        speaker_display_name = firstname
+    
+    if not uid_result:
+        error_msg = f"Error: Could not find speaker '{speaker_display_name}' in database"
+        print(error_msg)
+        return {
+            "success": False,
+            "error": error_msg,
+            "speaker": speaker_display_name,
+            "updates_attempted": 0,
+            "updates_successful": 0
+        }
+    
+    speaker_uid = uid_result[0]
+    print(f"Found {speaker_display_name} with UID: {speaker_uid}")
+    
+    # Get initial metadata
+    initial_metadata = con.execute("""
+        SELECT total_duration_sec, sample_count 
+        FROM speakers 
+        WHERE uid = ?
+    """, (speaker_uid,)).fetchone()
+    
+    initial_duration, initial_count = initial_metadata if initial_metadata else (0.0, 0)
+    print(f"Initial state - Duration: {initial_duration:.2f}s, Sample count: {initial_count}")
+    
+    # Process updates sequentially
+    successful_updates = 0
+    failed_updates = []
+    
+    try:
+        for i, wav_path in enumerate(update_wav_paths, 1):
+            print(f"\nProcessing update {i}/{len(update_wav_paths)}: {Path(wav_path).name}")
+            
+            try:
+                success = await ecapa_processor.update_speaker_imprint(wav_path, speaker_uid)
+                if success:
+                    successful_updates += 1
+                    print(f"✓ Update {i} completed successfully")
+                else:
+                    failed_updates.append({"index": i, "path": wav_path, "error": "Function returned False"})
+                    print(f"✗ Update {i} failed - function returned False")
+                    
+            except FileNotFoundError:
+                failed_updates.append({"index": i, "path": wav_path, "error": "File not found"})
+                print(f"✗ Update {i} failed - file not found: {wav_path}")
+            except Exception as e:
+                failed_updates.append({"index": i, "path": wav_path, "error": str(e)})
+                print(f"✗ Update {i} failed - error: {e}")
+                
+    except Exception as e:
+        error_msg = f"Critical error during sequential updates: {e}"
+        print(error_msg)
+        return {
+            "success": False,
+            "error": error_msg,
+            "speaker": speaker_display_name,
+            "updates_attempted": len(update_wav_paths),
+            "updates_successful": successful_updates,
+            "failed_updates": failed_updates
+        }
+    
+    # Get final metadata
+    final_metadata = con.execute("""
+        SELECT total_duration_sec, sample_count, last_updated 
+        FROM speakers 
+        WHERE uid = ?
+    """, (speaker_uid,)).fetchone()
+    
+    if final_metadata:
+        final_duration, final_count, last_update = final_metadata
+        print(f"\n--- Final metadata for {speaker_display_name} ---")
+        print(f"Total duration: {final_duration:.2f}s (+{final_duration - initial_duration:.2f}s)")
+        print(f"Sample count: {final_count} (+{final_count - initial_count})")
+        print(f"Last updated: {last_update}")
+    
+    # Summary
+    print(f"\n--- Update Summary ---")
+    print(f"Speaker: {speaker_display_name}")
+    print(f"Updates attempted: {len(update_wav_paths)}")
+    print(f"Updates successful: {successful_updates}")
+    print(f"Updates failed: {len(failed_updates)}")
+    
+    if failed_updates:
+        print("Failed updates:")
+        for failure in failed_updates:
+            print(f"  - Update {failure['index']}: {Path(failure['path']).name} ({failure['error']})")
+    
+    return {
+        "success": successful_updates > 0,
+        "speaker": speaker_display_name,
+        "speaker_uid": speaker_uid,
+        "updates_attempted": len(update_wav_paths),
+        "updates_successful": successful_updates,
+        "updates_failed": len(failed_updates),
+        "failed_updates": failed_updates,
+        "initial_metadata": {"duration": initial_duration, "count": initial_count},
+        "final_metadata": {"duration": final_duration, "count": final_count, "last_updated": last_update} if final_metadata else None
+    }
+
 async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber):
     """
     Processes audio chunks from an asyncio.Queue.
@@ -1636,6 +1844,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             #is_speaking = False
                             #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
                             print("Acoustic finality detected. Processing full utterance with offline model...")
+                            # UNCOMMENT TO SAVE EACH UTTERANCE TO WAV
                             #asyncio.create_task(save_utterance_async(current_utterance_buffer))
 
                             # Extract final ECAPA embedding before clearing buffer
@@ -1809,14 +2018,14 @@ async def main():
         sample_rate=CONFIG["audio_sample_rate"]
     )
 
-    # ADD SPEAKERS TO DB
+    # ADD INITIAL SPEAKERS TO DB
     '''
     # 1. Query the database to see how many speakers are there before adding
     print("--- Number of speakers BEFORE adding new speaker ---")
     results_before = con.execute("SELECT COUNT(*) FROM speakers").fetchall()
     print(f"Current speaker count: {results_before[0][0]}")
     # 2. Call the extract_embed function
-    wav_path_1 = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
+    wav_path_1 = "/root/fawkes/audio_samples/_preprocessed/nate_jabra_mic.wav"
     wav_path_2 = "/root/fawkes/audio_samples/_preprocessed/courtney_02.wav"
     wav_path_3 = "/root/fawkes/audio_samples/_preprocessed/neilgaiman_01.wav"
     try:
@@ -1840,95 +2049,20 @@ async def main():
     # Re-load the speakers into the model's speaker manager to make the new speaker available
     xtts_wrapper._load_speakers_from_db()
     '''
-    
-    # TESTING SOUNDNESS OF FASTECAPASPEAKERMATCHER AND DB EMBEDDINGS
+
+    # ADD SEQUENTIAL UPDATES MANUALLY
     '''
-    print("\n--- ECAPA Embedding Extraction and Matching Test ---")
-    # Define the path to the audio file
-    #test_wav_path = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
-    test_wav_path = "./utterances/utterance_badf5312-e8a3-4f91-8279-ef490b4235bb.wav"
-    
-    try:
-        # Extract the ECAPA embedding from the test WAV file
-        print(f"Extracting embedding from test file: {test_wav_path}")
-        # The extract_embedding_from_file method is synchronous, so we use to_thread
-        test_embedding = await asyncio.to_thread(ecapa_processor.extract_embedding_from_file, test_wav_path)
-
-        if test_embedding is not None:
-            # Find the best match for the extracted embedding
-            print("Finding best speaker match...")
-            match_result = ecapa_matcher.find_best_match_with_details(test_embedding)
-            
-            # Print the results
-            print("\nECAPA Match Result:")
-            print(f"Best Match: {match_result.get('speaker')}")
-            print(f"Confidence Score: {match_result.get('confidence'):.3f}")
-            if 'details' in match_result:
-                print("--- Details ---")
-                for key, value in match_result['details'].items():
-                    if isinstance(value, float):
-                        print(f"  {key}: {value:.3f}")
-                    else:
-                        print(f"  {key}: {value}")
-        else:
-            print("Failed to extract embedding from the test file.")
-
-    except FileNotFoundError:
-        print(f"Error: The test file was not found at {test_wav_path}. Please check the path.")
-    except Exception as e:
-        print(f"An unexpected error occurred during the test: {e}")
-    '''
-
-    # WAV TO BUFFER TO TENSOR TEST
-    '''
-    print("\n--- ECAPA Buffer Method Test ---")
-    test_wav_path = "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav"
-
-    try:
-        # Load the WAV file into memory as an audio buffer (same as your working standalone)
-        print(f"Loading audio file: {test_wav_path}")
-        waveform, sample_rate = torchaudio.load(test_wav_path)
-        
-        # Ensure single channel (mono) - following your working pattern
-        if waveform.shape[0] > 1:
-            waveform = torch.mean(waveform, dim=0, keepdim=True)
-        
-        # Resample if necessary (ECAPA-TDNN typically expects 16kHz)
-        target_sr = 16000
-        if sample_rate != target_sr:
-            resampler = torchaudio.transforms.Resample(sample_rate, target_sr)
-            waveform = resampler(waveform)
-        
-        # Convert to int16 PCM format (as your server receives it)
-        audio_float32 = waveform.squeeze().numpy()  # Remove channel dimension for int16 conversion
-        audio_int16 = (audio_float32 * 32767).astype(np.int16)
-        
-        # Convert to bytes (simulating what comes from the client)
-        audio_buffer_bytes = audio_int16.tobytes()
-        
-        print(f"Created audio buffer: {len(audio_buffer_bytes)} bytes ({len(audio_buffer_bytes)/32000:.2f} seconds)")
-        
-        # Test the fixed extract_and_match_from_buffer method
-        print("Testing extract_and_match_from_buffer with audio buffer...")
-        buffer_result = await ecapa_processor.extract_and_match_from_buffer(
-            audio_buffer_bytes, 
-            reason="test"
-        )
-        
-        # Print the results
-        print("\nBuffer Method Test Result:")
-        if "error" in buffer_result:
-            print(f"Error: {buffer_result['error']}")
-        else:
-            print(f"Speaker Match: {buffer_result['speaker_result']}")
-            print(f"Confidence: {buffer_result['confidence']:.3f}")
-            print(f"Speaker Name: {buffer_result['speaker_name']}")
-            print(f"Buffer Duration: {buffer_result['buffer_duration']:.2f}s")
-        
-    except FileNotFoundError:
-        print(f"Error: Test file not found at {test_wav_path}")
-    except Exception as e:
-        print(f"Error during buffer test: {e}")
+    nathanael_wavs = [
+        "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav",
+        "/root/fawkes/audio_samples/_preprocessed/nathanael_02.wav", 
+        "/root/fawkes/audio_samples/_preprocessed/nate_iphone_mic.wav",
+        "/root/fawkes/audio_samples/_preprocessed/nate_samson_meteorite.wav"
+    ]
+    result = await manual_sequential_ecapa("nathanael", "warren", nathanael_wavs)
+    courtney_wavs = [
+        "/root/fawkes/audio_samples/_preprocessed/courtney_01.wav"
+    ]
+    result = await manual_sequential_ecapa("courtney", "mosierwarren", courtney_wavs)
     '''
     
     # Start the WebSocket server for receiving audio
