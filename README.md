@@ -39,6 +39,7 @@ Basic Python backend for Fawkes chatbot
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
 * ISSUE 2: Docker "rebuild" insists on using cache, instantly reusing broken container and ignoring any revisions to Dockerfile, must run `docker system prune -a`
 * NOTE: Use command `watch -n 1 nvidia-smi` to track GPU memory usage live
+* NOTE: Use command `docker compose exec rasa rasa train` to retrain rasa model
 
 NOTES:
 * Currently using fastconformer hybrid cache-aware streaming transformer<sup>[1](https://huggingface.co/nvidia/stt_en_fastconformer_hybrid_large_streaming_multi),[2](https://arxiv.org/abs/2312.17279)</sup>, which is state-of-the-art for (streaming) transformer-based ASR. However, may eventually replace this with Mamba state-space models which are showing much better promise<sup>[3](https://arxiv.org/abs/2407.09732)</sup> for long-context STT, and especially speech seperation<sup>[4](https://arxiv.org/html/2410.06459v2),[5](https://arxiv.org/abs/2403.18257)</sup> and diarization<sup>[6](https://www.researchgate.net/publication/384770025_Mamba-based_Segmentation_Model_for_Speaker_Diarization)</sup>. SSM models are more in the research stage and may require some engineering for streaming audio support.
