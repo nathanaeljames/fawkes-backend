@@ -1,0 +1,43 @@
+version: "3.1"
+
+nlu:
+- intent: greet
+  examples: |
+    - hey
+    - hello
+    - hi
+    - hello there
+    - good morning
+    - good evening
+    - hey there
+
+- intent: goodbye
+  examples: |
+    - cu
+    - good by
+    - cee you later
+    - good night
+    - bye
+    - goodbye
+    - have a nice day
+    - see you around
+    - bye bye
+    - see you later
+
+- intent: ask_time
+  examples: |
+    - what time is it
+    - tell me the time
+    - what's the time
+    - current time
+    - time please
+    - the time
+    - what time
+
+- intent: ask_name
+  examples: |
+    - what's your name
+    - tell me your name
+    - who are you
+    - your name
+    - what are you called

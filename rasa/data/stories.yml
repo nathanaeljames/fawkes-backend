@@ -1,0 +1,23 @@
+version: "3.1"
+
+stories:
+
+- story: happy path
+  steps:
+  - intent: greet
+  - action: utter_greet
+
+- story: ask time
+  steps:
+  - intent: ask_time
+  - action: action_tell_time
+
+- story: ask name
+  steps:
+  - intent: ask_name
+  - action: utter_ask_name
+
+- story: say goodbye
+  steps:
+  - intent: goodbye
+  - action: utter_goodbye

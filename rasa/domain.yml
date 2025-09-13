@@ -1,0 +1,33 @@
+version: "3.1"
+
+intents:
+  - greet
+  - goodbye
+  - ask_time
+  - ask_name
+  - affirm
+  - deny
+
+entities: []
+
+slots: {}
+
+responses:
+  utter_greet:
+  - text: "Hello! How can I help you?"
+
+  utter_goodbye:
+  - text: "Goodbye! Have a great day!"
+
+  utter_ask_name:
+  - text: "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent."
+
+  utter_default:
+  - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
+
+actions:
+  - action_tell_time
+
+session_config:
+  session_expiration_time: 60
+  carry_over_slots_to_new_session: true
