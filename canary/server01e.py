@@ -468,7 +468,9 @@ class PiperTTS:
         print("Pre-loading Piper TTS model...")
         self.voice = PiperVoice.load(model_path)
         print("Piper TTS model loaded successfully")
+        print(f"PiperVoice methods: {[m for m in dir(self.voice) if not m.startswith('_')]}")
 
+    # for Piper 1.2.0 (v1.3.0 represents major breaking changes)
     def synthesize_stream_raw(self, text):
         for chunk in self.voice.synthesize_stream_raw(text):
             yield chunk
