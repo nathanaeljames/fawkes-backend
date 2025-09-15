@@ -31,7 +31,7 @@ RUN pip3 install \
     #ibm_cloud_sdk_core \
     websockets \
     pydub \
-    piper-tts\
+    piper-tts==1.2.0\
     duckdb\
     aiohttp
 # Explicitly install a compatible NumPy version first
