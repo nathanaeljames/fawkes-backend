@@ -77,7 +77,7 @@ CONFIG = {
     "default_speaker": "unknown speaker",
     "default_speaker_confidence": "uncertain",
     "default_asr_confidence": "certain",
-    "rasa_url": "http://rasa:5005",  # Docker service name
+    "rasa_url": "http://rasa-nlp:5005",  # Docker service name
     "rasa_timeout": 10,  # seconds
     "enable_rasa": True
 }
@@ -468,7 +468,7 @@ class PiperTTS:
         print("Pre-loading Piper TTS model...")
         self.voice = PiperVoice.load(model_path)
         print("Piper TTS model loaded successfully")
-        print(f"PiperVoice methods: {[m for m in dir(self.voice) if not m.startswith('_')]}")
+        #print(f"PiperVoice methods: {[m for m in dir(self.voice) if not m.startswith('_')]}")
 
     # for Piper 1.2.0 (v1.3.0 represents major breaking changes)
     def synthesize_stream_raw(self, text):
@@ -1496,7 +1496,7 @@ class ECAPASpeakerProcessor:
         """
         try:
             buffer_duration = len(audio_buffer) / self.bytes_per_second
-            print(f"[ECAPA] Extracting embedding ({reason}) - buffer duration: {buffer_duration:.2f}s")
+            #print(f"[ECAPA] Extracting embedding ({reason}) - buffer duration: {buffer_duration:.2f}s")
             
             # Convert bytes to numpy array
             audio_int16 = np.frombuffer(audio_buffer, dtype=np.int16)
@@ -1548,7 +1548,8 @@ class ECAPASpeakerProcessor:
                 "extraction_count": self.extraction_count + 1
             }
             
-            print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
+            if speaker_confidence == "certain":
+                print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
             
             # Update extraction tracking if this was a scheduled extraction
             if reason == "scheduled":
@@ -1664,7 +1665,7 @@ async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
             
             # Handle TTS if not using client-side TTS
             if not clientSideTTS and active_websockets:
-                print(f"[Rasa] Using Piper TTS")
+                #print(f"[Rasa] Using Piper TTS")
                 asyncio.create_task(stream_tts_audio(client_id, response_text))
             
             processed_any = True
