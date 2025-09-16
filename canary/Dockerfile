@@ -56,7 +56,7 @@ RUN pip3 install coqui-tts
 
 
 #not sure why necessary to copy server.py explicitly but not doing so results in deadlocked/unreadable versions
-COPY server*.py README.md ./
+COPY server*.py ./
 COPY . .
 
 EXPOSE 9001

@@ -25,9 +25,9 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     restart: unless-stopped
 
-  rasa:
+  rasa-nlp:
     image: rasa/rasa:latest
-    container_name: rasa
+    container_name: rasa-nlp
     ports:
       - "5005:5005"
     volumes:
@@ -40,6 +40,19 @@ services:
     restart: unless-stopped
     depends_on:
       - canary
+      - rasa-actions
+
+  rasa-actions:
+    image: rasa/rasa-sdk:latest
+    container_name: rasa-actions
+    volumes:
+      - "./rasa/actions:/app/actions"
+    ports:
+      - "5055:5055"
+    networks:
+      - fawkes-network
+    restart: unless-stopped
+    command: ["start", "--actions", "actions"]
 
 networks:
   fawkes-network:
