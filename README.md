@@ -28,7 +28,7 @@ Basic Python backend for Fawkes chatbot
 - [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
 - [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
 - [ ] ~~Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation~~
-- [ ] "Skills framework" (Rasa?)
+- [X] "Skills framework" (Rasa?)
 - [ ] Prompting and phonetic pangram collection
 - [ ] ~~ChatGPT/ Deepseek integration~~
 - [ ] Langchain routing and LLM referal
@@ -39,7 +39,7 @@ Basic Python backend for Fawkes chatbot
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
 * ISSUE 2: Docker "rebuild" insists on using cache, instantly reusing broken container and ignoring any revisions to Dockerfile, must run `docker system prune -a`
 * NOTE: Use command `watch -n 1 nvidia-smi` to track GPU memory usage live
-* NOTE: Use command `docker compose exec rasa rasa train` to retrain rasa model
+* NOTE: Use command `docker compose exec rasa-nlp rasa train` to retrain rasa model
 * NOTE: Use command `docker-compose up -d --no-deps --build rasa` to rebuild only one docker instance
 
 NOTES:
