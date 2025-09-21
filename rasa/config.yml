@@ -20,7 +20,7 @@ pipeline:
   epochs: 100
   constrain_similarities: true
 - name: FallbackClassifier
-  threshold: 0.95  # Much higher threshold since the model is prone to overfitting
+  threshold: 0.98  # Much higher threshold since the model is prone to overfitting
   #threshold: 0.85  # NLU fallback threshold
 
 policies:

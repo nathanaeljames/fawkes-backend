@@ -1120,6 +1120,7 @@ class ECAPASpeakerProcessor:
         self.max_extractions = 7  # Stop after 7 seconds
         self.extraction_count = 0
         self.subsequent_nomatch = 0
+        self.total_nomatch = 0
         # Thresholds for nomatch determination
         self.nomatch_lower_threshold = 0.70
         self.nomatch_upper_threshold = 0.85
@@ -1663,9 +1664,11 @@ class ECAPASpeakerProcessor:
             elif confidence < self.CERTAIN_THRESHOLD:
                 speaker_result = f"{speaker_name}(?)"
                 speaker_confidence = "uncertain"
+                self.subsequent_nomatch = 0
             else:
                 speaker_result = f"{speaker_name}"
                 speaker_confidence = "certain"
+                self.subsequent_nomatch = 0
                 # We have a (near)certain match, let's cumulatively enrich the embedding for that user
                 # NOTE this involves i/o and can add up quickly for large databases may need a queueing system in the future
                 # Only update embedding on final utterance (when silence triggers extraction)
@@ -1690,17 +1693,26 @@ class ECAPASpeakerProcessor:
             # Update subsequent nomatch if nomatch score was somewhat reliable
             if reason == "silence" and nomatch_score >= self.nomatch_lower_threshold:
                 self.subsequent_nomatch += 1
+                self.total_nomatch += 1
                 print(f"[ECAPA] Subsequent reliable nomatch count: {self.subsequent_nomatch}")
+                print(f"[ECAPA] Total reliable nomatch count: {self.total_nomatch}")
             # Initiate enrollment if nomatch score is very reliable or 3x reasonably reliable
             if nomatch_score >= self.nomatch_upper_threshold:
                 print(f"[ECAPA] High nomatch confidence detected - consider triggering enrollment flow")
+                self.subsequent_nomatch = 0
+                self.total_nomatch = 0
                 # initiate rasa enrollment story
                 suggest_enrollment = True
-            elif self.subsequent_nomatch >= 3:
-                print(f"[ECAPA] 3 reasonable nomatch utterances - consider triggering enrollment flow")
+            elif self.subsequent_nomatch >= 2:
+                print(f"[ECAPA] 2 subsequent reasonable nomatch utterances - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
+                self.total_nomatch = 0
                 suggest_enrollment = True
-                # Note: currently total count not subsequent
+            elif self.total_nomatch >=3:
+                print(f"[ECAPA] 3 total reasonable nomatch utterances - consider triggering enrollment flow")
+                self.subsequent_nomatch = 0
+                self.total_nomatch = 0
+                suggest_enrollment = True
             else:
                 suggest_enrollment = False
 
