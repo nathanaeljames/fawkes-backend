@@ -18,3 +18,11 @@ class ActionTellTime(Action):
         dispatcher.utter_message(text=message)
         
         return []
+
+class ActionDoNothing(Action):
+    def name(self):
+        return "action_do_nothing"
+
+    def run(self, dispatcher, tracker, domain):
+        # This action does nothing and returns an empty list of events
+        return []

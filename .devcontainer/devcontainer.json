@@ -15,5 +15,5 @@
 	// Uncomment to connect as an existing user other than the container default. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "devcontainer"
 	// Post-create command to ensure Rasa service is ready
-	"postCreateCommand": "echo 'Waiting for Rasa to be ready...' && sleep 10 && curl -f http://rasa:5005/version || echo 'Rasa not ready yet'"
+	"postCreateCommand": "echo 'Waiting for Rasa to be ready...' && sleep 10 && curl -f http://rasa-nlp:5005/version || echo 'Rasa not ready yet'"
 }

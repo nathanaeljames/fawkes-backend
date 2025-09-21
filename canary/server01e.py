@@ -759,6 +759,75 @@ class FastECAPASpeakerMatcher:
         
         return composite
     
+    def find_best_match_with_nomatch_data(self, query_embedding, domain_size: Optional[int] = None) -> Tuple[Optional[str], Optional[int], float, Dict]:
+        """
+        Find the best matching speaker with additional data needed for nomatch scoring.
+        
+        Args:
+            query_embedding: ECAPA embedding to match (torch.Tensor or numpy array)
+            domain_size: Number of speakers in consideration domain 
+                        (defaults to total database size if not specified)
+            
+        Returns:
+            Tuple of (speaker_name, uid, confidence_score, nomatch_data_dict)
+        """
+        if self.embedding_matrix is None or len(self.speaker_embeddings) == 0:
+            return None, None, 0.0, {"error": "No embeddings loaded"}
+        
+        # Use total database size if domain_size not specified
+        if domain_size is None:
+            domain_size = len(self.speaker_embeddings)
+        
+        try:
+            # Handle both torch.Tensor and numpy array inputs
+            if isinstance(query_embedding, torch.Tensor):
+                query_array = query_embedding.detach().cpu().numpy()
+            else:
+                query_array = query_embedding
+            
+            # Normalize the query embedding
+            query_normalized = query_array / np.linalg.norm(query_array)
+            query_normalized = query_normalized.reshape(1, -1)
+            
+            # Compute cosine similarities with all speakers at once (vectorized)
+            similarities = cosine_similarity(query_normalized, self.embedding_matrix)[0]
+            
+            # Get top scores for confidence calculation
+            sorted_indices = np.argsort(similarities)[::-1]  # Sort descending
+            best_score = similarities[sorted_indices[0]]
+            second_score = similarities[sorted_indices[1]] if len(similarities) > 1 else 0.0
+            
+            # Additional statistics for nomatch calculation
+            mean_similarity = np.mean(similarities)
+            std_similarity = np.std(similarities)
+            median_similarity = np.median(similarities)
+            
+            # Get best matching speaker and UID
+            best_speaker = self.speaker_names[sorted_indices[0]]
+            best_uid = self.speaker_uids[sorted_indices[0]]
+            
+            # Calculate adaptive confidence
+            confidence = self.calculate_adaptive_confidence(best_score, second_score, domain_size)
+            
+            # Prepare nomatch data
+            nomatch_data = {
+                "best_similarity": best_score,
+                "second_similarity": second_score,
+                "mean_similarity": mean_similarity,
+                "std_similarity": std_similarity,
+                "median_similarity": median_similarity,
+                "similarity_gap": best_score - second_score,
+                "domain_size": domain_size,
+                "above_median_count": np.sum(similarities > median_similarity),
+                "cosine_dissimilarity": 1.0 - best_score  # Direct dissimilarity measure
+            }
+            
+            return best_speaker, best_uid, confidence, nomatch_data
+            
+        except Exception as e:
+            print(f"Error in speaker matching: {e}")
+            return None, None, 0.0, {"error": str(e)}
+    
     def find_best_match(self, query_embedding, domain_size: Optional[int] = None) -> Tuple[Optional[str], Optional[int], float]:
         """
         Find the best matching speaker with adaptive confidence scoring.
@@ -1048,9 +1117,12 @@ class ECAPASpeakerProcessor:
         self.bytes_per_second = sample_rate * 2  # 16-bit audio = 2 bytes per sample
         self.last_extraction_bytes = 0
         self.extraction_interval_bytes = self.bytes_per_second  # Extract every 1 second
-        self.max_extractions = 7  # Stop after 3 seconds
+        self.max_extractions = 7  # Stop after 7 seconds
         self.extraction_count = 0
-        
+        self.subsequent_nomatch = 0
+        # Thresholds for nomatch determination
+        self.nomatch_lower_threshold = 0.70
+        self.nomatch_upper_threshold = 0.85
         # Thresholds for speaker identification
         self.UNCERTAIN_THRESHOLD = 0.70
         self.CERTAIN_THRESHOLD = 0.85
@@ -1465,6 +1537,7 @@ class ECAPASpeakerProcessor:
         """Reset the online processor state for a new utterance."""
         self.last_extraction_bytes = 0
         self.extraction_count = 0
+        #self.subsequent_nomatch = 0
         #print("[ECAPA] Reset for new utterance")
     
     def should_extract_now(self, buffer_size_bytes):
@@ -1483,6 +1556,70 @@ class ECAPASpeakerProcessor:
         bytes_since_last = buffer_size_bytes - self.last_extraction_bytes
         return bytes_since_last >= self.extraction_interval_bytes
     
+    def calculate_nomatch_score(self, nomatch_data: Dict, buffer_duration: float) -> float:
+        """
+        Calculate the probability that the speaker is NOT in the database.
+        
+        Args:
+            nomatch_data: Dictionary containing similarity statistics from matching
+            buffer_duration: Duration of the audio buffer in seconds
+            
+        Returns:
+            float: Nomatch score (0.0 to 1.0), where higher means more likely to be unknown speaker
+        """
+        if "error" in nomatch_data:
+            return 0.5  # Neutral score if we can't calculate
+        
+        # Base dissimilarity score (primary factor)
+        base_dissimilarity = nomatch_data["cosine_dissimilarity"]
+        
+        # Duration confidence factor
+        # Research suggests 2-3 seconds is typically sufficient for reliable speaker embeddings
+        # Very short utterances are unreliable, but diminishing returns after ~3 seconds
+        min_duration = 0.8  # Below this, unreliable (less than ~13 phonemes)
+        optimal_duration = 3.0  # Above this, marginal improvement
+        
+        if buffer_duration <= min_duration:
+            # Penalize very short utterances heavily
+            duration_reliability = max(0.05, buffer_duration / min_duration * 0.3)
+        elif buffer_duration >= optimal_duration:
+            duration_reliability = 1.0  # Full confidence at 3+ seconds
+        else:
+            # Steep curve from 0.3 to 1.0 between min_duration and optimal_duration
+            progress = (buffer_duration - min_duration) / (optimal_duration - min_duration)
+            duration_reliability = 0.3 + 0.7 * (progress ** 0.7)  # Slightly accelerated curve
+        
+        # Domain size factor (larger databases need higher dissimilarity to be confident about nomatch)
+        # Use smooth scaling similar to calculate_adaptive_confidence()
+        domain_size = nomatch_data["domain_size"]
+        # Tunable parameters:
+        # - 15.0: Controls sensitivity to domain size (higher = more sensitive)
+        # - 0.7: Minimum adjustment factor for very large domains
+        # - 0.3: Maximum reduction from baseline (1.0 - 0.7 = 0.3)
+        domain_adjustment = max(0.7, 1.0 - (0.3 * domain_size / (domain_size + 15.0)))
+        
+        # Statistical outlier factor
+        # If the best match is far below the mean, it's more likely to be unknown
+        mean_sim = nomatch_data["mean_similarity"]
+        best_sim = nomatch_data["best_similarity"]
+        std_sim = nomatch_data["std_similarity"]
+        
+        if std_sim > 0:
+            z_score = (best_sim - mean_sim) / std_sim
+            # Negative z-scores (below mean) increase nomatch likelihood
+            outlier_factor = max(0.0, -z_score * 0.1)  # Cap the bonus
+            outlier_factor = min(0.3, outlier_factor)   # Limit maximum impact
+        else:
+            outlier_factor = 0.0
+        
+        # Combine factors
+        raw_nomatch_score = (base_dissimilarity * duration_reliability * domain_adjustment) + outlier_factor
+        
+        # Final normalization and bounds checking
+        nomatch_score = min(1.0, max(0.0, raw_nomatch_score))
+        
+        return nomatch_score
+
     async def extract_and_match_from_buffer(self, audio_buffer, reason="scheduled"):
         """
         Extract ECAPA embedding from audio buffer and find best speaker match.
@@ -1512,8 +1649,13 @@ class ECAPASpeakerProcessor:
                 return {"error": "Failed to extract embedding"}
             
             # Find best speaker match
-            speaker_name, uid, confidence = self.ecapa_matcher.find_best_match(ecapa_embedding)
+            #speaker_name, uid, confidence = self.ecapa_matcher.find_best_match(ecapa_embedding)
             
+            # Find best speaker match WITH nomatch data (always use enhanced method)
+            speaker_name, uid, confidence, nomatch_data = self.ecapa_matcher.find_best_match_with_nomatch_data(ecapa_embedding)
+            # Calculate nomatch score for all extractions
+            nomatch_score = self.calculate_nomatch_score(nomatch_data, buffer_duration)
+     
             # Determine speaker identification result
             if confidence < self.UNCERTAIN_THRESHOLD:
                 speaker_result = "unknown speaker"
@@ -1537,6 +1679,31 @@ class ECAPASpeakerProcessor:
                     except Exception as e:
                         print(f"[ECAPA] Error updating imprint: {e}")
             
+            if speaker_confidence == "certain":
+                print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
+            
+            # Update extraction tracking if this was a scheduled extraction
+            if reason == "scheduled":
+                self.extraction_count += 1
+                self.last_extraction_bytes = len(audio_buffer)
+                print(f"[ECAPA] nomatch score: {nomatch_score}")
+            # Update subsequent nomatch if nomatch score was somewhat reliable
+            if reason == "silence" and nomatch_score >= self.nomatch_lower_threshold:
+                self.subsequent_nomatch += 1
+                print(f"[ECAPA] Subsequent reliable nomatch count: {self.subsequent_nomatch}")
+            # Initiate enrollment if nomatch score is very reliable or 3x reasonably reliable
+            if nomatch_score >= self.nomatch_upper_threshold:
+                print(f"[ECAPA] High nomatch confidence detected - consider triggering enrollment flow")
+                # initiate rasa enrollment story
+                suggest_enrollment = True
+            elif self.subsequent_nomatch >= 3:
+                print(f"[ECAPA] 3 reasonable nomatch utterances - consider triggering enrollment flow")
+                self.subsequent_nomatch = 0
+                suggest_enrollment = True
+                # Note: currently total count not subsequent
+            else:
+                suggest_enrollment = False
+
             result = {
                 "speaker_name": speaker_name,
                 "uid": uid,
@@ -1545,16 +1712,11 @@ class ECAPASpeakerProcessor:
                 "speaker_result": speaker_result,
                 "buffer_duration": buffer_duration,
                 "extraction_reason": reason,
-                "extraction_count": self.extraction_count + 1
+                "extraction_count": self.extraction_count + 1, # (starts at 0)
+                "nomatch_score": nomatch_score,
+                "nomatch_data": nomatch_data,  # Included for debugging if needed
+                "suggest_enrollment": suggest_enrollment
             }
-            
-            if speaker_confidence == "certain":
-                print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
-            
-            # Update extraction tracking if this was a scheduled extraction
-            if reason == "scheduled":
-                self.extraction_count += 1
-                self.last_extraction_bytes = len(audio_buffer)
             
             return result
             
