@@ -16,7 +16,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y\
     nano\
     git\
     ffmpeg\
-    tzdata
+    tzdata\
+    curl
 
 ENV TZ America/New_York
     

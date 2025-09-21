@@ -10,6 +10,10 @@ nlu:
     - good morning
     - good evening
     - hey there
+    - howdy
+    - greetings
+    - what's up
+    - hiya
 
 - intent: goodbye
   examples: |
@@ -23,6 +27,10 @@ nlu:
     - see you around
     - bye bye
     - see you later
+    - farewell
+    - take care
+    - catch you later
+    - until next time
 
 - intent: ask_time
   examples: |
@@ -31,8 +39,12 @@ nlu:
     - what's the time
     - current time
     - time please
-    - the time
-    - what time
+    - can you tell me the time
+    - what's the current time
+    - show me the time
+    - time now
+    - what time is it now
+    - could you tell me what time it is
 
 - intent: ask_name
   examples: |
@@ -41,3 +53,7 @@ nlu:
     - who are you
     - your name
     - what are you called
+    - what should I call you
+    - introduce yourself
+    - may I know your name
+    - what do you go by

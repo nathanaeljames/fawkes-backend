@@ -5,8 +5,7 @@ intents:
   - goodbye
   - ask_time
   - ask_name
-  - affirm
-  - deny
+  - nlu_fallback
 
 entities: []
 
@@ -20,13 +19,15 @@ responses:
   - text: "Goodbye! Have a great day!"
 
   utter_ask_name:
-  - text: "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent."
+  - text: "My name is Fawkes. What is your name?"
 
   utter_default:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
+  - text: "I don't understand. Can you try saying that differently?"
 
 actions:
   - action_tell_time
+  - action_do_nothing
 
 session_config:
   session_expiration_time: 60
