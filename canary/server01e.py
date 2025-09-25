@@ -1690,24 +1690,26 @@ class ECAPASpeakerProcessor:
                 self.extraction_count += 1
                 self.last_extraction_bytes = len(audio_buffer)
                 print(f"[ECAPA] nomatch score: {nomatch_score}")
-            # Update subsequent nomatch if nomatch score was somewhat reliable
+            # Update subsequent/total nomatch if nomatch score was somewhat reliable
             if reason == "silence" and nomatch_score >= self.nomatch_lower_threshold:
                 self.subsequent_nomatch += 1
                 self.total_nomatch += 1
                 print(f"[ECAPA] Subsequent reliable nomatch count: {self.subsequent_nomatch}")
                 print(f"[ECAPA] Total reliable nomatch count: {self.total_nomatch}")
-            # Initiate enrollment if nomatch score is very reliable or 3x reasonably reliable
+            # Initiate enrollment if nomatch score is very reliable
             if nomatch_score >= self.nomatch_upper_threshold:
                 print(f"[ECAPA] High nomatch confidence detected - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
                 self.total_nomatch = 0
                 # initiate rasa enrollment story
                 suggest_enrollment = True
+            # Initiate enrollment if 2 subsequent reasonably reliable utterances
             elif self.subsequent_nomatch >= 2:
                 print(f"[ECAPA] 2 subsequent reasonable nomatch utterances - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
                 self.total_nomatch = 0
                 suggest_enrollment = True
+            # Initiate enrollment if 3 total reasonably reliable utterances
             elif self.total_nomatch >=3:
                 print(f"[ECAPA] 3 total reasonable nomatch utterances - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
@@ -1756,7 +1758,7 @@ class RasaClient:
         if self.session:
             await self.session.close()
     
-    async def send_message(self, message: str, sender: str = "user") -> Optional[Dict[str, Any]]:
+    async def send_message(self, message, client_id, speaker_name=None):
         """
         Send a message to Rasa and get the response.
         
@@ -1773,9 +1775,12 @@ class RasaClient:
             
         try:
             payload = {
-                "sender": sender,
+                "sender": client_id,
                 "message": message
             }
+
+            if speaker_name:
+                payload["metadata"] = {"speaker_name": speaker_name}
             
             print(f"[Rasa] Sending message: '{message}'")
             
@@ -1853,7 +1858,7 @@ async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
     
     return processed_any
 
-async def handle_final_utterance_with_rasa(client_id: str, final_transcription_text: str):
+async def handle_final_utterance_with_rasa(client_id, final_transcription_text, speaker_name):
     """
     Process final utterance through Rasa instead of hardcoded logic.
     
@@ -1875,7 +1880,8 @@ async def handle_final_utterance_with_rasa(client_id: str, final_transcription_t
             # Send the transcription to Rasa
             rasa_response = await rasa_client.send_message(
                 final_transcription_text, 
-                sender=f"client_{client_id}"
+                sender=f"client_{client_id}",
+                speaker_name=speaker_name
             )
             
             # Process the response
@@ -2497,7 +2503,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 await send_message_to_client(client_id, json_string)
 
                                 # Send final utterance to Rasa for intent identification
-                                await handle_final_utterance_with_rasa(client_id, final_transcription_text)
+                                await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER)
 
                             # Reset the buffer and state for the next utterance
                             is_speaking = False

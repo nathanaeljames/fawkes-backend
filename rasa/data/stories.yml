@@ -7,17 +7,25 @@ stories:
   - intent: greet
   - action: utter_greet
 
-- story: ask time
+- story: tell time
   steps:
-  - intent: ask_time
+  - intent: user_ask_time
   - action: action_tell_time
 
-- story: ask name
+- story: tell name
   steps:
-  - intent: ask_name
-  - action: utter_ask_name
+  - intent: user_ask_name
+  - action: action_set_firstname
+  - action: utter_tell_name
 
 - story: say goodbye
   steps:
-  - intent: goodbye
+  - intent: user_goodbye
   - action: utter_goodbye
+
+- story: personalized greeting
+  steps:
+  - intent: user_greet
+  - action: action_set_firstname
+  - action: action_set_part_of_day
+  - action: utter_greet_personalized

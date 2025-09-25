@@ -1,13 +1,13 @@
 version: "3.1"
 
 nlu:
-- regex: greet_pattern
+- regex: user_greet_pattern
   examples: |
     - (hi|hello|hey|howdy|hiya)(\s+there)?(\s+\w+)?[.!?]*
     - (good\s+(morning|evening|afternoon))[.!?]*
     - (what's\s+up|sup|yo)[.!?]*
 
-- intent: greet
+- intent: user_greet
   examples: |
     - hey
     - hello  
@@ -21,13 +21,13 @@ nlu:
     - what's up
     - hiya
 
-- regex: goodbye_pattern
+- regex: user_goodbye_pattern
   examples: |
     - (bye|goodbye|farewell|see\s+you)[.!?]*
     - (good\s+night|take\s+care)[.!?]*
     - (catch\s+you\s+later|until\s+next\s+time)[.!?]*
 
-- intent: goodbye
+- intent: user_goodbye
   examples: |
     - cu
     - good by
@@ -44,12 +44,12 @@ nlu:
     - catch you later
     - until next time
 
-- regex: time_pattern
+- regex: user_ask_time_pattern
   examples: |
     - (what\s+time|tell\s+me\s+the\s+time|current\s+time)[.!?]*
     - (what's\s+the\s+time|time\s+please)[.!?]*
 
-- intent: ask_time
+- intent: user_ask_time
   examples: |
     - what time is it
     - tell me the time
@@ -63,7 +63,7 @@ nlu:
     - what time is it now
     - could you tell me what time it is
 
-- intent: ask_name
+- intent: user_ask_name
   examples: |
     - what's your name
     - tell me your name
