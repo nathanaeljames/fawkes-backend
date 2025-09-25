@@ -1,0 +1,64 @@
+I am working with rasa and a websockets server. I am envisioning a fairly complex dialogue exchange/ enrollment process which would involve triggering actions/stories/intents/functions back and forth between rasa and the websockets server (server01e.py).
+Here is the exchange I am envisioning, in bad pseudo code that I hope you can follow. Please note that all user responses shouldn't need to be exact matches but rather any pattern containing the target phrase/data - it may be easier in some or all cases to use regex for this than nlp
+
+if suggest_enrollment == True:
+    wait until next opening in Rasa-websocket server dialogue, do not interrupt - I may need a routine for this
+    then send message/signal to rasa to trigger utter_ask_familiar (or visa-versa may be easier to send signal then wait on rasa side)
+
+rasa asks: "I don't recognize your voice. Have I met you before?"
+    if user responds "yes":
+        Rasa asks: "What is your name?"
+            if user responds "my name is {firstname}":
+                rasa asks: "Sorry, can I get your first and last name for record's sake?"
+                    if user responds "my name is {firstname} {surname}":
+                        set slot imprint_name to user-provided name
+                        trigger: action query_userbase
+                    else loop back to "Sorry, can I get your first and last name for record's sake?"
+            if user responds "my name is {firstname} {surname}":
+                set slot imprint_name to user-provided name
+                trigger: action query_userbase
+            else loop back to "Sorry, can I get your first and last name for record's sake?"  
+    if user responds "yes, my name is {firstname}":
+        Rasa asks: "Sorry, can I get your first and last name for record's sake?"
+            if user responds "my name is {firstname} {surname}":
+                set slot imprint_name to user-provided name
+                trigger: action query_userbase
+            else loop back to "Sorry, can I get your first and last name for record's sake?"
+    if user responds "yes, my name is {firstname} {surname}":
+        set slot imprint_name to user-provided name
+        trigger: action query_userbase
+    if user responds "no":
+        Rasa asks: "What is your name?"
+            if user responds "my name is {firstname}":
+                rasa asks: "Sorry, can I get your first and last name for record's sake?"
+                    if user responds "my name is {firstname} {surname}":
+                        rasa says: "It's a pleasure to meet you {firstname}"
+                        rasa says: "In order to better serve you, can I ask you to recite a prompt for me?"
+                    else loop back to "Sorry, can I get your first and last name for record's sake?"
+            else loop back to "Sorry, can I get your first and last name for record's sake?"
+
+
+    if query_userbase == True (e.g. returned imprint_uid != None)
+        rasa says: "Its a pleasure to meet you again {firstname}. My apologies for not recognizing you before."
+        rasa says: "In order to better serve you, can I ask you to recite a prompt for me?"
+            if user says "yes":
+                rasa says: "Excellent. Can you please read aloud the following prompt:"
+                trigger: action start_enrollment_recording
+            if user says "no":
+                rasa says: "Very well."
+                rasa mutes/ignores suggest_enrollment signal for rest of session.
+    else
+        rasa says: "I apologize, I don't seem to have a record for you."
+        rasa says: "In order to better serve you, can I ask you to recite a prompt for me?"
+            if user says "yes":
+                rasa says: "Excellent. Can you please read aloud the following prompt:"
+                trigger: action start_enrollment_recording
+            if user says "no":
+                rasa says: "Very well."
+                rasa mutes/ignores suggest_enrollment signal for rest of session.
+    
+
+ACTIONS:
+query_userbase: a new action wherein rasa queries the duckdb on server01e.py to see if a user of firstname_surname matching imprint_name exists. If so, it returns uid and sets it to rasa slot imprint_uid else imprint_uid = None (or is it Null?).
+It may be useful if action query_userbase used a helper function query_database which I could reuse if I ever need rasa to query other tables in the future
+start_enrollment_recording: a new action where rasa kicks off a function record_pangram(uid=None) located on server01e.py. If the uid is set in the rasa slot, it is provided in the function call or message/signal/payload triggering the server-side function call.
