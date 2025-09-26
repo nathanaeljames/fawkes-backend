@@ -40,7 +40,7 @@ class ActionSetPartOfDay(Action):
         return "action_set_part_of_day"
 
     def run(self, dispatcher, tracker, domain):
-        hour = datetime.now().hour
+        hour = datetime.datetime.now().hour
         
         if 5 <= hour < 12:
             part_of_day = "morning"

@@ -1880,7 +1880,7 @@ async def handle_final_utterance_with_rasa(client_id, final_transcription_text, 
             # Send the transcription to Rasa
             rasa_response = await rasa_client.send_message(
                 final_transcription_text, 
-                sender=f"client_{client_id}",
+                client_id=f"client_{client_id}",
                 speaker_name=speaker_name
             )
             

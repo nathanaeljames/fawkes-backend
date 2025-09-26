@@ -2,11 +2,6 @@ version: "3.1"
 
 stories:
 
-- story: say hello
-  steps:
-  - intent: greet
-  - action: utter_greet
-
 - story: tell time
   steps:
   - intent: user_ask_time
