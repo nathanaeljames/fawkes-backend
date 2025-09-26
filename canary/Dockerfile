@@ -48,7 +48,7 @@ RUN pip3 install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pyt
 #RUN pip3 install nemo_toolkit[asr]
 #RUN pip3 install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git"
 # Need latest directly from github to run Canary-qwen
-RUN pip3 install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git" sacrebleu
+RUN pip3 install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git" sacrebleu megatron-core
 #RUN pip3 install nemo_toolkit[all]
 #RUN pip3 install nemo_toolkit[asr,nlp]
 #TURN ON FOR GPU

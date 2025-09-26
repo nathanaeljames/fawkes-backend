@@ -1,3 +1,5 @@
+version: "3.8" 
+
 services:
   canary:
     build:
@@ -25,22 +27,55 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     restart: unless-stopped
 
+  rasa-init:
+    image: busybox:latest
+    # An absolutely exhausting hack to get rasa's training cache and directories to work in ramdisk on Windows host
+    # Shouldn't be necessary on a Linux host in the future
+    # sqlite's atomic i/o doesn't play well with Docker volumes bridging virtualization layers
+    container_name: rasa-init
+    volumes:
+      - "./rasa:/app"
+    tmpfs:
+      - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
+      - /tmp:size=2g
+    command: >
+      sh -c "
+        mkdir -p /app/.rasa/cache &&
+        chown -R 1001:1001 /app/.rasa &&
+        chmod -R 755 /app/.rasa &&
+        echo 'Permissions set successfully'
+      "
+    networks:
+      - fawkes-network
+
   rasa-nlp:
     image: rasa/rasa:latest
     container_name: rasa-nlp
+    user: root
     ports:
       - "5005:5005"
     volumes:
       - "./rasa:/app"
-      - "rasa_cache:/tmp"
+    tmpfs:
+      #- /app/.rasa:size=2g,noexec,nosuid,nodev
+      - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
+      - /tmp:size=2g
     working_dir: /app
     command: ["run", "--enable-api", "--cors", "*"]
     networks:
       - fawkes-network
     restart: unless-stopped
     depends_on:
-      - canary
-      - rasa-actions
+      rasa-init:
+        condition: service_completed_successfully
+      canary:
+        condition: service_started
+      rasa-actions:
+        condition: service_started
+    environment:
+      # Force Rasa to use in-memory SQLite for tracker store during development
+      - RASA_TRACKER_STORE_TYPE=sql
+      - RASA_TRACKER_STORE_URL=sqlite:///tmp/rasa_tracker.db
 
   rasa-actions:
     image: rasa/rasa-sdk:latest
@@ -57,6 +92,3 @@ services:
 networks:
   fawkes-network:
     driver: bridge
-
-volumes:
-  rasa_cache:

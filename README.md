@@ -39,8 +39,8 @@ Basic Python backend for Fawkes chatbot
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.
 * ISSUE 2: Docker "rebuild" insists on using cache, instantly reusing broken container and ignoring any revisions to Dockerfile, must run `docker system prune -a`
 * NOTE: Use command `watch -n 1 nvidia-smi` to track GPU memory usage live
-* NOTE: Use command `docker-compose up -d --no-deps --build [instance_name]` to rebuild only one docker instance
 * NOTE: Re Rasa
+- Use command `docker-compose up -d --force-recreate --no-deps --build rasa-nlp` to rebuild only one docker instance
 - Use command `docker compose exec rasa-nlp rasa train --force --debug` to retrain rasa model
 - If rebuilding rasa-nlp be sure to delete Docker volumes manually
 - If retraining rasa run `docker compose stop rasa-nlp` and `docker compose start rasa-nlp` to reload environment

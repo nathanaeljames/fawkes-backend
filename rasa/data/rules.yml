@@ -4,23 +4,26 @@ rules:
 
 - rule: Say hello when the user says hello
   steps:
-  - intent: greet
-  - action: utter_greet
+  - intent: user_greet
+  - action: action_set_firstname
+  - action: action_set_part_of_day
+  - action: utter_greet_personalized
 
 - rule: Say goodbye anytime the user says goodbye
   steps:
-  - intent: goodbye
+  - intent: user_goodbye
   - action: utter_goodbye
 
 - rule: Tell time when asked
   steps:
-  - intent: ask_time
+  - intent: user_ask_time
   - action: action_tell_time
 
 - rule: Tell the server name when asked
   steps:
-  - intent: ask_name
-  - action: utter_ask_name
+  - intent: user_ask_name
+  - action: action_set_firstname
+  - action: utter_tell_name
 
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:
