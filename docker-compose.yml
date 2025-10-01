@@ -34,7 +34,7 @@ services:
     # sqlite's atomic i/o doesn't play well with Docker volumes bridging virtualization layers
     container_name: rasa-init
     volumes:
-      - "./rasa:/app"
+      - "./rasa-nlp:/app"
     tmpfs:
       - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
       - /tmp:size=2g
@@ -55,7 +55,7 @@ services:
     ports:
       - "5005:5005"
     volumes:
-      - "./rasa:/app"
+      - "./rasa-nlp:/app"
     tmpfs:
       #- /app/.rasa:size=2g,noexec,nosuid,nodev
       - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
@@ -78,10 +78,13 @@ services:
       - RASA_TRACKER_STORE_URL=sqlite:///tmp/rasa_tracker.db
 
   rasa-actions:
-    image: rasa/rasa-sdk:latest
+    #image: rasa/rasa-sdk:latest
+    build:
+      context: ./rasa-actions
+      dockerfile: Dockerfile
     container_name: rasa-actions
     volumes:
-      - "./rasa/actions:/app/actions"
+      - "./rasa-actions/actions:/app/actions"
     ports:
       - "5055:5055"
     networks:

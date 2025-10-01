@@ -48,6 +48,10 @@ from typing import Tuple, Optional, List, Dict, Any, BinaryIO
 import torchaudio
 import librosa
 import aiohttp
+import logging
+
+# Set up logging
+logging.getLogger("nemo_logger").setLevel(logging.WARNING)
 
 # Establish the preferred device to run models on
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1783,6 +1787,7 @@ class RasaClient:
                 payload["metadata"] = {"speaker_name": speaker_name}
             
             print(f"[Rasa] Sending message: '{message}'")
+            #print(f"[Rasa] Speaker name in metadata: '{speaker_name}'")
             
             async with self.session.post(
                 f"{self.rasa_url}/webhooks/rest/webhook",
@@ -1858,7 +1863,7 @@ async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
     
     return processed_any
 
-async def handle_final_utterance_with_rasa(client_id, final_transcription_text, speaker_name):
+async def handle_final_utterance_with_rasa(client_id, final_transcription_text, speaker_name, speaker_confidence, nomatch_score):
     """
     Process final utterance through Rasa instead of hardcoded logic.
     
@@ -1874,6 +1879,12 @@ async def handle_final_utterance_with_rasa(client_id, final_transcription_text, 
     if not final_transcription_text.strip():
         print("[Rasa] Empty transcription, skipping Rasa processing")
         return
+
+    is_speaker_reliable = speaker_confidence >= ecapa_processor.CERTAIN_THRESHOLD
+    is_not_likely_nomatch = nomatch_score < ecapa_processor.nomatch_upper_threshold
+    is_reliable_utterance = (is_speaker_reliable and is_not_likely_nomatch)
+    if is_reliable_utterance:
+        print(f"[Rasa] Reliable utterance detected, speaker name is : '{speaker_name}'")
     
     try:
         async with RasaClient(CONFIG["rasa_url"], CONFIG["rasa_timeout"]) as rasa_client:
@@ -1881,7 +1892,7 @@ async def handle_final_utterance_with_rasa(client_id, final_transcription_text, 
             rasa_response = await rasa_client.send_message(
                 final_transcription_text, 
                 client_id=f"client_{client_id}",
-                speaker_name=speaker_name
+                speaker_name=speaker_name.removesuffix('(?)') if is_reliable_utterance else None
             )
             
             # Process the response
@@ -2465,6 +2476,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     print(f"[Final Speaker ID] {final_ecapa_result['speaker_result']}")
                                     SPEAKER = final_ecapa_result['speaker_result']
                                     SPEAKER_CONFIDENCE = final_ecapa_result['speaker_confidence']
+                                    nomatch_score = final_ecapa_result['nomatch_score']
+                                    confidence = final_ecapa_result['confidence']
 
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
@@ -2503,7 +2516,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 await send_message_to_client(client_id, json_string)
 
                                 # Send final utterance to Rasa for intent identification
-                                await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER)
+                                await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER, confidence, nomatch_score)
 
                             # Reset the buffer and state for the next utterance
                             is_speaking = False

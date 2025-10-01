@@ -1,6 +1,6 @@
 ## Rasa
-/rasa/.rasa/
-/rasa/models/
+/rasa-nlp/.rasa/
+/rasa-nlp/models/
 
 ## Python
 __pycache__/
