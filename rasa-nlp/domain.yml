@@ -78,6 +78,8 @@ responses:
   - text: "I don't understand. Can you try saying that differently?"
 
 actions:
+  - action_log_slots
+  - action_set_speaker
   - action_tell_time
   - action_do_nothing
   - action_set_firstname
