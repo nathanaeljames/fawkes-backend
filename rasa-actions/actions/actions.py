@@ -59,8 +59,10 @@ class ActionSetFirstname(Action):
 
     def run(self, dispatcher, tracker, domain):
         speaker_name = tracker.get_slot("speaker_name")
+
+        EXCLUDED_SPEAKERS = {"unknown_speaker", "unknown speaker", "unregistered"}
         
-        if speaker_name and speaker_name != "unknown speaker":
+        if speaker_name and speaker_name not in EXCLUDED_SPEAKERS:
             firstname = speaker_name.split("_")[0].capitalize()
         else:
             firstname = None

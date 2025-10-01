@@ -1685,6 +1685,14 @@ class ECAPASpeakerProcessor:
                             print(f"[ECAPA] Failed to update imprint for {speaker_name}")
                     except Exception as e:
                         print(f"[ECAPA] Error updating imprint: {e}")
+
+            # On the flipside, let's reflect nomatch certainty in speaker tags
+            if nomatch_score > self.nomatch_lower_threshold:
+                speaker_result = "unregistered(?)"
+                speaker_confidence = "uncertain"
+            if nomatch_score > self.nomatch_upper_threshold:
+                speaker_result = "unregistered"
+                speaker_confidence = "certain"
             
             if speaker_confidence == "certain":
                 print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
