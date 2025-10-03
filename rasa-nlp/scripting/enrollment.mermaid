@@ -1,0 +1,106 @@
+flowchart TD
+    %% Entry point - triggered from websocket server
+    Start([suggest_enrollment = True]) --> Wait[Wait for opening in dialogue]
+    
+    %% Initial question to determine if user has been enrolled before
+    Wait --> Ask1{Rasa: I don't recognize your voice.<br/>Have I met you before?}
+    
+    %% Branch: User says "yes" - claims to be returning user
+    Ask1 -->|yes| AskName1[Rasa: What is your name?]
+    %% Branch: User provides partial info upfront
+    Ask1 -->|yes, my name is firstname| AskFull1[Rasa: Sorry, can I get your<br/>first and last name?]
+    %% Branch: User provides full name immediately - skip to database query
+    Ask1 -->|yes, my name is<br/>firstname surname| SetSlot1[Set slot: imprint_name]
+    %% Branch: User says "no" - new user
+    Ask1 -->|no| AskName2[Rasa: What is your name?]
+    
+    %% Returning user path: collect name info
+    AskName1 -->|my name is firstname| AskFull2[Rasa: Sorry, can I get your<br/>first and last name?]
+    AskName1 -->|my name is<br/>firstname surname| SetSlot2[Set slot: imprint_name]
+    AskName1 -->|other| AskFull2
+    
+    %% Loop back if incomplete name provided (returning user, partial upfront)
+    AskFull1 -->|my name is<br/>firstname surname| SetSlot3[Set slot: imprint_name]
+    AskFull1 -->|other| AskFull1
+    
+    %% Loop back if incomplete name provided (returning user, asked for full name)
+    AskFull2 -->|my name is<br/>firstname surname| SetSlot4[Set slot: imprint_name]
+    AskFull2 -->|other| AskFull2
+    
+    %% New user path: collect name info
+    AskName2 -->|my name is firstname| AskFull3[Rasa: Sorry, can I get your<br/>first and last name?]
+    AskName2 -->|other| AskFull3
+    
+    %% Loop back if incomplete name provided (new user)
+    AskFull3 -->|my name is<br/>firstname surname| Pleasure1[Rasa: It's a pleasure to<br/>meet you firstname]
+    %% Loop back if incomplete name provided (new user)
+    AskFull3 -->|my name is<br/>firstname surname| Pleasure1[Rasa: It's a pleasure to<br/>meet you firstname]
+    AskFull3 -->|other| AskFull3
+    
+    %% Store name in slot for all returning user paths
+    SetSlot1 --> Query1[Action: query_userbase]
+    SetSlot2 --> Query2[Action: query_userbase]
+    SetSlot3 --> Query3[Action: query_userbase]
+    SetSlot4 --> Query4[Action: query_userbase]
+    
+    %% Query DuckDB on server01e.py to check if user exists
+    Query1 --> CheckUID{imprint_uid<br/>!= None?}
+    Query2 --> CheckUID
+    Query3 --> CheckUID
+    Query4 --> CheckUID
+    
+    %% User found in database - personalized greeting
+    CheckUID -->|True| Recognized[Rasa: Its a pleasure to meet you<br/>again firstname. My apologies for<br/>not recognizing you before.]
+    %% User not found in database
+    CheckUID -->|False| NoRecord[Rasa: I apologize, I don't seem<br/>to have a record for you.]
+    
+    %% Request voice enrollment for all paths
+    Recognized --> AskRecite1[Rasa: In order to better serve you,<br/>can I ask you to recite a prompt?]
+    NoRecord --> AskRecite2[Rasa: In order to better serve you,<br/>can I ask you to recite a prompt?]
+    Pleasure1 --> AskRecite3[Rasa: In order to better serve you,<br/>can I ask you to recite a prompt?]
+    
+    %% User agrees to enrollment (returning user found in DB)
+    AskRecite1 -->|yes| Excellent1[Rasa: Excellent. Can you please<br/>read aloud the following prompt:]
+    %% User declines enrollment - mute enrollment flag for session
+    AskRecite1 -->|no| VeryWell1[Rasa: Very well.<br/>Mute suggest_enrollment]
+    
+    %% User agrees to enrollment (claimed returning but not found in DB)
+    AskRecite2 -->|yes| Excellent2[Rasa: Excellent. Can you please<br/>read aloud the following prompt:]
+    %% User declines enrollment
+    AskRecite2 -->|no| VeryWell2[Rasa: Very well.<br/>Mute suggest_enrollment]
+    
+    %% User agrees to enrollment (new user)
+    AskRecite3 -->|yes| Excellent3[Rasa: Excellent. Can you please<br/>read aloud the following prompt:]
+    %% User declines enrollment
+    AskRecite3 -->|no| VeryWell3[Rasa: Very well.<br/>Mute suggest_enrollment]
+    
+    %% Trigger recording on server01e.py with UID (existing user)
+    Excellent1 --> Record1[Action: start_enrollment_recording<br/>with imprint_uid]
+    %% Trigger recording on server01e.py without UID (no DB record)
+    Excellent2 --> Record2[Action: start_enrollment_recording<br/>uid = None]
+    %% Trigger recording on server01e.py without UID (new user)
+    Excellent3 --> Record3[Action: start_enrollment_recording<br/>uid = None]
+    
+    %% Terminal nodes
+    Record1 --> End1([End])
+    Record2 --> End2([End])
+    Record3 --> End3([End])
+    VeryWell1 --> End4([End])
+    VeryWell2 --> End5([End])
+    VeryWell3 --> End6([End])
+    
+    %% Styling for dark mode readability
+    style Start fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    style End1 fill:#5c1a1a,stroke:#8b2e2e,color:#ffcdd2
+    style End2 fill:#5c1a1a,stroke:#8b2e2e,color:#ffcdd2
+    style End3 fill:#5c1a1a,stroke:#8b2e2e,color:#ffcdd2
+    style End4 fill:#5c1a1a,stroke:#8b2e2e,color:#ffcdd2
+    style End5 fill:#5c1a1a,stroke:#8b2e2e,color:#ffcdd2
+    style End6 fill:#5c1a1a,stroke:#8b2e2e,color:#ffcdd2
+    style Query1 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Query2 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Query3 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Query4 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Record1 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Record2 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Record3 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
