@@ -1661,15 +1661,22 @@ class ECAPASpeakerProcessor:
             # Calculate nomatch score for all extractions
             nomatch_score = self.calculate_nomatch_score(nomatch_data, buffer_duration)
      
+            # cascading from confident nomatch to confident match
+            if nomatch_score > self.nomatch_upper_threshold:
+                speaker_result = "unregistered"
+                speaker_confidence = "certain"
+            elif nomatch_score > self.nomatch_lower_threshold:
+                speaker_result = "unregistered(?)"
+                speaker_confidence = "uncertain"
             # Determine speaker identification result
-            if confidence < self.UNCERTAIN_THRESHOLD:
+            elif confidence < self.UNCERTAIN_THRESHOLD:
                 speaker_result = "unknown speaker"
                 speaker_confidence = "uncertain"
             elif confidence < self.CERTAIN_THRESHOLD:
                 speaker_result = f"{speaker_name}(?)"
                 speaker_confidence = "uncertain"
                 self.subsequent_nomatch = 0
-            else:
+            elif confidence >= self.CERTAIN_THRESHOLD:
                 speaker_result = f"{speaker_name}"
                 speaker_confidence = "certain"
                 self.subsequent_nomatch = 0
@@ -1685,14 +1692,6 @@ class ECAPASpeakerProcessor:
                             print(f"[ECAPA] Failed to update imprint for {speaker_name}")
                     except Exception as e:
                         print(f"[ECAPA] Error updating imprint: {e}")
-
-            # On the flipside, let's reflect nomatch certainty in speaker tags
-            if nomatch_score > self.nomatch_lower_threshold:
-                speaker_result = "unregistered(?)"
-                speaker_confidence = "uncertain"
-            if nomatch_score > self.nomatch_upper_threshold:
-                speaker_result = "unregistered"
-                speaker_confidence = "certain"
             
             if speaker_confidence == "certain":
                 print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
