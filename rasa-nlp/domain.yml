@@ -6,14 +6,21 @@ intents:
   - user_ask_time
   - user_ask_name
   - nlu_fallback
+  - affirm
+  - deny
+  - provide_name
+  - provide_first_name
+  - provide_full_name
 
-entities: []
+entities:
+  - firstname
+  - surname
 
 slots:
   speaker_name:
     type: text
     initial_value: "unknown speaker"
-    influence_conversation: true
+    influence_conversation: false
     mappings:
       - type: custom
   imprint_name:
@@ -24,7 +31,7 @@ slots:
       - type: custom
   imprint_uid:
     type: text
-    initial_value: Null
+    initial_value: null
     influence_conversation: false
     mappings:
       - type: custom
@@ -34,6 +41,10 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
+  surname:
+    type: text
+    initial_value: null
+    influence_conversation: false
   server_name:
     type: text
     initial_value: "Fawkes"
@@ -46,6 +57,14 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
+  enrollment_active:
+    type: bool
+    initial_value: false
+    influence_conversation: false
+  enrollment_muted:
+    type: bool
+    initial_value: false
+    influence_conversation: false
 
 responses:
   utter_greet:
@@ -73,6 +92,27 @@ responses:
   utter_ask_familar:
   - text: "I don't recognize your voice. Have I met you before?"
 
+  utter_ask_full_name:
+  - text: "Sorry, can I get your first and last name for record's sake?"
+
+  utter_pleasure_meet_again:
+  - text: "It's a pleasure to meet you again {firstname}. My apologies for not recognizing you before."
+
+  utter_pleasure_meet:
+  - text: "It's a pleasure to meet you {firstname}."
+
+  utter_ask_recite_prompt:
+  - text: "In order to better serve you, can I ask you to recite a prompt for me?"
+
+  utter_read_prompt:
+  - text: "Excellent. Can you please read aloud the following prompt:"
+
+  utter_very_well:
+  - text: "Very well."
+
+  utter_no_record:
+  - text: "I apologize, I don't seem to have a record for you."
+
   utter_default:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
   - text: "I don't understand. Can you try saying that differently?"
@@ -84,6 +124,9 @@ actions:
   - action_do_nothing
   - action_set_firstname
   - action_set_part_of_day
+  - action_query_userbase
+  - action_start_enrollment_recording
+  - action_trigger_enrollment
 
 session_config:
   session_expiration_time: 60
