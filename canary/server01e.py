@@ -48,10 +48,13 @@ from typing import Tuple, Optional, List, Dict, Any, BinaryIO
 import torchaudio
 import librosa
 import aiohttp
-import logging
+#import logging
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import uvicorn
 
 # Set up logging
-logging.getLogger("nemo_logger").setLevel(logging.WARNING)
+#logging.getLogger("nemo_logger").setLevel(logging.WARNING)
 
 # Establish the preferred device to run models on
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -61,6 +64,8 @@ if (DEVICE != "cuda"):
 CONFIG = {
     "websocket_host": "0.0.0.0",
     "websocket_port": 9001,
+    "fastapi_host": "0.0.0.0",
+    "fastapi_port": 9002,
     "inference_device": DEVICE,
     "piper_model_path": "/root/fawkes/models/piper_tts/en_GB-northern_english_male-medium.onnx",
     "xtts_model_dir": "/root/fawkes/models/coqui_xtts/XTTS-v2/",
@@ -85,6 +90,9 @@ CONFIG = {
     "rasa_timeout": 10,  # seconds
     "enable_rasa": True
 }
+
+# FastAPI for handling Rasa requests
+app = FastAPI()
 
 # Initialize DuckDB connection at the top level
 # This will create the database file if it doesn't exist
@@ -119,12 +127,6 @@ atexit.register(con.close)
 active_websockets = {}  # client_id -> websocket
 client_queues = {}
 clientSideTTS = False
-
-# Dialogue partners
-#SPEAKER = "unknown speaker"
-#SPEAKER_CONFIDENCE = "certain"
-#SERVER = "Fawkes"
-#ASR_CONFIDENCE = "certain"
 
 class NemoStreamingTranscriber:
     def __init__(self, model_path, decoder_type, lookahead_size, encoder_step_length, device, sample_rate):
@@ -1818,6 +1820,130 @@ class RasaClient:
         except Exception as e:
             print(f"[Rasa] Unexpected error: {e}")
             return None
+        
+    async def trigger_enrollment(self, client_id: str) -> bool:
+        """Trigger enrollment flow using Rasa's trigger_intent endpoint"""
+        if not self.session:
+            print("[Rasa] Error: Session not initialized.")
+            return False
+        
+        try:
+            payload = {"name": "trigger_enrollment", "entities": {}}
+            async with self.session.post(
+                f"{self.rasa_url}/conversations/{client_id}/trigger_intent",
+                json=payload
+            ) as response:
+                if response.status == 200:
+                    rasa_response = await response.json()
+                    return await process_rasa_response(client_id, rasa_response)
+                return False
+        except Exception as e:
+            print(f"[Rasa] Error triggering enrollment: {e}")
+            return False
+
+class EnrollmentAPIModels:
+    """Pydantic models for speaker enrollment API endpoints"""
+    
+    class SpeakerQueryRequest(BaseModel):
+        action: str
+        table: str
+        firstname: str
+        surname: Optional[str] = None
+    
+    class RecordPangramRequest(BaseModel):
+        action: str
+        uid: Optional[str] = None
+    
+    class SpeakerQueryResponse(BaseModel):
+        uid: Optional[int] = None
+        success: bool = True
+    
+    class RecordPangramResponse(BaseModel):
+        success: bool
+        message: str = ""
+
+class EnrollmentAPIHandler:
+    """Handles FastAPI endpoints for speaker enrollment workflows"""
+    
+    def __init__(self, db_connection):
+        self.con = db_connection
+    
+    async def query_speaker(self, request: EnrollmentAPIModels.SpeakerQueryRequest) -> EnrollmentAPIModels.SpeakerQueryResponse:
+        """
+        Query speaker information from database.
+        Used by Rasa to check if a speaker exists before enrollment.
+        """
+        try:
+            if request.table != "speakers":
+                raise HTTPException(status_code=400, detail=f"Unsupported table: {request.table}")
+            
+            if request.surname:
+                result = self.con.execute("""
+                    SELECT uid FROM speakers 
+                    WHERE firstname = ? AND surname = ?
+                """, (request.firstname, request.surname)).fetchone()
+            else:
+                result = self.con.execute("""
+                    SELECT uid FROM speakers 
+                    WHERE firstname = ? AND surname IS NULL
+                """, (request.firstname,)).fetchone()
+            
+            uid = result[0] if result else None
+            return EnrollmentAPIModels.SpeakerQueryResponse(uid=uid, success=True)
+        
+        except Exception as e:
+            print(f"[Enrollment API] Error querying speaker: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    async def record_pangram(self, request: EnrollmentAPIModels.RecordPangramRequest) -> EnrollmentAPIModels.RecordPangramResponse:
+        """
+        Initiate pangram recording for speaker enrollment.
+        Captures audio, processes it to extract ECAPA/XTTS embeddings,
+        and stores or updates the speaker profile in the database.
+        
+        Args:
+            request: Contains uid (for updating existing speaker) or None (for new speaker)
+        
+        Returns:
+            Response indicating success/failure and descriptive message
+        """
+        try:
+            uid = int(request.uid) if request.uid else None
+            print(f"[Enrollment] Starting pangram recording for uid: {uid}")
+            
+            # TODO: Implement pangram recording logic:
+            # 1. Set flag in client state to indicate recording mode
+            # 2. Send pangram text to client
+            # 3. Capture next N seconds of audio
+            # 4. Process audio with ECAPA/XTTS embedding extraction
+            # 5. Store or update speaker profile in database
+            
+            # Example pangram text:
+            pangram = "The quick brown fox jumps over the lazy dog near the bank of the river"
+            
+            # Placeholder success response
+            success = True
+            message = f"Pangram recording initiated for uid: {uid}" if uid else "Pangram recording initiated for new speaker"
+            
+            return EnrollmentAPIModels.RecordPangramResponse(success=success, message=message)
+        
+        except Exception as e:
+            print(f"[Enrollment] Error in record_pangram: {e}")
+            return EnrollmentAPIModels.RecordPangramResponse(success=False, message=str(e))
+
+# Initialize handler
+enrollment_api_handler = EnrollmentAPIHandler(con)
+
+# Register endpoints
+@app.post("/api/query", response_model=EnrollmentAPIModels.SpeakerQueryResponse)
+async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryRequest):
+    """Endpoint for Rasa to query speaker existence in database"""
+    return await enrollment_api_handler.query_speaker(request)
+
+@app.post("/api/record", response_model=EnrollmentAPIModels.RecordPangramResponse)
+async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequest):
+    """Endpoint for Rasa to initiate speaker pangram recording for enrollment"""
+    return await enrollment_api_handler.record_pangram(request)
 
 async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
     """
@@ -2486,6 +2612,11 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     nomatch_score = final_ecapa_result['nomatch_score']
                                     confidence = final_ecapa_result['confidence']
 
+                            if "suggest_enrollment" in final_ecapa_result and final_ecapa_result["suggest_enrollment"]:
+                                print(f"[ECAPA] Suggesting enrollment for client {client_id}")
+                                # Trigger enrollment flow via Rasa
+                                asyncio.create_task(trigger_rasa_enrollment(client_id))
+
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
 
@@ -2657,11 +2788,20 @@ async def main():
     result = await manual_sequential_ecapa("courtney", "mosierwarren", courtney_wavs)
     '''
     
+    # Start FastAPI server on port 9002
+    fastapi_config = uvicorn.Config(app, host=CONFIG['fastapi_host'], port=CONFIG['fastapi_port'], log_level="info")
+    fastapi_server = uvicorn.Server(fastapi_config)
+    
+    print(f"Starting FastAPI server on http://{CONFIG['fastapi_host']}:{CONFIG['fastapi_port']}")
+    fastapi_task = asyncio.create_task(fastapi_server.serve())
+
     # Start the WebSocket server for receiving audio
     print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
-    server = await websockets.serve(connection_handler, CONFIG['websocket_host'], CONFIG['websocket_port'])
+    websocket_server = await websockets.serve(connection_handler, CONFIG['websocket_host'], CONFIG['websocket_port'])
     # Start and keep the server running
-    await server.wait_closed()
+    #await server.wait_closed()
+    # Keep both servers running
+    await asyncio.gather(fastapi_task, websocket_server.wait_closed())
 
 if __name__ == "__main__":
     try:

@@ -34,7 +34,10 @@ RUN pip3 install \
     pydub \
     piper-tts==1.2.0\
     duckdb\
-    aiohttp
+    aiohttp\
+    fastapi\
+    uvicorn\
+    pydantic
 # Explicitly install a compatible NumPy version first
 # Based on the error, nemo-toolkit requires numpy<2.0.0,>=1.22 # - numpy 1.26.4 is the latest 1.x version
 #RUN pip3 install numpy==1.26.4
