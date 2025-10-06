@@ -74,3 +74,48 @@ nlu:
     - introduce yourself
     - may I know your name
     - what do you go by
+
+- intent: affirm
+  examples: |
+    - yes
+    - yeah
+    - yep
+    - sure
+    - of course
+    - definitely
+
+- intent: deny
+  examples: |
+    - no
+    - nope
+    - not now
+    - maybe later
+    - no thanks
+
+- intent: provide_full_name
+  examples: |
+    - my name is [John](firstname) [Smith](surname)
+    - I'm [Jane](firstname) [Doe](surname)
+    - it's [Michael](firstname) [O'Brien](surname)
+    - [Alice](firstname) [Johnson](surname)
+    - call me [Bob](firstname) [Wilson](surname)
+    - I am [Sarah](firstname) [Chen](surname)
+    - [David](firstname) [Martinez](surname) is my name
+    - my full name is [Emma](firstname) [Taylor](surname)
+
+- intent: provide_first_name
+  examples: |
+    - my name is [John](firstname)
+    - I'm [Jane](firstname)
+    - it's [Michael](firstname)
+    - [Alice](firstname)
+    - call me [Bob](firstname)
+    - I am [Sarah](firstname)
+
+- intent: trigger_enrollment
+  examples: |
+    - SYSTEM_TRIGGER_ENROLLMENT
+    - enrollment system trigger
+    - internal enrollment activation
+    # This intent is primarily triggered programmatically, 
+    # but needs examples for training
