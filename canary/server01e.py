@@ -1853,12 +1853,20 @@ class EnrollmentAPIModels:
     class RecordPangramRequest(BaseModel):
         action: str
         uid: Optional[str] = None
+
+    class EnrollmentStatusRequest(BaseModel):
+        client_id: str
+        status: str  # "completed" or "abandoned"
     
     class SpeakerQueryResponse(BaseModel):
         uid: Optional[int] = None
         success: bool = True
     
     class RecordPangramResponse(BaseModel):
+        success: bool
+        message: str = ""
+
+    class EnrollmentStatusResponse(BaseModel):
         success: bool
         message: str = ""
 
@@ -1930,6 +1938,37 @@ class EnrollmentAPIHandler:
         except Exception as e:
             print(f"[Enrollment] Error in record_pangram: {e}")
             return EnrollmentAPIModels.RecordPangramResponse(success=False, message=str(e))
+        
+    async def update_enrollment_status(self, request: EnrollmentAPIModels.EnrollmentStatusRequest) -> EnrollmentAPIModels.EnrollmentStatusResponse:  # NEW
+        """
+        Update enrollment status for a client.
+        Called by Rasa when enrollment flow completes or is abandoned.
+        """
+        try:
+            client_id = request.client_id
+            status = request.status
+            
+            if client_id not in client_queues:
+                return EnrollmentAPIModels.EnrollmentStatusResponse(
+                    success=False,
+                    message=f"Client {client_id} not found in active sessions"
+                )
+            
+            # Reset the enrollment_active flag
+            client_queues[client_id]["enrollment_active"] = False
+            print(f"[Enrollment API] Status updated for {client_id}: {status}")
+            
+            return EnrollmentAPIModels.EnrollmentStatusResponse(
+                success=True,
+                message=f"Enrollment status updated to {status}"
+            )
+            
+        except Exception as e:
+            print(f"[Enrollment API] Error updating enrollment status: {e}")
+            return EnrollmentAPIModels.EnrollmentStatusResponse(
+                success=False,
+                message=str(e)
+            )
 
 # Initialize handler
 enrollment_api_handler = EnrollmentAPIHandler(con)
@@ -1944,6 +1983,11 @@ async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryReques
 async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequest):
     """Endpoint for Rasa to initiate speaker pangram recording for enrollment"""
     return await enrollment_api_handler.record_pangram(request)
+
+@app.post("/api/enrollment_status", response_model=EnrollmentAPIModels.EnrollmentStatusResponse)
+async def update_enrollment_status_endpoint(request: EnrollmentAPIModels.EnrollmentStatusRequest):
+    """Endpoint for Rasa to update enrollment flow status"""
+    return await enrollment_api_handler.update_enrollment_status(request)
 
 async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
     """
@@ -2003,42 +2047,37 @@ async def handle_final_utterance_with_rasa(client_id, final_transcription_text, 
     Args:
         client_id (str): WebSocket client ID
         final_transcription_text (str): The final transcribed text
-        speaker (str): Identified speaker
+        speaker_name (str): Identified speaker
+        speaker_confidence (float): Confidence score for speaker identification
+        nomatch_score (float): Score indicating likelihood speaker is unregistered
     """
-    if not CONFIG.get("enable_rasa", False):
-        print("[Rasa] Rasa integration disabled, skipping...")
-        return
-    
-    if not final_transcription_text.strip():
-        print("[Rasa] Empty transcription, skipping Rasa processing")
+    # Early exit if Rasa disabled or empty transcription
+    if not CONFIG.get("enable_rasa", False) or not rasa_client or not final_transcription_text.strip():
         return
 
     is_speaker_reliable = speaker_confidence >= ecapa_processor.CERTAIN_THRESHOLD
     is_not_likely_nomatch = nomatch_score < ecapa_processor.nomatch_upper_threshold
     is_reliable_utterance = (is_speaker_reliable and is_not_likely_nomatch)
+    
     if is_reliable_utterance:
-        print(f"[Rasa] Reliable utterance detected, speaker name is : '{speaker_name}'")
+        print(f"[Rasa] Reliable utterance detected, speaker name is: '{speaker_name}'")
     
     try:
-        async with RasaClient(CONFIG["rasa_url"], CONFIG["rasa_timeout"]) as rasa_client:
-            # Send the transcription to Rasa
-            rasa_response = await rasa_client.send_message(
-                final_transcription_text, 
-                client_id=f"client_{client_id}",
-                speaker_name=speaker_name.removesuffix('(?)') if is_reliable_utterance else None
-            )
+        # Send the transcription to Rasa
+        rasa_response = await rasa_client.send_message(
+            final_transcription_text, 
+            client_id=f"client_{client_id}",
+            speaker_name=speaker_name.removesuffix('(?)') if is_reliable_utterance else None
+        )
+        
+        # Process the response
+        if rasa_response:
+            success = await process_rasa_response(client_id, rasa_response)
+            if not success:
+                print("[Rasa] No valid responses to process")
+        else:
+            print("[Rasa] Failed to get response from Rasa")
             
-            # Process the response
-            if rasa_response:
-                success = await process_rasa_response(
-                    client_id, 
-                    rasa_response
-                )
-                if not success:
-                    print("[Rasa] No valid responses to process")
-            else:
-                print("[Rasa] Failed to get response from Rasa")
-                
     except Exception as e:
         print(f"[Rasa] Error in handle_final_utterance_with_rasa: {e}")
 
@@ -2612,11 +2651,6 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     nomatch_score = final_ecapa_result['nomatch_score']
                                     confidence = final_ecapa_result['confidence']
 
-                            if "suggest_enrollment" in final_ecapa_result and final_ecapa_result["suggest_enrollment"]:
-                                print(f"[ECAPA] Suggesting enrollment for client {client_id}")
-                                # Trigger enrollment flow via Rasa
-                                asyncio.create_task(trigger_rasa_enrollment(client_id))
-
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
 
@@ -2655,6 +2689,14 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
 
                                 # Send final utterance to Rasa for intent identification
                                 await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER, confidence, nomatch_score)
+
+                            if "suggest_enrollment" in final_ecapa_result and final_ecapa_result["suggest_enrollment"]:
+                                if not client_queues[client_id].get("enrollment_active", False):
+                                    client_queues[client_id]["enrollment_active"] = True
+                                    print(f"[ECAPA] Triggering enrollment flow for {client_id}")
+                                    if rasa_client:
+                                        await rasa_client.trigger_enrollment(f"client_{client_id}")
+                            # NOTE will need to explicitly set enrollment_active to False upon enrollment completion
 
                             # Reset the buffer and state for the next utterance
                             is_speaking = False
@@ -2696,10 +2738,14 @@ async def main():
     global main_loop, pipertts_wrapper, xtts_wrapper, nemo_vad
     global nemo_transcriber, canary_qwen_transcriber
     global ecapa_matcher, ecapa_processor
+    global rasa_client
+
     xtts_wrapper = canary_qwen_transcriber = None # These are often turned off
     main_loop = asyncio.get_event_loop()  # Store the event loop
+
     # Setup the database table before starting the server
     setup_database()
+
     # Initialize PiperTTS instance
     pipertts_wrapper = PiperTTS(CONFIG["piper_model_path"])
     # Initialize Coqui XTTS instance
@@ -2708,7 +2754,6 @@ async def main():
         CONFIG["inference_device"],
         CONFIG["speakers_dir"]
     )
-
     # Initialize the NeMo VAD model
     nemo_vad = NeMoVAD(
         model_path=CONFIG["nemo_vad_model_path"],
@@ -2772,7 +2817,6 @@ async def main():
     # Re-load the speakers into the model's speaker manager to make the new speaker available
     xtts_wrapper._load_speakers_from_db()
     '''
-
     # ADD SEQUENTIAL ECAPA UPDATES MANUALLY
     '''
     nathanael_wavs = [
@@ -2787,24 +2831,58 @@ async def main():
     ]
     result = await manual_sequential_ecapa("courtney", "mosierwarren", courtney_wavs)
     '''
+
+    # Initialize persistent Rasa client if enabled
+    if CONFIG.get("enable_rasa", False):
+        rasa_client = RasaClient(CONFIG["rasa_url"], CONFIG["rasa_timeout"])
+        await rasa_client.__aenter__()
+        print("[Rasa] Client initialized and connected")
     
-    # Start FastAPI server on port 9002
-    fastapi_config = uvicorn.Config(app, host=CONFIG['fastapi_host'], port=CONFIG['fastapi_port'], log_level="info")
+    # Start FastAPI server
+    fastapi_config = uvicorn.Config(
+        app, 
+        host=CONFIG['fastapi_host'], 
+        port=CONFIG['fastapi_port'], 
+        log_level="info"
+    )
     fastapi_server = uvicorn.Server(fastapi_config)
-    
-    print(f"Starting FastAPI server on http://{CONFIG['fastapi_host']}:{CONFIG['fastapi_port']}")
     fastapi_task = asyncio.create_task(fastapi_server.serve())
 
     # Start the WebSocket server for receiving audio
-    print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
     websocket_server = await websockets.serve(connection_handler, CONFIG['websocket_host'], CONFIG['websocket_port'])
-    # Start and keep the server running
-    #await server.wait_closed()
-    # Keep both servers running
-    await asyncio.gather(fastapi_task, websocket_server.wait_closed())
+
+    try:
+        # Keep both servers running
+        print(f"Starting FastAPI server on http://{CONFIG['fastapi_host']}:{CONFIG['fastapi_port']}")
+        print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
+        await asyncio.gather(fastapi_task, websocket_server.wait_closed())
+    except asyncio.CancelledError:
+        # This is expected when Ctrl+C is pressed
+        pass
+    finally:
+        # Cleanup on shutdown
+        print("\nCleaning up resources...")
+        
+        if rasa_client:
+            try:
+                await rasa_client.__aexit__(None, None, None)
+                print("[Rasa] Client connection closed")
+            except Exception as e:
+                print(f"[Rasa] Error during cleanup: {e}")
+        
+        websocket_server.close()
+        await websocket_server.wait_closed()
+        print("[WebSocket] Server closed")
+        
+        # Close database connection
+        if con:
+            con.close()
+            print("[Database] Connection closed")
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())  # Proper event loop handling for Python 3.10+
-    except KeyboardInterrupt: 
-        print("Server shutting down.")
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nServer shutting down gracefully...")
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")

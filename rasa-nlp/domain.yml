@@ -19,13 +19,13 @@ entities:
 slots:
   speaker_name:
     type: text
-    initial_value: "unknown speaker"
+    initial_value: null
     influence_conversation: false
     mappings:
       - type: custom
   imprint_name:
     type: text
-    initial_value: "unknown speaker"
+    initial_value: null
     influence_conversation: false
     mappings:
       - type: custom
@@ -119,14 +119,14 @@ responses:
 
 actions:
   - action_log_slots
-  - action_set_speaker
+  - action_set_set_name_slots
   - action_tell_time
   - action_do_nothing
-  - action_set_firstname
   - action_set_part_of_day
   - action_query_userbase
   - action_start_enrollment_recording
   - action_trigger_enrollment
+  - action_mute_enrollment
 
 session_config:
   session_expiration_time: 60

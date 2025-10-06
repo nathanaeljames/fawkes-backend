@@ -5,30 +5,85 @@ stories:
 - story: tell time
   steps:
   - intent: user_ask_time
-  - action: action_set_speaker
+  - action: action_set_name_slots
   - action: action_log_slots
   - action: action_tell_time
 
 - story: tell name
   steps:
   - intent: user_ask_name
-  - action: action_set_speaker
-  - action: action_set_firstname
+  - action: action_set_name_slots
   - action: action_log_slots
   - action: utter_tell_name
 
 - story: say goodbye
   steps:
   - intent: user_goodbye
-  - action: action_set_speaker
+  - action: action_set_name_slots
   - action: action_log_slots
   - action: utter_goodbye
 
 - story: personalized greeting
   steps:
   - intent: user_greet
-  - action: action_set_speaker
-  - action: action_set_firstname
+  - action: action_set_name_slots
   - action: action_set_part_of_day
   - action: action_log_slots
   - action: utter_greet_personalized
+
+- story: enrollment - returning user found in database
+  steps:
+  - intent: trigger_enrollment
+  - action: utter_ask_familar
+  - intent: affirm
+  - intent: provide_full_name
+  - action: action_set_name_slots
+  - action: action_query_userbase
+  - slot_was_set:
+    - imprint_uid: "1"  # Any non-null value
+  - action: utter_pleasure_meet_again
+  - action: utter_ask_recite_prompt
+  - intent: affirm
+  - action: utter_read_prompt
+  - action: action_start_enrollment_recording
+
+- story: enrollment - returning user not found in database
+  steps:
+  - intent: trigger_enrollment
+  - action: utter_ask_familar
+  - intent: affirm
+  - intent: provide_full_name
+  - action: action_set_name_slots
+  - action: action_query_userbase
+  - slot_was_set:
+    - imprint_uid: null
+  - action: utter_no_record
+  - action: utter_ask_recite_prompt
+  - intent: affirm
+  - action: utter_read_prompt
+  - action: action_start_enrollment_recording
+
+- story: enrollment - new user
+  steps:
+  - intent: trigger_enrollment
+  - action: utter_ask_familar
+  - intent: deny
+  - intent: provide_full_name
+  - action: action_set_name_slots
+  - action: utter_pleasure_meet
+  - action: utter_ask_recite_prompt
+  - intent: affirm
+  - action: utter_read_prompt
+  - action: action_start_enrollment_recording
+
+- story: enrollment declined
+  steps:
+  - intent: trigger_enrollment
+  - action: utter_ask_familar
+  - or:
+    - intent: affirm
+    - intent: deny
+  - action: utter_ask_recite_prompt
+  - intent: deny
+  - action: utter_very_well
+  - action: action_mute_enrollment

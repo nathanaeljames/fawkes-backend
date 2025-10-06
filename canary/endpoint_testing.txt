@@ -1,0 +1,73 @@
+# Test enrollment_status endpoint
+
+# Test with successful completion
+curl -X POST http://localhost:9002/api/enrollment_status \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "6b8446f0-2919-4239-8ded-9ca3276f7759",
+    "status": "completed"
+  }'
+
+# Test with abandoned flow
+curl -X POST http://localhost:9002/api/enrollment_status \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "6b8446f0-2919-4239-8ded-9ca3276f7759",
+    "status": "abandoned"
+  }'
+
+# Test with non-existent client (should fail gracefully)
+curl -X POST http://localhost:9002/api/enrollment_status \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "568",
+    "status": "abandoned"
+  }'
+
+
+# Test querying for a user with surname
+curl -X POST http://localhost:9001/api/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "query_database",
+    "table": "speakers",
+    "firstname": "nathanael",
+    "surname": "warren"
+  }'
+
+# Test querying for a user without surname (surname is NULL in database)
+curl -X POST http://localhost:9001/api/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "query_database",
+    "table": "speakers",
+    "firstname": "courtney",
+    "surname": null
+  }'
+
+# Expected responses:
+# If found: {"uid": 1, "success": true}
+# If not found: {"uid": null, "success": true}
+# If error: {"error": "error message", "success": false}
+
+
+# Test starting recording for existing user
+curl -X POST http://localhost:9001/api/record \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "test-client-123",
+    "uid": 1
+  }'
+
+# Test starting recording for new user (no uid)
+curl -X POST http://localhost:9001/api/record \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "test-client-123",
+    "uid": null
+  }'
+
+# Expected responses:
+# If successful: {"success": true, "message": "Recording started for client test-client-123 (uid: 1)"}
+# If client not connected: {"error": "Client not connected", "success": false}
+# If error: {"error": "error message", "success": false}

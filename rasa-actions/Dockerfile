@@ -7,7 +7,9 @@ USER root
 
 # Install the pytz library globally
 # --no-cache-dir saves space
-RUN pip install pytz --no-cache-dir
+RUN pip install \
+    pytz --no-cache-dir\
+    aiohttp
 
 # Switch back to the default non-root user for running the action server
 # This is crucial for maintaining the security standards of the Rasa SDK image.
