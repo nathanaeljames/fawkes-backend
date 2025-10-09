@@ -71,3 +71,33 @@ curl -X POST http://localhost:9001/api/record \
 # If successful: {"success": true, "message": "Recording started for client test-client-123 (uid: 1)"}
 # If client not connected: {"error": "Client not connected", "success": false}
 # If error: {"error": "error message", "success": false}
+
+
+
+curl -X POST http://crunchatizer:5055/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "next_action": "action_set_name_slots",
+    "sender_id": "test_user",
+    "tracker": {
+      "sender_id": "test_user",
+      "slots": {},
+      "latest_message": {
+        "text": "test",
+        "intent": {"name": "user_greet", "confidence": 1.0},
+        "entities": []
+      },
+      "events": [],
+      "paused": false,
+      "followup_action": null,
+      "active_loop": {},
+      "latest_action_name": "action_listen"
+    },
+    "domain": {
+      "intents": [],
+      "entities": [],
+      "slots": {},
+      "responses": {},
+      "actions": []
+    }
+  }'

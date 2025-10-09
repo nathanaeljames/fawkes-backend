@@ -11,6 +11,11 @@ intents:
   - provide_name
   - provide_first_name
   - provide_full_name
+  - spell_name
+  - trigger_enrollment
+  - correct_spelling
+  - start_spelling
+
 
 entities:
   - firstname
@@ -18,18 +23,6 @@ entities:
 
 slots:
   speaker_name:
-    type: text
-    initial_value: null
-    influence_conversation: false
-    mappings:
-      - type: custom
-  imprint_name:
-    type: text
-    initial_value: null
-    influence_conversation: false
-    mappings:
-      - type: custom
-  imprint_uid:
     type: text
     initial_value: null
     influence_conversation: false
@@ -45,6 +38,73 @@ slots:
     type: text
     initial_value: null
     influence_conversation: false
+    mappings:
+      - type: custom
+  #imprint_firstname:
+  #  type: text
+  #  mappings:
+  #    - type: from_entity
+  #      entity: firstname
+  #    - type: custom  # For spelling corrections
+  #imprint_surname:
+  #  type: text
+  #  mappings:
+  #    - type: from_entity
+  #      entity: surname
+  #    - type: custom
+  imprint_firstname:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: firstname
+        intent: provide_name
+      - type: from_text
+        conditions:
+          - active_loop: name_collection_form
+            requested_slot: imprint_firstname
+  imprint_surname:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: surname
+        intent: provide_name
+      - type: from_text
+        conditions:
+          - active_loop: name_collection_form
+            requested_slot: imprint_surname
+  imprint_name:
+    type: text
+    mappings:
+      - type: custom
+  firstname_spelled:
+    type: text
+    initial_value: null
+    mappings:
+      - type: custom
+  surname_spelled:
+    type: text
+    initial_value: null
+    mappings:
+      - type: custom
+  name_complete:
+    type: bool
+    initial_value: false
+    influence_conversation: true
+    mappings:
+      - type: custom
+  spelling_stage:
+    type: text
+    initial_value: null
+    influence_conversation: true
+    mappings:
+      - type: custom
+    # Tracks: null, "confirming_both", "spelling_first", "spelling_last", "complete"
+  imprint_uid:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
   server_name:
     type: text
     initial_value: "Fawkes"
@@ -57,14 +117,30 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
+  time_of_day:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
   enrollment_active:
     type: bool
     initial_value: false
     influence_conversation: false
+    mappings:
+      - type: custom
   enrollment_muted:
     type: bool
     initial_value: false
     influence_conversation: false
+    mappings:
+      - type: custom
+
+forms:
+  name_collection_form:
+    required_slots:
+      - imprint_firstname
+      - imprint_surname
 
 responses:
   utter_greet:
@@ -93,13 +169,46 @@ responses:
   - text: "I don't recognize your voice. Have I met you before?"
 
   utter_ask_full_name:
-  - text: "Sorry, can I get your first and last name for record's sake?"
+  - text: "Can I get your first and last name for record's sake?"
+
+  utter_ask_imprint_firstname:
+    - text: "What is your first name?"
+  
+  utter_ask_imprint_surname:
+    - text: "And what is your last name?"
+  
+  utter_ask_confirm_full_name:
+    - text: "First name {imprint_firstname}, last name {imprint_surname}. Did I get that right?"
+  
+  utter_ask_confirm_spelling:
+    - text: "Did I spell everything correctly?"
+  
+  utter_ask_spell_firstname:
+    - text: "Can you spell your first name letter-by-letter?"
+  
+  utter_ask_spell_surname:
+    - text: "Can you spell your last name letter-by-letter?"
+  
+  utter_confirm_firstname_spelling:
+    - text: "{imprint_firstname}, spelled {firstname_spelled}. Did I get that right?"
+  
+  utter_confirm_surname_spelling:
+    - text: "{imprint_surname}, spelled {surname_spelled}. Did I get that right?"
+  
+  utter_great:
+    - text: "Great!"
+  
+  utter_apology_retry:
+    - text: "My apologies."
+
+  utter_very_well:
+  - text: "Very well."
+
+  utter_tell_time:
+  - text: "The time is {time_of_day}"
 
   utter_pleasure_meet_again:
-  - text: "It's a pleasure to meet you again {firstname}. My apologies for not recognizing you before."
-
-  utter_pleasure_meet:
-  - text: "It's a pleasure to meet you {firstname}."
+  - text: "It's a pleasure to meet you again {firstname}."
 
   utter_ask_recite_prompt:
   - text: "In order to better serve you, can I ask you to recite a prompt for me?"
@@ -107,11 +216,8 @@ responses:
   utter_read_prompt:
   - text: "Excellent. Can you please read aloud the following prompt:"
 
-  utter_very_well:
-  - text: "Very well."
-
   utter_no_record:
-  - text: "I apologize, I don't seem to have a record for you."
+  - text: "I don't seem to have a record for you."
 
   utter_default:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
@@ -119,7 +225,6 @@ responses:
 
 actions:
   - action_log_slots
-  - action_set_set_name_slots
   - action_tell_time
   - action_do_nothing
   - action_set_part_of_day
@@ -127,6 +232,11 @@ actions:
   - action_start_enrollment_recording
   - action_trigger_enrollment
   - action_mute_enrollment
+  - action_set_name_slots
+  - action_process_spelling
+  - action_confirm_full_name
+  - action_handle_spelling_confirmation
+  - action_set_imprint_name
 
 session_config:
   session_expiration_time: 60

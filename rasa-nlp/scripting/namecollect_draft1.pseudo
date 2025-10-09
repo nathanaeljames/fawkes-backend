@@ -1,0 +1,69 @@
+# Okay I want to modify ActionSetAndValidateImprintName above to be a bit more robust and let me know if it is realistic or wise to encompass all of this logic into a single action or smarter to break it out into components:
+'''
+1. intent provide_name is invoked, triggering ActionSetAndValidateImprintName
+2. ActionSetAndValidateImprintName checks first if entity firstname and surname are set, setting slots imprint_firstname and imprint_surname to match accordingly
+    2a. If imprint_firstname and imprint_surname are set, utter "{imprint_firstname} {imprint_surname}. Did I get that right?"
+        2aa. If yes, ask "Did I spell everything correctly?"
+            2aaa. If yes, say "great!" set slot name_complete to True and return from function
+            2aab. elif no, utter "Sorry. Can you spell your first name letter-by-letter?" (collect response) then "Can you spell your last name letter-by-letter?" (collect response). Once collected attempt to assign imprint_firstname and imprint_surname, then ask "utter "{imprint_firstname} {imprint_surname}. Did I get that right?"
+                2aaba. If yes, ask "Did I spell everything correctly?"
+                    2aabaa. If yes, say "great!" set slot name_complete to True and return from function
+                    2aabab. If no, loop back to 2aab.
+            2aac. Else same as step 2.
+        2ab. elif no, utter "Sorry. What is your first name?" (collect response) then "What is your last name?" (collect response) - this may be best to put in a form? Once collected attempt to assign imprint_firstname and imprint_surname, then ask "{imprint_firstname} {imprint_surname}. Did I get that right?"
+        2ac. Else same as step 2.
+    2b. elif only first name is set, utter "{imprint_firstname}. Did I get that right?"
+        2ba. If yes, ask "Did I spell everything correctly?"
+            2baa. If yes, say "great! Can I get your last name?"
+'''
+'''
+1. intent provide_name is invoked, triggering ActionSetAndValidateImprintName
+2. ActionSetAndValidateImprintName checks first if entity firstname and surname are set, setting slots imprint_firstname and imprint_surname to match accordingly
+    2a. If imprint_firstname and imprint_surname are set, utter "{imprint_firstname} {imprint_surname}. Did I get that right?"
+        2aa. If yes, ask "Did I spell everything correctly?"
+            2aaa. If yes, say "great!" set slot name_complete to True and return from function
+            2aab. elif no, utter "Can you spell your first name letter-by-letter?" (collect response), then set imprint_firstname, then say "{imprint_firstname}, spelled [spell imprint_firstname back to the user letter-by-letter]. Did I get that right?"
+                2aaba. If yes, say "Can you spell your last name letter-by-letter?" (collect response), then set imprint_surname, then say "{imprint_surname}, spelled [spell imprint_surname back to the user letter-by-letter]. Did I get that right?"
+                    2aabaa. If yes, say "great!" set slot name_complete to True and return from function
+                    2aabab. elif no, utter "My apologies." then loop back to 2aaba.
+                    2aabac. else utter "My apologies." then loop back to 2aaba.
+                2aabb. elif no, utter "My apologies." then loop back to 2aab.
+                2aabc. else utter "My apologies." then loop back to 2aab.
+            2aac. else utter "My apologies." then loop back to 2aab.
+        2ab. elif no, ask "What is your first name?" (collect response), then assign imprint_firstname, then say "{imprint_firstname}, spelled [spell imprint_firstname back to the user letter-by-letter]. Did I get that right?"
+            2aba. if yes, say "What is your last name?" (collect response), then assign imprint_surname, then say "{imprint_surname}, spelled [spell imprint_surname back to the user letter-by-letter]. Did I get that right?"
+                2abaa. If yes, say "great!" set slot name_complete to True and return from function 
+                2abab. elif no, utter "My apologies." then goto 2aaba.
+                2abac. else utter "My apologies." then goto 2aaba. 
+            2abb. elif no, utter "My apologies." then goto 2aab.
+            2abc. else utter "My apologies." then goto 2aab.
+        2ac. else goto 2ab.
+    2b. elif only first name is set, set imprint_firstname, then say "{imprint_firstname}, spelled [spell imprint_firstname back to the user letter-by-letter]. Did I get that right?"
+        2ba. if yes, goto 2aba.
+        2bb. elif no, utter "My apologies." then goto 2aab.
+        2bc. else utter "My apologies." then goto 2aab.
+    2c. else utter "My apologies, I didn't catch that." then goto 2ab
+
+
+
+
+
+
+
+
+
+
+                    then "Can you spell your last name letter-by-letter?" (collect response). Once collected attempt to assign imprint_firstname and imprint_surname, then ask "utter "{imprint_firstname} {imprint_surname}. Did I get that right?"
+                2aaba. If yes, ask "Did I spell everything correctly?"
+                    2aabaa. If yes, say "great!" set slot name_complete to True and return from function
+                    2aabab. If no, loop back to 2aab.
+            2aac. Else same as step 2.
+        2ab. elif no, utter "Sorry. What is your first name?" (collect response) then "What is your last name?" (collect response) - this may be best to put in a form? Once collected attempt to assign imprint_firstname and imprint_surname, then ask "{imprint_firstname} {imprint_surname}. Did I get that right?"
+            2aba. If yes, say "great!" set slot name_complete to True and return from function
+            2abb. elif no
+            2abc. Else
+        2ac. Else same as step 2.
+    2b. elif only first name is set, utter "{imprint_firstname}. Did I get that right?"
+        2ba. If yes, ask "Did I spell everything correctly?"
+            2baa. If yes, say "great! Can I get your last name?"
+'''

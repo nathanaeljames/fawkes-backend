@@ -22,7 +22,8 @@ rules:
   - intent: user_ask_time
   - action: action_set_name_slots
   - action: action_log_slots
-  - action: action_tell_time
+  - action: action_set_time_of_day
+  - action: utter_tell_time
 
 - rule: Tell the server name when asked
   steps:
@@ -30,6 +31,102 @@ rules:
   - action: action_set_name_slots
   - action: action_log_slots
   - action: utter_tell_name
+
+- rule: Activate name collection on provide_name
+  steps:
+  - intent: provide_name
+  - action: name_collection_form
+  - active_loop: name_collection_form
+
+# After form completes - confirm the full name
+- rule: Confirm full name after form completion
+  condition:
+  - active_loop: null
+  steps:
+  - action: name_collection_form
+  - action: action_confirm_full_name
+  - action: utter_ask_confirm_full_name
+
+#- rule: Submit name collection form and start confirmation
+#  condition:
+#  - active_loop: name_collection_form
+#  steps:
+#  - action: name_collection_form
+#  - active_loop: null
+#  - action: action_confirm_full_name
+#  - action: utter_ask_confirm_full_name
+
+# Handle user's response to full name confirmation
+- rule: Handle name confirmation - affirm or deny
+  condition:
+  - slot_was_set:
+    - spelling_stage: confirming_both
+  steps:
+  - or:
+    - intent: affirm
+    - intent: deny
+  - action: action_handle_spelling_confirmation
+
+# Handle user's response to spelling confirmation
+- rule: Handle spelling confirmation - affirm or deny
+  condition:
+  - slot_was_set:
+    - spelling_stage: confirming_spelling
+  steps:
+  - or:
+    - intent: affirm
+    - intent: deny
+  - action: action_handle_spelling_confirmation
+
+# Process firstname spelling
+- rule: Process firstname spelling
+  condition:
+  - slot_was_set:
+    - spelling_stage: spelling_first
+  steps:
+  - intent: spell_name
+  - action: action_process_spelling
+  - action: utter_confirm_firstname_spelling
+
+# Handle confirmation of firstname spelling
+- rule: Confirm firstname spelling - affirm or deny
+  condition:
+  - slot_was_set:
+    - spelling_stage: confirming_first
+  steps:
+  - or:
+    - intent: affirm
+    - intent: deny
+  - action: action_handle_spelling_confirmation
+
+# Process surname spelling
+- rule: Process surname spelling
+  condition:
+  - slot_was_set:
+    - spelling_stage: spelling_last
+  steps:
+  - intent: spell_name
+  - action: action_process_spelling
+  - action: utter_confirm_surname_spelling
+
+# Handle confirmation of surname spelling
+- rule: Confirm surname spelling - affirm or deny
+  condition:
+  - slot_was_set:
+    - spelling_stage: confirming_last
+  steps:
+  - or:
+    - intent: affirm
+    - intent: deny
+  - action: action_handle_spelling_confirmation
+
+# After spelling is complete, set the imprint_name
+- rule: Set imprint name after spelling complete
+  condition:
+  - slot_was_set:
+    - spelling_stage: complete
+  steps:
+  - action: action_set_imprint_name
 
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:
