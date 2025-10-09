@@ -1,0 +1,78 @@
+flowchart TD
+    Start([name_collection_form activated]) --> Form[Form collects firstname & surname<br/>via entity extraction]
+    
+    Form --> FormComplete{Both slots filled?}
+    FormComplete -->|No| Form
+    FormComplete -->|Yes| DeactivateForm[active_loop: null]
+    
+    DeactivateForm --> ConfirmAction[action_confirm_full_name<br/>Creates firstname_spelled & surname_spelled<br/>Sets spelling_stage = 'confirming_both']
+    
+    ConfirmAction --> UtterBoth[utter_ask_confirm_full_name<br/>'firstname surname. Did I get that right?']
+    
+    UtterBoth --> ResponseBoth{User response?}
+    
+    ResponseBoth -->|affirm| HandleBoth1[action_handle_spelling_confirmation<br/>spelling_stage = 'confirming_spelling'<br/>Utters: 'Did I spell everything correctly?']
+    
+    ResponseBoth -->|deny/other| HandleBoth2[action_handle_spelling_confirmation<br/>Resets slots, spelling_stage = null<br/>Utters: 'What is your first name?']
+    
+    HandleBoth2 --> Form
+    
+    %% Spelling confirmation branch
+    HandleBoth1 --> ResponseSpelling{User response?}
+    
+    ResponseSpelling -->|affirm| HandleSpellingOK[action_handle_spelling_confirmation<br/>spelling_stage = 'complete'<br/>name_complete = True<br/>Utters: 'Great!']
+    
+    ResponseSpelling -->|deny/other| HandleSpellingWrong[action_handle_spelling_confirmation<br/>spelling_stage = 'spelling_first'<br/>Utters: 'Can you spell your first name<br/>letter-by-letter?']
+    
+    HandleSpellingOK --> SetName[action_set_imprint_name<br/>Creates imprint_name = 'firstname_surname']
+    
+    SetName --> End([Complete])
+    
+    %% First name spelling correction path
+    HandleSpellingWrong --> UserSpellFirst[User says: 'N-A-T-H-A-N-A-E-L'<br/>intent: provide_name]
+    
+    UserSpellFirst --> ProcessFirst[action_process_spelling<br/>Converts 'N-A-T-H-A-N-A-E-L' to 'Nathanael'<br/>Sets imprint_firstname = 'Nathanael'<br/>Sets firstname_spelled = 'N-A-T-H-A-N-A-E-L'<br/>Sets spelling_stage = 'confirming_first']
+    
+    ProcessFirst --> UtterConfirmFirst[utter_confirm_firstname_spelling<br/>'Nathanael, spelled N-A-T-H-A-N-A-E-L.<br/>Did I get that right?']
+    
+    UtterConfirmFirst --> ResponseFirst{User response?}
+    
+    ResponseFirst -->|affirm| HandleFirstOK[action_handle_spelling_confirmation<br/>spelling_stage = 'spelling_last'<br/>Utters: 'Can you spell your last name<br/>letter-by-letter?']
+    
+    ResponseFirst -->|deny/other| HandleFirstWrong[action_handle_spelling_confirmation<br/>spelling_stage = 'spelling_first'<br/>Utters: 'My apologies.'<br/>Then: 'Can you spell your first name<br/>letter-by-letter?']
+    
+    HandleFirstWrong --> UserSpellFirst
+    
+    %% Last name spelling correction path
+    HandleFirstOK --> UserSpellLast[User says: 'W-A-R-R-E-N'<br/>intent: provide_name]
+    
+    UserSpellLast --> ProcessLast[action_process_spelling<br/>Converts 'W-A-R-R-E-N' to 'Warren'<br/>Sets imprint_surname = 'Warren'<br/>Sets surname_spelled = 'W-A-R-R-E-N'<br/>Sets spelling_stage = 'confirming_last']
+    
+    ProcessLast --> UtterConfirmLast[utter_confirm_surname_spelling<br/>'Warren, spelled W-A-R-R-E-N.<br/>Did I get that right?']
+    
+    UtterConfirmLast --> ResponseLast{User response?}
+    
+    ResponseLast -->|affirm| HandleLastOK[action_handle_spelling_confirmation<br/>spelling_stage = 'complete'<br/>name_complete = True<br/>Utters: 'Great!']
+    
+    ResponseLast -->|deny/other| HandleLastWrong[action_handle_spelling_confirmation<br/>spelling_stage = 'spelling_last'<br/>Utters: 'My apologies.'<br/>Then: 'Can you spell your last name<br/>letter-by-letter?']
+    
+    HandleLastWrong --> UserSpellLast
+    
+    HandleLastOK --> SetName
+    
+    %% Styling
+    style Start fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    style End fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    style Form fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style ProcessFirst fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ProcessLast fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ConfirmAction fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleBoth1 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleBoth2 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleSpellingOK fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleSpellingWrong fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleFirstOK fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleFirstWrong fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleLastOK fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style HandleLastWrong fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style SetName fill:#5c4a1a,stroke:#8b7520,color:#fff9c4

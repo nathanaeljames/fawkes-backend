@@ -1,0 +1,99 @@
+graph TD
+    Start([provide_name intent]) --> Action[ActionSetAndValidateImprintName]
+    
+    %% Step 1: Initial intent trigger
+    
+    Action --> CheckBoth{Both firstname<br/>and surname set?}
+    
+    %% Step 2: Check which entities are already set
+    
+    CheckBoth -->|Yes| Confirm1["Utter: '{imprint_firstname} {imprint_surname}.<br/>Did I get that right?'"]
+    CheckBoth -->|No| CheckFirst{Only firstname set?}
+    CheckBoth -->|Neither| ApologyStart["Utter: 'My apologies,<br/>I didn't catch that.'"]
+    
+    %% Step 2a: Both names set - confirm full name
+    
+    Confirm1 --> ConfirmYes1{Response?}
+    ConfirmYes1 -->|Yes| SpellingCheck["Utter: 'Did I spell<br/>everything correctly?'"]
+    ConfirmYes1 -->|No| AskFirst["Utter: 'What is your first name?'<br/>Collect response<br/>Set imprint_firstname"]
+    ConfirmYes1 -->|Other| AskFirst
+    
+    %% Step 2aa: User confirmed name - check spelling
+    
+    SpellingCheck --> SpellCheckResp{Response?}
+    SpellCheckResp -->|Yes| Complete1["Utter: 'great!'<br/>Set name_complete = True<br/>Return"]
+    SpellCheckResp -->|No| SpellFirst["Utter: 'Can you spell your<br/>first name letter-by-letter?'<br/>Collect response<br/>Set imprint_firstname"]
+    SpellCheckResp -->|Other| SpellFirst
+    
+    %% Step 2aaa: Spelling confirmed - SUCCESS PATH
+    %% Step 2aab: Spelling incorrect - collect letter-by-letter spelling
+    
+    SpellFirst --> ConfirmSpellFirst["Utter: '{imprint_firstname}, spelled<br/>[spell back letter-by-letter].<br/>Did I get that right?'"]
+    ConfirmSpellFirst --> SpellFirstResp{Response?}
+    SpellFirstResp -->|Yes| SpellLast["Utter: 'Can you spell your<br/>last name letter-by-letter?'<br/>Collect response<br/>Set imprint_surname"]
+    SpellFirstResp -->|No| ApologyFirst1["Utter: 'My apologies.'"]
+    SpellFirstResp -->|Other| ApologyFirst2["Utter: 'My apologies.'"]
+    
+    ApologyFirst1 --> SpellFirst
+    ApologyFirst2 --> SpellFirst
+    
+    %% Step 2aaba: Confirmed first name spelling - now get last name spelling
+    
+    SpellLast --> ConfirmSpellLast["Utter: '{imprint_surname}, spelled<br/>[spell back letter-by-letter].<br/>Did I get that right?'"]
+    ConfirmSpellLast --> SpellLastResp{Response?}
+    SpellLastResp -->|Yes| Complete2["Utter: 'great!'<br/>Set name_complete = True<br/>Return"]
+    SpellLastResp -->|No| ApologyLast1["Utter: 'My apologies.'"]
+    SpellLastResp -->|Other| ApologyLast2["Utter: 'My apologies.'"]
+    
+    ApologyLast1 --> SpellLast
+    ApologyLast2 --> SpellLast
+    
+    %% Step 2aabaa: Confirmed last name spelling - SUCCESS PATH
+    %% Step 2aabab/2aabac: Loop back to re-collect last name spelling
+    
+    %% Step 2ab: User said name was wrong - collect first name from scratch
+    
+    AskFirst --> ReadBackFirst["Utter: '{imprint_firstname}, spelled<br/>[spell back letter-by-letter].<br/>Did I get that right?'"]
+    ReadBackFirst --> FirstResp{Response?}
+    FirstResp -->|Yes| AskLast["Utter: 'What is your last name?'<br/>Collect response<br/>Set imprint_surname"]
+    FirstResp -->|No| ApologyFirst3["Utter: 'My apologies.'"]
+    FirstResp -->|Other| ApologyFirst4["Utter: 'My apologies.'"]
+    
+    ApologyFirst3 --> SpellFirst
+    ApologyFirst4 --> SpellFirst
+    
+    %% Step 2aba: First name confirmed - now collect last name
+    %% Step 2abb/2abc: Loop back to letter-by-letter spelling
+    
+    AskLast --> ReadBackLast["Utter: '{imprint_surname}, spelled<br/>[spell back letter-by-letter].<br/>Did I get that right?'"]
+    ReadBackLast --> LastResp{Response?}
+    LastResp -->|Yes| Complete3["Utter: 'great!'<br/>Set name_complete = True<br/>Return"]
+    LastResp -->|No| ApologyLast3["Utter: 'My apologies.'"]
+    LastResp -->|Other| ApologyLast4["Utter: 'My apologies.'"]
+    
+    ApologyLast3 --> SpellLast
+    ApologyLast4 --> SpellLast
+    
+    %% Step 2abaa: Last name confirmed - SUCCESS PATH
+    %% Step 2abab/2abac: Loop back to letter-by-letter spelling for last name
+    
+    %% Step 2b: Only first name was initially set
+    
+    CheckFirst -->|Yes| SetFirst["Set imprint_firstname"]
+    CheckFirst -->|No| ApologyStart
+    
+    SetFirst --> ReadBackFirstOnly["Utter: '{imprint_firstname}, spelled<br/>[spell back letter-by-letter].<br/>Did I get that right?'"]
+    ReadBackFirstOnly --> FirstOnlyResp{Response?}
+    FirstOnlyResp -->|Yes| AskLast
+    FirstOnlyResp -->|No| ApologyFirst5["Utter: 'My apologies.'"]
+    FirstOnlyResp -->|Other| ApologyFirst6["Utter: 'My apologies.'"]
+    
+    ApologyFirst5 --> SpellFirst
+    ApologyFirst6 --> SpellFirst
+    
+    %% Step 2ba: First name confirmed - proceed to collect last name (goto 2aba)
+    %% Step 2bb/2bc: Loop back to letter-by-letter spelling (goto 2aab)
+    
+    %% Step 2c: Neither name set - apologize and start fresh
+    
+    ApologyStart --> AskFirst

@@ -20,8 +20,10 @@ pipeline:
   epochs: 100
   constrain_similarities: true
 - name: FallbackClassifier
-  threshold: 0.98  # Much higher threshold since the model is prone to overfitting
-  #threshold: 0.85  # NLU fallback threshold
+  #threshold: 0.85  # Much higher threshold since the model is prone to overfitting
+  threshold: 0.7  # Decreasing threshold as I add more intents and paths
+  #threshold: 0.3 # Rasa default NLU fallback threshold
+  ambiguity_threshold: 0.1  # Gap between top 2 intents
 
 policies:
 - name: MemoizationPolicy

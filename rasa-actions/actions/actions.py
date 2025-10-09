@@ -158,6 +158,7 @@ class ActionStartEnrollmentRecording(Action):
                         result = await response.json()
                         logger.info(f"Recording started for {sender_id}: {result}")
                         return [SlotSet("enrollment_active", True)]
+                        # NOTE instead of trigger enrollment_active I will need to process a success message from the server and set enrollment_active to False rasa and server-side
                     else:
                         logger.error(f"Failed to start recording: {response.status}")
                         return []
@@ -165,7 +166,6 @@ class ActionStartEnrollmentRecording(Action):
         except Exception as e:
             logger.error(f"Error starting enrollment recording: {e}")
             return []
-
 
 class ActionMuteEnrollment(Action):
     def name(self) -> Text:
@@ -211,10 +211,10 @@ class ActionResetEnrollment(Action):
         # Always set the slot, even if the API call failed, to ensure Rasa's state is updated
         return [SlotSet("enrollment_active", False)]
 
-class ActionTellTime(Action):
+class ActionSetTimeOfDay(Action):
 
     def name(self) -> Text:
-        return "action_tell_time"
+        return "action_set_time_of_day"
 
     def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
@@ -223,11 +223,9 @@ class ActionTellTime(Action):
         #current_time = datetime.datetime.now().strftime("%H:%M:%S")
         current_time_aware = datetime.datetime.now(EST_TZ)
         current_time = current_time_aware.strftime("%H:%M:%S")
-        message = f"Sir, the time is {current_time}"
+        #message = f"Sir, the time is {current_time}"
         
-        dispatcher.utter_message(text=message)
-        
-        return []
+        return [SlotSet("time_of_day", current_time)]
     
 class ActionSetPartOfDay(Action):
     def name(self):
@@ -255,3 +253,219 @@ class ActionDoNothing(Action):
     def run(self, dispatcher, tracker, domain):
         # This action does nothing and returns an empty list of events
         return []
+
+# Enrollment actions
+
+class ActionProcessSpelling(Action):
+    """Process hyphenated spelling input (e.g., N-A-T-E) and convert to word"""
+    
+    def name(self) -> Text:
+        return "action_process_spelling"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        text = tracker.latest_message.get("text", "").strip()
+        intent = tracker.latest_message.get("intent", {}).get("name")
+        spelling_stage = tracker.get_slot("spelling_stage")
+        
+        logger.info(f"Processing spelling input: '{text}' (intent: {intent}) at stage: {spelling_stage}")
+        
+        # Validate that we got the spell_name intent
+        if intent != "spell_name":
+            logger.warning(f"Expected spell_name intent but got {intent}")
+            dispatcher.utter_message(text="Please spell your name letter-by-letter, like N-A-T-E.")
+            return []
+        
+        # Check if input is in hyphenated format (e.g., "N-A-T-E")
+        if "-" not in text:
+            logger.warning(f"Spelling input missing hyphens: '{text}'")
+            dispatcher.utter_message(text="Please spell your name with hyphens between letters, like N-A-T-E.")
+            return []
+        
+        # Remove hyphens and spaces, convert to title case
+        letters = text.replace("-", "").replace(" ", "").upper()
+        
+        # Validate that we have reasonable input (letters only, reasonable length)
+        if not letters.isalpha() or len(letters) < 2 or len(letters) > 30:
+            logger.warning(f"Invalid spelling format: '{text}'")
+            dispatcher.utter_message(text="I didn't understand that spelling. Please try again.")
+            return []
+        
+        processed_name = letters.capitalize()
+        
+        # Store the formatted spelling for confirmation
+        formatted_spelling = "-".join(list(letters))
+        
+        logger.info(f"Converted spelling '{text}' to name '{processed_name}'")
+        
+        if spelling_stage == "spelling_first":
+            return [
+                SlotSet("imprint_firstname", processed_name),
+                SlotSet("firstname_spelled", formatted_spelling),
+                SlotSet("spelling_stage", "confirming_first")
+            ]
+        elif spelling_stage == "spelling_last":
+            return [
+                SlotSet("imprint_surname", processed_name),
+                SlotSet("surname_spelled", formatted_spelling),
+                SlotSet("spelling_stage", "confirming_last")
+            ]
+        else:
+            logger.error(f"Unexpected spelling_stage: {spelling_stage}")
+            return []
+
+class ActionConfirmFullName(Action):
+    """Handle initial confirmation of both names"""
+    
+    def name(self) -> Text:
+        return "action_confirm_full_name"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        firstname = tracker.get_slot("imprint_firstname")
+        surname = tracker.get_slot("imprint_surname")
+        
+        if not firstname or not surname:
+            dispatcher.utter_message(text="I'm missing some information. Let me ask again.")
+            return [SlotSet("spelling_stage", None)]
+        
+        # Create formatted spelling for display
+        firstname_spelled = "-".join(list(firstname.upper()))
+        surname_spelled = "-".join(list(surname.upper()))
+        
+        return [
+            SlotSet("firstname_spelled", firstname_spelled),
+            SlotSet("surname_spelled", surname_spelled),
+            SlotSet("spelling_stage", "confirming_both")
+        ]
+
+class ActionHandleSpellingConfirmation(Action):
+    """Route to next step based on spelling confirmation response"""
+    
+    def name(self) -> Text:
+        return "action_handle_spelling_confirmation"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        intent = tracker.latest_message.get("intent", {}).get("name")
+        spelling_stage = tracker.get_slot("spelling_stage")
+        
+        logger.info(f"Handling confirmation at stage '{spelling_stage}' with intent '{intent}'")
+        
+        if spelling_stage == "confirming_both":
+            if intent == "affirm":
+                # Both names confirmed, ask about spelling details
+                dispatcher.utter_message(response="utter_ask_confirm_spelling")
+                return [SlotSet("spelling_stage", "confirming_spelling")]
+            else:
+                # Names were wrong - jump straight to spelling correction
+                dispatcher.utter_message(response="utter_apology_retry")
+                dispatcher.utter_message(response="utter_ask_spell_firstname")
+                return [SlotSet("spelling_stage", "spelling_first")]
+        
+        elif spelling_stage == "confirming_spelling":
+            if intent == "affirm":
+                # Spelling confirmed, we're done!
+                dispatcher.utter_message(response="utter_name_complete")
+                return [
+                    SlotSet("spelling_stage", "complete"),
+                    SlotSet("name_complete", True)
+                ]
+            else:
+                # Need to correct spelling
+                dispatcher.utter_message(response="utter_ask_spell_firstname")
+                return [SlotSet("spelling_stage", "spelling_first")]
+        
+        elif spelling_stage == "confirming_first":
+            if intent == "affirm":
+                # First name spelling confirmed, move to surname
+                dispatcher.utter_message(response="utter_ask_spell_surname")
+                return [SlotSet("spelling_stage", "spelling_last")]
+            else:
+                # First name spelling wrong, ask again
+                dispatcher.utter_message(response="utter_apology_retry")
+                dispatcher.utter_message(response="utter_ask_spell_firstname")
+                return [SlotSet("spelling_stage", "spelling_first")]
+        
+        elif spelling_stage == "confirming_last":
+            if intent == "affirm":
+                # Last name spelling confirmed, complete!
+                dispatcher.utter_message(response="utter_name_complete")
+                return [
+                    SlotSet("spelling_stage", "complete"),
+                    SlotSet("name_complete", True)
+                ]
+            else:
+                # Last name spelling wrong, ask again
+                dispatcher.utter_message(response="utter_apology_retry")
+                dispatcher.utter_message(response="utter_ask_spell_surname")
+                return [SlotSet("spelling_stage", "spelling_last")]
+        
+        return []
+
+class ActionSetImprintName(Action):
+    """Combine firstname and surname into imprint_name for database query"""
+    
+    def name(self) -> Text:
+        return "action_set_imprint_name"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        firstname = tracker.get_slot("imprint_firstname")
+        surname = tracker.get_slot("imprint_surname")
+        
+        if firstname and surname:
+            imprint_name = f"{firstname}_{surname}"
+            logger.info(f"Set imprint_name: {imprint_name}")
+            return [SlotSet("imprint_name", imprint_name)]
+        else:
+            logger.warning(f"Cannot set imprint_name - missing firstname or surname")
+            return []
+        
+class validate_name_collection_form(Action):
+    """Validate and split names if they contain spaces"""
+    # TODO combine this logic into ActionConfirmFullName?
+    
+    def name(self) -> Text:
+        return "validate_name_collection_form"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        # Get the slot values that were just extracted
+        firstname = tracker.get_slot("imprint_firstname")
+        surname = tracker.get_slot("imprint_surname")
+        
+        events = []
+        
+        # If firstname contains spaces, split it
+        if firstname and " " in firstname:
+            parts = firstname.split(None, 1)  # Split on first whitespace only
+            new_firstname = parts[0].capitalize()
+            new_surname = parts[1].capitalize() if len(parts) > 1 else ""
+            
+            logger.info(f"Splitting firstname '{firstname}' into '{new_firstname}' and '{new_surname}'")
+            
+            events.append(SlotSet("imprint_firstname", new_firstname))
+            
+            # If we don't have a surname yet, use the split portion
+            if not surname and new_surname:
+                events.append(SlotSet("imprint_surname", new_surname))
+        
+        # If surname contains spaces, just capitalize it properly
+        if surname and " " in surname:
+            # Keep multi-part surnames together (e.g., "Mosier Warren")
+            capitalized_surname = " ".join(word.capitalize() for word in surname.split())
+            logger.info(f"Capitalizing surname '{surname}' to '{capitalized_surname}'")
+            events.append(SlotSet("imprint_surname", capitalized_surname))
+        
+        return events

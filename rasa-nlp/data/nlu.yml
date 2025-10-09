@@ -20,6 +20,7 @@ nlu:
     - greetings
     - what's up
     - hiya
+    - /user_greet_pattern
 
 - regex: user_goodbye_pattern
   examples: |
@@ -43,6 +44,7 @@ nlu:
     - take care
     - catch you later
     - until next time
+    - /user_goodbye_pattern
 
 - regex: user_ask_time_pattern
   examples: |
@@ -62,10 +64,19 @@ nlu:
     - time now
     - what time is it now
     - could you tell me what time it is
+    - /user_ask_time_pattern
+
+- regex: user_ask_name_pattern
+  examples: |
+    - (what('s| is) (you|your|ur) name)[.!?]*
+    - (tell me (your|ur) name)[.!?]*
+    - (who are you)[.!?]*
+    - (what do you go by)[.!?]*
 
 - intent: user_ask_name
   examples: |
     - what's your name
+    - what is your name
     - tell me your name
     - who are you
     - your name
@@ -74,7 +85,13 @@ nlu:
     - introduce yourself
     - may I know your name
     - what do you go by
+    - /user_ask_name_pattern
 
+- regex: affirm_exact
+  examples: |
+    - ^yes$
+    - ^yep$
+    - ^yeah$
 - intent: affirm
   examples: |
     - yes
@@ -83,7 +100,12 @@ nlu:
     - sure
     - of course
     - definitely
+    - /affirm_exact
 
+- regex: deny_exact
+  examples: |
+    - ^no$
+    - ^nope$
 - intent: deny
   examples: |
     - no
@@ -91,8 +113,9 @@ nlu:
     - not now
     - maybe later
     - no thanks
+    - /deny_exact
 
-- intent: provide_full_name
+- intent: provide_name
   examples: |
     - my name is [John](firstname) [Smith](surname)
     - I'm [Jane](firstname) [Doe](surname)
@@ -102,15 +125,61 @@ nlu:
     - I am [Sarah](firstname) [Chen](surname)
     - [David](firstname) [Martinez](surname) is my name
     - my full name is [Emma](firstname) [Taylor](surname)
-
-- intent: provide_first_name
-  examples: |
     - my name is [John](firstname)
     - I'm [Jane](firstname)
     - it's [Michael](firstname)
     - [Alice](firstname)
     - call me [Bob](firstname)
     - I am [Sarah](firstname)
+    - [Courtney](firstname) [Mosier Warren](surname)
+    - [joseph](firstname) [moore](surname)
+    - [emma](firstname) [taylor](surname)
+    - [evelyn](firstname) [white](surname)
+    - [oliver](firstname) [brown](surname)
+    - [samuel](firstname) [lee](surname)
+    - [mason](firstname) [lewis](surname)
+    - [chloe](firstname) [martin](surname)
+    - [scarlett](firstname) [wood](surname)
+    - [gabriel](firstname) [baker](surname)
+    - [Elijah](firstname) [Evans](surname)
+    - [Isabella](firstname) [Wright](surname)
+    - [Amelia](firstname) [Robinson](surname)
+    - [James](firstname) [Roberts](surname)
+    - [Grace](firstname) [Patel](surname)
+    - [Jennifer](firstname) [Lee](surname)
+    - [Sophia](firstname) [Johnson](surname)
+    - [Michael](firstname) [Clarke](surname)
+    - [Alexander](firstname) [Green](surname)
+    - [Jacob](firstname) [Cooper](surname)
+    - [Charlotte](firstname) [Wilson](surname)
+    - [Lucas](firstname) [Walker](surname)
+    - [Lily](firstname) [Clark](surname)
+    - [William](firstname) [Thomas](surname)
+    - [Robert](firstname) [Anderson](surname)
+    - [Hannah](firstname) [Harrison](surname)
+    - [Noah](firstname) [Williams](surname)
+    - [Mia](firstname) [Hughes](surname)
+    - [Ethan](firstname) [Jackson](surname)
+    - [Layla](firstname) [King](surname)
+    - [Daniel](firstname) [Turner](surname)
+    - [Thomas](firstname) [Miller](surname)
+    - [Ava](firstname) [Davies](surname)
+    - [Zoe](firstname) [Allen](surname)
+    - [Victoria](firstname) [Morris](surname)
+    - [Henry](firstname) [Edwards](surname)
+    - [Logan](firstname) [Ward](surname)
+    - [Penelope](firstname) [Hill](surname)
+    - [Harper](firstname) [Hall](surname)
+    - [Christopher](firstname) [Brown](surname)
+    - [Olivia](firstname) [Jones](surname)
+    - [David](firstname) [Morgan](surname)
+    - [Ella](firstname) [Harris](surname)
+    - [Liam](firstname) [Smith](surname)
+    - [Benjamin](firstname) [Thompson](surname)
+    - [Elizabeth](firstname) [Davis](surname)
+    - my name is [john](firstname) [smith](surname)
+    - I'm [jane](firstname) [doe](surname)
+    - [alice](firstname) [johnson](surname)
 
 - intent: trigger_enrollment
   examples: |
@@ -119,3 +188,138 @@ nlu:
     - internal enrollment activation
     # This intent is primarily triggered programmatically, 
     # but needs examples for training
+
+- intent: correct_spelling
+  examples: |
+    - actually you spelled that wrong
+    - yes, but it's spelled wrong
+    - it's spelled wrong
+    - no you spelled it wrong
+    - you got the spelling wrong
+    - that spelling is incorrect
+    - no, the spelling is wrong
+    - that's spelled incorrectly
+    - you messed up the spelling
+    - my name is not spelled like that
+    - the spelling is different
+    - I think you misspelled it
+
+- intent: start_spelling
+  examples: |
+    - I'm going to spell that for you
+    - let me spell that out
+    - I'll spell it
+    - spell it out
+    - it's spelled
+    - Yeah, it's spelled
+    - Yes, it's spelled
+    - Sure, it's spelled
+    - It's actually spelled
+    - Actually its spelled
+
+- intent: spell_name
+  examples: |
+    - N-A-T-H-A-N-A-E-L
+    - J-O-H-N
+    - S-M-I-T-H
+    - M-A-R-Y hyphen K-A-T-E
+    - E-M-M-A
+    - W-I-L-S-O-N
+    - C-H-E-N
+    - O apostrophe B-R-I-E-N
+    - D-A-V-I-D
+    - A-L-I-C-E
+    - J-A-N-E
+    - T-A-Y-L-O-R
+    - M-I-C-H-A-E-L
+    - S-A-R-A-H
+    - B-O-B
+    - N-A-T-E
+    - W-A-R-R-E-N
+    - C-O-U-R-T-N-E-Y
+
+- lookup: firstname
+  examples: |
+    - Liam
+    - Olivia
+    - Noah
+    - Emma
+    - Oliver
+    - Ava
+    - Elijah
+    - Charlotte
+    - William
+    - Sophia
+    - James
+    - Amelia
+    - Benjamin
+    - Isabella
+    - lucas
+    - evelyn
+    - henry
+    - Mia
+    - Alexander
+    - Harper
+    - mason
+    - Ella
+    - Michael
+    - grace
+    - Ethan
+    - Scarlett
+    - Daniel
+    - Chloe
+    - Jacob
+    - penelope
+    - Logan
+    - victoria
+    - Joseph
+    - Lily
+    - Samuel
+    - Layla
+    - gabriel
+    - Hannah
+    - David
+    - Zoe
+
+- lookup: surname
+  examples: |
+    - Moore
+    - Wilson
+    - Johnson
+    - Green
+    - Jones
+    - Lee
+    - Smith
+    - Wright
+    - Morris
+    - Harris
+    - White
+    - Clarke
+    - Wood
+    - Thomas
+    - Williams
+    - Evans
+    - Martin
+    - Walker
+    - King
+    - Lewis
+    - Patel
+    - Turner
+    - Robinson
+    - Roberts
+    - Morgan
+    - Ward
+    - Jackson
+    - Baker
+    - Davies
+    - Cooper
+    - Hughes
+    - Thompson
+    - allen
+    - taylor
+    - harrison
+    - clark
+    - hall
+    - hill
+    - edwards
+    - brown
