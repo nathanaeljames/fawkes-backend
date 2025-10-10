@@ -1,7 +1,8 @@
 from typing import Any, Text, Dict, List
-from rasa_sdk import Action, Tracker
+from rasa_sdk import Action, Tracker, FormValidationAction
 from rasa_sdk.executor import CollectingDispatcher
 import datetime
+from rasa_sdk.types import DomainDict
 from rasa_sdk.events import SlotSet
 import logging
 import pytz
@@ -258,7 +259,7 @@ class ActionDoNothing(Action):
 
 class ActionProcessSpelling(Action):
     """Process hyphenated spelling input (e.g., N-A-T-E) and convert to word"""
-    
+    # TODO handle 'space', 'apostrophe', 'dash', 'hyphen', remove dependence on hyphenation
     def name(self) -> Text:
         return "action_process_spelling"
     
@@ -440,41 +441,61 @@ class ActionSetImprintName(Action):
             logger.warning(f"Cannot set imprint_name - missing firstname or surname")
             return []
         
-class ValidateNameCollectionForm(Action):
+class ValidateNameCollectionForm(FormValidationAction):
     """Validate and split names if they contain spaces"""
     
     def name(self) -> Text:
         return "validate_name_collection_form"
     
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+    def validate_imprint_firstname(
+        self,
+        slot_value: Any,
+        dispatcher: CollectingDispatcher,
+        tracker: Tracker,
+        domain: DomainDict,
+    ) -> Dict[Text, Any]:
+        """Validate firstname slot and split if it contains spaces"""
         
-        # Get the slot values that were just extracted
-        firstname = tracker.get_slot("imprint_firstname")
-        surname = tracker.get_slot("imprint_surname")
-        
-        events = []
-        
-        # If firstname contains spaces, split it
-        if firstname and " " in firstname:
-            parts = firstname.split(None, 1)  # Split on first whitespace only
+        if slot_value and " " in slot_value:
+            parts = slot_value.split(None, 1)  # Split on first whitespace only
             new_firstname = parts[0].capitalize()
             new_surname = parts[1].capitalize() if len(parts) > 1 else ""
             
-            logger.info(f"Splitting firstname '{firstname}' into '{new_firstname}' and '{new_surname}'")
+            logger.info(f"Splitting firstname '{slot_value}' into '{new_firstname}' and '{new_surname}'")
             
-            events.append(SlotSet("imprint_firstname", new_firstname))
-            
-            # If we don't have a surname yet, use the split portion
-            if not surname and new_surname:
-                events.append(SlotSet("imprint_surname", new_surname))
+            # Return both slots if we extracted a surname from firstname
+            current_surname = tracker.get_slot("imprint_surname")
+            if not current_surname and new_surname:
+                return {
+                    "imprint_firstname": new_firstname,
+                    "imprint_surname": new_surname
+                }
+            else:
+                return {"imprint_firstname": new_firstname}
         
-        # If surname contains spaces, just capitalize it properly
-        if surname and " " in surname:
+        # If no spaces, just capitalize properly
+        if slot_value:
+            return {"imprint_firstname": slot_value.capitalize()}
+        
+        return {"imprint_firstname": slot_value}
+    
+    def validate_imprint_surname(
+        self,
+        slot_value: Any,
+        dispatcher: CollectingDispatcher,
+        tracker: Tracker,
+        domain: DomainDict,
+    ) -> Dict[Text, Any]:
+        """Validate surname slot and capitalize if it contains spaces"""
+        
+        if slot_value and " " in slot_value:
             # Keep multi-part surnames together (e.g., "Mosier Warren")
-            capitalized_surname = " ".join(word.capitalize() for word in surname.split())
-            logger.info(f"Capitalizing surname '{surname}' to '{capitalized_surname}'")
-            events.append(SlotSet("imprint_surname", capitalized_surname))
+            capitalized_surname = " ".join(word.capitalize() for word in slot_value.split())
+            logger.info(f"Capitalizing surname '{slot_value}' to '{capitalized_surname}'")
+            return {"imprint_surname": capitalized_surname}
         
-        return events
+        # If no spaces, just capitalize properly
+        if slot_value:
+            return {"imprint_surname": slot_value.capitalize()}
+        
+        return {"imprint_surname": slot_value}
