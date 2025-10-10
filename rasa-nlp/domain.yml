@@ -210,6 +210,9 @@ responses:
   utter_pleasure_meet_again:
   - text: "It's a pleasure to meet you again {firstname}."
 
+  utter_pleasure_meet:
+  - text: "It's a pleasure to meet you {imprint_firstname}."
+
   utter_ask_recite_prompt:
   - text: "In order to better serve you, can I ask you to recite a prompt for me?"
 
@@ -225,7 +228,7 @@ responses:
 
 actions:
   - action_log_slots
-  - action_tell_time
+  - action_set_time_of_day
   - action_do_nothing
   - action_set_part_of_day
   - action_query_userbase
@@ -237,6 +240,7 @@ actions:
   - action_confirm_full_name
   - action_handle_spelling_confirmation
   - action_set_imprint_name
+  - validate_name_collection_form
 
 session_config:
   session_expiration_time: 60

@@ -41,20 +41,12 @@ rules:
 # After form completes - confirm the full name
 - rule: Confirm full name after form completion
   condition:
-  - active_loop: null
+  - active_loop: name_collection_form
   steps:
   - action: name_collection_form
+  - active_loop: null
   - action: action_confirm_full_name
   - action: utter_ask_confirm_full_name
-
-#- rule: Submit name collection form and start confirmation
-#  condition:
-#  - active_loop: name_collection_form
-#  steps:
-#  - action: name_collection_form
-#  - active_loop: null
-#  - action: action_confirm_full_name
-#  - action: utter_ask_confirm_full_name
 
 # Handle user's response to full name confirmation
 - rule: Handle name confirmation - affirm or deny
@@ -86,7 +78,15 @@ rules:
   steps:
   - intent: spell_name
   - action: action_process_spelling
-  - action: utter_confirm_firstname_spelling
+
+# Process surname spelling
+- rule: Process surname spelling
+  condition:
+  - slot_was_set:
+    - spelling_stage: spelling_last
+  steps:
+  - intent: spell_name
+  - action: action_process_spelling
 
 # Handle confirmation of firstname spelling
 - rule: Confirm firstname spelling - affirm or deny
@@ -98,16 +98,6 @@ rules:
     - intent: affirm
     - intent: deny
   - action: action_handle_spelling_confirmation
-
-# Process surname spelling
-- rule: Process surname spelling
-  condition:
-  - slot_was_set:
-    - spelling_stage: spelling_last
-  steps:
-  - intent: spell_name
-  - action: action_process_spelling
-  - action: utter_confirm_surname_spelling
 
 # Handle confirmation of surname spelling
 - rule: Confirm surname spelling - affirm or deny

@@ -301,12 +301,16 @@ class ActionProcessSpelling(Action):
         logger.info(f"Converted spelling '{text}' to name '{processed_name}'")
         
         if spelling_stage == "spelling_first":
+            #dispatcher.utter_message(response="utter_confirm_firstname_spelling")
+            dispatcher.utter_message(text=f"{processed_name}, spelled {formatted_spelling}. Did I get that right?")
             return [
                 SlotSet("imprint_firstname", processed_name),
                 SlotSet("firstname_spelled", formatted_spelling),
                 SlotSet("spelling_stage", "confirming_first")
             ]
         elif spelling_stage == "spelling_last":
+            #dispatcher.utter_message(response="utter_confirm_surname_spelling")
+            dispatcher.utter_message(text=f"{processed_name}, spelled {formatted_spelling}. Did I get that right?")
             return [
                 SlotSet("imprint_surname", processed_name),
                 SlotSet("surname_spelled", formatted_spelling),
@@ -361,6 +365,7 @@ class ActionHandleSpellingConfirmation(Action):
         if spelling_stage == "confirming_both":
             if intent == "affirm":
                 # Both names confirmed, ask about spelling details
+                dispatcher.utter_message(response="utter_great")
                 dispatcher.utter_message(response="utter_ask_confirm_spelling")
                 return [SlotSet("spelling_stage", "confirming_spelling")]
             else:
@@ -372,7 +377,9 @@ class ActionHandleSpellingConfirmation(Action):
         elif spelling_stage == "confirming_spelling":
             if intent == "affirm":
                 # Spelling confirmed, we're done!
-                dispatcher.utter_message(response="utter_name_complete")
+                #dispatcher.utter_message(response="utter_name_complete")
+                dispatcher.utter_message(response="utter_great")
+                dispatcher.utter_message(response="utter_pleasure_meet")
                 return [
                     SlotSet("spelling_stage", "complete"),
                     SlotSet("name_complete", True)
@@ -385,6 +392,7 @@ class ActionHandleSpellingConfirmation(Action):
         elif spelling_stage == "confirming_first":
             if intent == "affirm":
                 # First name spelling confirmed, move to surname
+                dispatcher.utter_message(response="utter_great")
                 dispatcher.utter_message(response="utter_ask_spell_surname")
                 return [SlotSet("spelling_stage", "spelling_last")]
             else:
@@ -396,7 +404,9 @@ class ActionHandleSpellingConfirmation(Action):
         elif spelling_stage == "confirming_last":
             if intent == "affirm":
                 # Last name spelling confirmed, complete!
-                dispatcher.utter_message(response="utter_name_complete")
+                #dispatcher.utter_message(response="utter_name_complete")
+                dispatcher.utter_message(response="utter_great")
+                dispatcher.utter_message(response="utter_pleasure_meet")
                 return [
                     SlotSet("spelling_stage", "complete"),
                     SlotSet("name_complete", True)
@@ -430,9 +440,8 @@ class ActionSetImprintName(Action):
             logger.warning(f"Cannot set imprint_name - missing firstname or surname")
             return []
         
-class validate_name_collection_form(Action):
+class ValidateNameCollectionForm(Action):
     """Validate and split names if they contain spaces"""
-    # TODO combine this logic into ActionConfirmFullName?
     
     def name(self) -> Text:
         return "validate_name_collection_form"
