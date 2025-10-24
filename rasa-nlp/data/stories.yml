@@ -35,6 +35,7 @@ stories:
 - story: enrollment triggered - ask name after affirm or deny
   steps:
   - intent: trigger_enrollment
+  - action: action_trigger_enrollment
   - action: utter_ask_familar
   - or:
     - intent: affirm  # Path 1: User says yes
@@ -44,7 +45,11 @@ stories:
 - story: enrollment triggered - user provides name immediately
   steps:
   - intent: trigger_enrollment
+  - action: action_trigger_enrollment
   - action: utter_ask_familar
-  - intent: provide_name  # User says "Yes, I'm John Smith"
-  - action: name_collection_form  # Skip asking, go straight to form
-  - active_loop: name_collection_form
+  - or:
+    - intent: provide_full_name
+    - intent: provide_first_name
+  - action: action_set_name_slots
+  - action: action_handle_name_input  # Router will detect name was solicited
+

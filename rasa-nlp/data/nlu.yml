@@ -115,7 +115,7 @@ nlu:
     - no thanks
     - /deny_exact
 
-- intent: provide_name
+- intent: provide_full_name
   examples: |
     - my name is [John](firstname) [Smith](surname)
     - I'm [Jane](firstname) [Doe](surname)
@@ -125,13 +125,6 @@ nlu:
     - I am [Sarah](firstname) [Chen](surname)
     - [David](firstname) [Martinez](surname) is my name
     - my full name is [Emma](firstname) [Taylor](surname)
-    - my name is [John](firstname)
-    - I'm [Jane](firstname)
-    - it's [Michael](firstname)
-    - [Alice](firstname)
-    - call me [Bob](firstname)
-    - I am [Sarah](firstname)
-    - [Courtney](firstname) [Mosier Warren](surname)
     - [joseph](firstname) [moore](surname)
     - [emma](firstname) [taylor](surname)
     - [evelyn](firstname) [white](surname)
@@ -180,6 +173,86 @@ nlu:
     - my name is [john](firstname) [smith](surname)
     - I'm [jane](firstname) [doe](surname)
     - [alice](firstname) [johnson](surname)
+    - [Seamus](firstname) [O'Brien](surname)
+    - [Conor](firstname) [O'Connell](surname)
+    - [Aidan](firstname) [O'Neill](surname)
+    - [Ciara](firstname) [O'Connor](surname)
+    - [Brendan](firstname) [O'Malley](surname)
+    - [Patrick](firstname) [O'Donnell](surname)
+    - [Maureen](firstname) [O'Sullivan](surname)
+    - [Ronan](firstname) [O'Rourke](surname)
+    - [Fiona](firstname) [O'Hara](surname)
+    - [Declan](firstname) [O'Shea](surname)
+    - [Marco](firstname) [D'Angelo](surname)
+    - [Cillian](firstname) [D'Arcy](surname)
+    - [Alasdair](firstname) [Mc'Intyre](surname)
+    - [Hugh](firstname) [Mc'Gowan](surname)
+    - [Louis](firstname) [L'Heureux](surname)
+    - [Ethan](firstname) [Smith-Jones](surname)
+    - [Ava](firstname) [Johnson-Miller](surname)
+    - [Noah](firstname) [Williams-Davis](surname)
+    - [Olivia](firstname) [Brown-Wilson](surname)
+    - [Liam](firstname) [Jones-Taylor](surname)
+    - [Emma](firstname) [Miller-Anderson](surname)
+    - [Oliver](firstname) [Davis-Roberts](surname)
+    - [Charlotte](firstname) [Wilson-Clark](surname)
+    - [Henry](firstname) [Taylor-Martin](surname)
+    - [Sophia](firstname) [Brown-Walker](surname)
+    - [Pablo](firstname) [Ruiz Picasso](surname)
+    - [Federico](firstname) [García Lorca](surname)
+    - [David](firstname) [Lloyd George](surname)
+    - [Helena](firstname) [Bonham Carter](surname)
+    - [José](firstname) [Rodríguez Zapatero](surname)
+    - [Manuel](firstname) [Pérez Quiñones](surname)
+    - [Laura](firstname) [Sánchez Vidal](surname)
+    - [Ricardo](firstname) [Martínez Rivera](surname)
+    - [Kristin](firstname) [Scott Thomas](surname)
+    - [Robert](firstname) [Hanbury Brown](surname)
+
+- intent: provide_first_name
+  examples: |
+    - my name is [John](firstname)
+    - I'm [Jane](firstname)
+    - it's [Michael](firstname)
+    - [Alice](firstname)
+    - call me [Bob](firstname)
+    - I am [Sarah](firstname)
+    - my name is [david](firstname)
+    - i'm [linda](firstname)
+    - it's [peter](firstname)
+    - [susan](firstname)
+    - call me [mark](firstname)
+    - i am [tina](firstname)
+    - [Liam](firstname)
+    - [Olivia](firstname)
+    - [Noah](firstname)
+    - [Emma](firstname)
+    - [Oliver](firstname)
+    - [Ava](firstname)
+    - [Elijah](firstname)
+    - [Charlotte](firstname)
+    - [William](firstname)
+    - [Sophia](firstname)
+    - [James](firstname)
+    - [Amelia](firstname)
+    - [Benjamin](firstname)
+    - [Isabella](firstname)
+    - [Lucas](firstname)
+    - [Mia](firstname)
+    - [Henry](firstname)
+    - [Harper](firstname)
+    - [Alexander](firstname)
+    - [Evelyn](firstname)
+    - [ava](firstname)
+    - [lily](firstname)
+    - [henry](firstname)
+    - [levi](firstname)
+    - [luna](firstname)
+    - [violet](firstname)
+    - [ezra](firstname)
+    - [daniel](firstname)
+    - [harper](firstname)
+    - [michael](firstname)
 
 - intent: trigger_enrollment
   examples: |
@@ -223,6 +296,7 @@ nlu:
     - J-O-H-N
     - S-M-I-T-H
     - M-A-R-Y hyphen K-A-T-E
+    - M-A-R-Y dash K-A-T-E
     - E-M-M-A
     - W-I-L-S-O-N
     - C-H-E-N
@@ -237,6 +311,25 @@ nlu:
     - N-A-T-E
     - W-A-R-R-E-N
     - C-O-U-R-T-N-E-Y
+    - N A T H A N A E L
+    - J O H N
+    - S M I T H
+    - M A R Y hyphen K A T E
+    - M A R Y dash K A T E
+    - E M M A
+    - W I L S O N
+    - C H E N
+    - O apostrophe B R I E N
+    - D A V I D
+    - A L I C E
+    - J A N E
+    - T A Y L O R
+    - M I C H A E L
+    - S A R A H
+    - B O B
+    - N A T E
+    - W A R R E N
+    - C O U R T N E Y
 
 - lookup: firstname
   examples: |
