@@ -1,0 +1,24 @@
+I am working on a rasa chatbot. In my current flow, when a user provides their name (intent provide_full_name or intent provide_first_name) rasa automatically triggers name_collection_form and from there the full enrollment process to fill the slots imprint_firstname and imprint_surname.
+Currently anytime a user provides any name it will trigger the enrollment process - it is possible the user just mentions somebody else's name and this falsely triggers enrollment
+I want to refine this logic a bit based upon four conditions:
+condition 1: 'name solicited' - this is true if the immediate previous rasa utterance explicitly or implicitly asked the user their name. Examples of such responses include utter_tell_name or utter_ask_familiar or utter_ask_full_name
+condition 2: 'enrollment active' is true if slot 'enrollment_active' is True
+condition 3: 'exact name pattern match' is true only if the user utterance exactly matches the regex pattern "my name is [firname]" or "my name is [firstname] [surname]"
+condition 4: 'name matches ecapa_name' is true if the user-provided name is an exact match of within reasonable variance of the already identified ecapa_name. Ideally this would process the whole user utterance and compare it to ecapa_firstname, ecapa_surname, and ecapa_name regardless of whether the firstname and surname entities were successfully extracted from the user utterance, e.g. even if nlu pattern matching fails if ecapa_firstname and ecapa_surname exist in the user utterance or a minor spelling variation of both (e.g. 1-2 leters off) then this is true
+
+
+if (intent: provide_full_name or intent: provide_first_name):
+    if 'name matches ecapa_name':
+       utter_pleasure_meet_again
+    elif 'name solicited':
+        begin enrollment process
+    elif 'enrollment_active' and 'exact name pattern match':
+        begin enrollment process
+
+(else rule does not trigger enrollment though it may trigger another action depending on later stories/rules)
+
+Would you recommend I track 'name solicited' with a slot and manually set it whenever one of these three intents is called and then immediately unset it once provide_full_name or provide_first_name is triggered?
+Will I need an action for 'name matches ecapa name'?
+Will I need an action for 'exact name pattern match' or would I make a new intent?
+
+How should I handle this?

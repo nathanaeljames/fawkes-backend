@@ -32,11 +32,22 @@ rules:
   - action: action_log_slots
   - action: utter_tell_name
 
-- rule: Activate name collection on provide_name
+- rule: Route name input through decision logic
   steps:
-  - intent: provide_name
-  - action: name_collection_form
-  - active_loop: name_collection_form
+  - or:
+    - intent: provide_full_name
+    - intent: provide_first_name
+  - action: action_set_name_slots
+  - action: action_handle_name_input
+
+#- rule: Activate name collection when enrollment should proceed
+#  condition:
+#  - slot_was_set: # This broke, need slot condition AND explicit user trigger
+#    - imprint_name_provided: true
+#  steps:
+#  - action: action_reset_name_provided
+#  - action: name_collection_form
+#  - active_loop: name_collection_form
 
 # After form completes - confirm the full name
 - rule: Confirm full name after form completion

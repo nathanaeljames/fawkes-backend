@@ -8,7 +8,6 @@ intents:
   - nlu_fallback
   - affirm
   - deny
-  - provide_name
   - provide_first_name
   - provide_full_name
   - spell_name
@@ -22,19 +21,19 @@ entities:
   - surname
 
 slots:
-  speaker_name:
+  ecapa_name:
     type: text
     initial_value: null
     influence_conversation: false
     mappings:
       - type: custom
-  firstname:
+  ecapa_firstname:
     type: text
     initial_value: null
     influence_conversation: false
     mappings:
       - type: custom
-  surname:
+  ecapa_surname:
     type: text
     initial_value: null
     influence_conversation: false
@@ -57,7 +56,7 @@ slots:
     mappings:
       - type: from_entity
         entity: firstname
-        intent: provide_name
+        intent: [provide_full_name, provide_first_name]
       - type: from_text
         conditions:
           - active_loop: name_collection_form
@@ -67,7 +66,7 @@ slots:
     mappings:
       - type: from_entity
         entity: surname
-        intent: provide_name
+        intent: provide_full_name
       - type: from_text
         conditions:
           - active_loop: name_collection_form
@@ -76,12 +75,12 @@ slots:
     type: text
     mappings:
       - type: custom
-  firstname_spelled:
+  imprint_firstname_spelled:
     type: text
     initial_value: null
     mappings:
       - type: custom
-  surname_spelled:
+  imprint_surname_spelled:
     type: text
     initial_value: null
     mappings:
@@ -135,6 +134,12 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
+#  imprint_name_provided:
+#    type: bool
+#    initial_value: false
+#    influence_conversation: false
+#    mappings:
+#      - type: custom
 
 forms:
   name_collection_form:
@@ -153,17 +158,17 @@ responses:
   - text: "My name is {server_name}. What is your name?" # Fallback response (firstname is null)
     condition:
     - type: slot
-      name: firstname
+      name: ecapa_firstname
       value: null # FIX 2: Swap order, check if slot IS null
-  - text: "My name is {server_name}. How can I help you {firstname}?" # Personalized response (firstname is NOT null)
+  - text: "My name is {server_name}. How can I help you {ecapa_firstname}?" # Personalized response (ecapa_firstname is NOT null)
 
   utter_greet_personalized:
-  - text: "Good {part_of_day}! How can I help you?" # Fallback response (firstname is null)
+  - text: "Good {part_of_day}! How can I help you?" # Fallback response (ecapa_firstname is null)
     condition:
     - type: slot
-      name: firstname
+      name: ecapa_firstname
       value: null # FIX 2: Swap order, check if slot IS null
-  - text: "Good {part_of_day} {firstname}! How can I help you?" # Personalized response (firstname is NOT null)
+  - text: "Good {part_of_day} {ecapa_firstname}! How can I help you?" # Personalized response (ecapa_firstname is NOT null)
 
   utter_ask_familar:
   - text: "I don't recognize your voice. Have I met you before?"
@@ -190,10 +195,10 @@ responses:
     - text: "Can you spell your last name letter-by-letter?"
   
   utter_confirm_firstname_spelling:
-    - text: "{imprint_firstname}, spelled {firstname_spelled}. Did I get that right?"
+    - text: "{imprint_firstname}, spelled {imprint_firstname_spelled}. Did I get that right?"
   
   utter_confirm_surname_spelling:
-    - text: "{imprint_surname}, spelled {surname_spelled}. Did I get that right?"
+    - text: "{imprint_surname}, spelled {imprint_surname_spelled}. Did I get that right?"
   
   utter_great:
     - text: "Great!"
@@ -208,7 +213,7 @@ responses:
   - text: "The time is {time_of_day}"
 
   utter_pleasure_meet_again:
-  - text: "It's a pleasure to meet you again {firstname}."
+  - text: "It's a pleasure to meet you again {ecapa_firstname}."
 
   utter_pleasure_meet:
   - text: "It's a pleasure to meet you {imprint_firstname}."
@@ -241,6 +246,8 @@ actions:
   - action_handle_spelling_confirmation
   - action_set_imprint_name
   - validate_name_collection_form
+  - action_handle_name_input
+  - action_reset_name_provided
 
 session_config:
   session_expiration_time: 60

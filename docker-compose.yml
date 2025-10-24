@@ -61,7 +61,7 @@ services:
       - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
       - /tmp:size=2g
     working_dir: /app
-    command: ["run", "--enable-api", "--cors", "*"]
+    command: ["run", "--enable-api", "--cors", "*", "--debug"]
     networks:
       - fawkes-network
     restart: unless-stopped

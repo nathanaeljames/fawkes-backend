@@ -42,7 +42,7 @@ Basic Python backend for Fawkes chatbot
 * NOTE: Re Rasa
     - Use command `docker-compose up -d --force-recreate --no-deps --build rasa-nlp` to rebuild only one docker instance
     - Use command `docker compose exec rasa-nlp rasa train --force --debug` to retrain rasa model
-    - If retraining rasa run `docker compose stop rasa-nlp` and `docker compose start rasa-nlp` to reload environment
+    - If retraining rasa run `docker compose down` and `docker compose up -d` to reload environment
     - Use `docker compose exec rasa-nlp rasa shell --port 5007 --debug` to run testing shell
 
 NOTES:
