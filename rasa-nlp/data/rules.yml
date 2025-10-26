@@ -129,6 +129,33 @@ rules:
   steps:
   - action: action_set_imprint_name
 
+- rule: Trigger enrollment and ask if familiar
+  steps:
+  - intent: trigger_enrollment
+  - action: action_trigger_enrollment
+  - action: utter_ask_familar
+
+- rule: After enrollment trigger - user affirms or denies familiarity
+  condition:
+  - slot_was_set:
+    - enrollment_active: true
+  steps:
+  - or:
+    - intent: affirm
+    - intent: deny
+  - action: utter_ask_full_name
+
+#- rule: After enrollment trigger - user provides name immediately
+#  condition:
+#  - slot_was_set:
+#    - enrollment_active: true
+#  steps:
+#  - or:
+#    - intent: provide_full_name
+#    - intent: provide_first_name
+#  - action: action_set_name_slots
+#  - action: action_handle_name_input
+
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:
   - intent: nlu_fallback

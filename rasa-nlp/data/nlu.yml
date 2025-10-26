@@ -115,8 +115,14 @@ nlu:
     - no thanks
     - /deny_exact
 
+- regex: provide_full_name_pattern
+  examples: |
+    - (?i)(my name is|i'm|i am|it's|call me|this is) [a-z]+ [a-z]+
+    - (?i)(my name is|i'm|i am) \w+ \w+
+
 - intent: provide_full_name
   examples: |
+    - /provide_full_name_pattern
     - my name is [John](firstname) [Smith](surname)
     - I'm [Jane](firstname) [Doe](surname)
     - it's [Michael](firstname) [O'Brien](surname)
@@ -209,8 +215,14 @@ nlu:
     - [Kristin](firstname) [Scott Thomas](surname)
     - [Robert](firstname) [Hanbury Brown](surname)
 
+- regex: provide_first_name_pattern
+  examples: |
+    - (?i)(my name is|i'm|i am|it's|call me|this is) [a-z]+$
+    - (?i)(my name is|i'm|i am) \w+$
+
 - intent: provide_first_name
   examples: |
+    - /provide_first_name_pattern
     - my name is [John](firstname)
     - I'm [Jane](firstname)
     - it's [Michael](firstname)
@@ -259,8 +271,7 @@ nlu:
     - SYSTEM_TRIGGER_ENROLLMENT
     - enrollment system trigger
     - internal enrollment activation
-    # This intent is primarily triggered programmatically, 
-    # but needs examples for training
+    # This intent is triggered programmatically, but still needs examples for training
 
 - intent: correct_spelling
   examples: |
