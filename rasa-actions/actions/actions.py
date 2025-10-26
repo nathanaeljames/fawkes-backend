@@ -56,26 +56,40 @@ class ActionSetNameSlots(Action):
         
         # Get speaker from metadata
         metadata = tracker.latest_message.get("metadata", {})
-        ecapa_name = metadata.get("speaker_name")
+        speaker_name_from_metadata = metadata.get("speaker_name")
 
         EXCLUDED_SPEAKERS = {"unknown_speaker", "unknown speaker", "unregistered"}
         
-        # Initialize slots
-        ecapa_firstname = None
-        ecapa_surname = None
-        
-        # Set ecapa_name and extract firstname/surname if valid
-        if ecapa_name and ecapa_name not in EXCLUDED_SPEAKERS:
-            parts = ecapa_name.split("_", 1)  # Split on first underscore only
-            ecapa_firstname = parts[0].capitalize()
-            if len(parts) > 1:
-                ecapa_surname = parts[1].capitalize()
-        
-        return [
-            SlotSet("ecapa_name", ecapa_name),
-            SlotSet("ecapa_firstname", ecapa_firstname),
-            SlotSet("ecapa_surname", ecapa_surname)
-        ]
+        # Only update slots if we have new metadata
+        # Otherwise, preserve existing slot values
+        if speaker_name_from_metadata is not None:
+            ecapa_name = speaker_name_from_metadata
+            ecapa_firstname = None
+            ecapa_surname = None
+            
+            # Set ecapa_name and extract firstname/surname if valid
+            if ecapa_name and ecapa_name not in EXCLUDED_SPEAKERS:
+                parts = ecapa_name.split("_", 1)  # Split on first underscore only
+                ecapa_firstname = parts[0].capitalize()
+                if len(parts) > 1:
+                    ecapa_surname = parts[1].capitalize()
+            
+            logger.info(f"ActionSetNameSlots - Full metadata: {metadata}")
+            logger.info(f"ActionSetNameSlots - ecapa_name from metadata: '{ecapa_name}'")
+            if ecapa_firstname:
+                logger.info(f"ActionSetNameSlots - Extracted firstname: '{ecapa_firstname}', surname: '{ecapa_surname}'")
+            else:
+                logger.info(f"ActionSetNameSlots - ecapa_name excluded or None: '{ecapa_name}'")
+            
+            return [
+                SlotSet("ecapa_name", ecapa_name),
+                SlotSet("ecapa_firstname", ecapa_firstname),
+                SlotSet("ecapa_surname", ecapa_surname)
+            ]
+        else:
+            # No metadata - preserve existing slot values by returning empty list
+            logger.info(f"ActionSetNameSlots - No metadata, preserving existing ecapa slots")
+            return []
 
 class ActionSetTimeOfDay(Action):
 

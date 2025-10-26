@@ -32,24 +32,24 @@ stories:
   - action: action_log_slots
   - action: utter_greet_personalized
 
-- story: enrollment triggered - ask name after affirm or deny
-  steps:
-  - intent: trigger_enrollment
-  - action: action_trigger_enrollment
-  - action: utter_ask_familar
-  - or:
-    - intent: affirm  # Path 1: User says yes
-    - intent: deny   # Path 2: User says no
-  - action: utter_ask_full_name # The common action after either path
+#- story: enrollment triggered - ask name after affirm or deny
+#  steps:
+#  - intent: trigger_enrollment
+#  - action: action_trigger_enrollment
+#  - action: utter_ask_familar
+#  - or:
+#    - intent: affirm  # Path 1: User says yes
+#    - intent: deny   # Path 2: User says no
+#  - action: utter_ask_full_name # The common action after either path
 
-- story: enrollment triggered - user provides name immediately
-  steps:
-  - intent: trigger_enrollment
-  - action: action_trigger_enrollment
-  - action: utter_ask_familar
-  - or:
-    - intent: provide_full_name
-    - intent: provide_first_name
-  - action: action_set_name_slots
-  - action: action_handle_name_input  # Router will detect name was solicited
+#- story: enrollment triggered - user provides name immediately
+#  steps:
+#  - intent: trigger_enrollment
+#  - action: action_trigger_enrollment
+#  - action: utter_ask_familar
+#  - or:
+#    - intent: provide_full_name
+#    - intent: provide_first_name
+#  - action: action_set_name_slots
+#  - action: action_handle_name_input  # Router will detect name was solicited
 
