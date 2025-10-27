@@ -172,6 +172,7 @@ responses:
 
   utter_ask_familar:
   - text: "I don't recognize your voice. Have I met you before?"
+  - text: "Hello there! Who am I speaking to?"  
 
   utter_ask_full_name:
   - text: "Can I get your first and last name for record's sake?"

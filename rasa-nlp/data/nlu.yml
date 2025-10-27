@@ -266,12 +266,21 @@ nlu:
     - [harper](firstname)
     - [michael](firstname)
 
+#- intent: trigger_enrollment
+#  examples: |
+#    - SYSTEM_TRIGGER_ENROLLMENT
+#    - enrollment system trigger
+#    - internal enrollment activation
+#    # This intent is triggered programmatically, but still needs examples for training
+
+- regex: trigger_enrollment_exact
+  examples: |
+    - ^SYSTEM_TRIGGER_ENROLLMENT$
+
 - intent: trigger_enrollment
   examples: |
     - SYSTEM_TRIGGER_ENROLLMENT
-    - enrollment system trigger
-    - internal enrollment activation
-    # This intent is triggered programmatically, but still needs examples for training
+    - /trigger_enrollment_exact
 
 - intent: correct_spelling
   examples: |

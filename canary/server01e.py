@@ -1822,19 +1822,25 @@ class RasaClient:
             return None
         
     async def trigger_enrollment(self, client_id: str) -> bool:
-        """Trigger enrollment flow using Rasa's trigger_intent endpoint"""
+        """Trigger enrollment flow by sending a system message"""
         if not self.session:
             print("[Rasa] Error: Session not initialized.")
             return False
         
         try:
-            payload = {"name": "trigger_enrollment", "entities": {}}
+            # Send a message that matches the trigger_enrollment intent
+            payload = {
+                "sender": f"client_{client_id}",
+                "message": "SYSTEM_TRIGGER_ENROLLMENT"  # This matches your NLU training example
+            }
+            
             async with self.session.post(
-                f"{self.rasa_url}/conversations/{client_id}/trigger_intent",
+                f"{self.rasa_url}/webhooks/rest/webhook",
                 json=payload
             ) as response:
                 if response.status == 200:
                     rasa_response = await response.json()
+                    print(f"[Rasa] Enrollment trigger response: {rasa_response}")
                     return await process_rasa_response(client_id, rasa_response)
                 return False
         except Exception as e:
@@ -2695,7 +2701,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     client_queues[client_id]["enrollment_active"] = True
                                     print(f"[ECAPA] Triggering enrollment flow for {client_id}")
                                     if rasa_client:
-                                        await rasa_client.trigger_enrollment(f"client_{client_id}")
+                                        await rasa_client.trigger_enrollment(client_id)
                             # NOTE will need to explicitly set enrollment_active to False upon enrollment completion
 
                             # Reset the buffer and state for the next utterance
