@@ -1662,24 +1662,35 @@ class ECAPASpeakerProcessor:
             speaker_name, uid, confidence, nomatch_data = self.ecapa_matcher.find_best_match_with_nomatch_data(ecapa_embedding)
             # Calculate nomatch score for all extractions
             nomatch_score = self.calculate_nomatch_score(nomatch_data, buffer_duration)
+            #nomatch_score = self.nomatch_lower_threshold # For testing
      
             # cascading from confident nomatch to confident match
             if nomatch_score > self.nomatch_upper_threshold:
                 speaker_result = "unregistered"
+                uid_result = None
                 speaker_confidence = "certain"
             elif nomatch_score > self.nomatch_lower_threshold:
                 speaker_result = "unregistered(?)"
+                uid_result = None
                 speaker_confidence = "uncertain"
             # Determine speaker identification result
             elif confidence < self.UNCERTAIN_THRESHOLD:
                 speaker_result = "unknown speaker"
+                #speaker_result = "unregistered(?)" # (for testing)
+                uid_result = None
                 speaker_confidence = "uncertain"
             elif confidence < self.CERTAIN_THRESHOLD:
                 speaker_result = f"{speaker_name}(?)"
+                uid_result = uid
+                #speaker_result = "unregistered(?)" # (for testing)
+                #uid_result = None # (for testing)
                 speaker_confidence = "uncertain"
                 self.subsequent_nomatch = 0
             elif confidence >= self.CERTAIN_THRESHOLD:
                 speaker_result = f"{speaker_name}"
+                uid_result = uid
+                #speaker_result = "unregistered(?)" # (for testing)
+                #uid_result = None # (for testing)
                 speaker_confidence = "certain"
                 self.subsequent_nomatch = 0
                 # We have a (near)certain match, let's cumulatively enrich the embedding for that user
@@ -1710,7 +1721,7 @@ class ECAPASpeakerProcessor:
                 print(f"[ECAPA] Subsequent reliable nomatch count: {self.subsequent_nomatch}")
                 print(f"[ECAPA] Total reliable nomatch count: {self.total_nomatch}")
             # Initiate enrollment if nomatch score is very reliable
-            if nomatch_score >= self.nomatch_upper_threshold:
+            if reason == "silence" and nomatch_score >= self.nomatch_upper_threshold:
                 print(f"[ECAPA] High nomatch confidence detected - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
                 self.total_nomatch = 0
@@ -1732,8 +1743,7 @@ class ECAPASpeakerProcessor:
                 suggest_enrollment = False
 
             result = {
-                "speaker_name": speaker_name,
-                "uid": uid,
+                "uid_result": uid_result,
                 "confidence": confidence,
                 "speaker_confidence": speaker_confidence,
                 "speaker_result": speaker_result,
@@ -1771,7 +1781,7 @@ class RasaClient:
         if self.session:
             await self.session.close()
     
-    async def send_message(self, message, client_id, speaker_name=None):
+    async def send_message(self, message, client_id, speaker_name=None, speaker_uid=None):
         """
         Send a message to Rasa and get the response.
         
@@ -1792,8 +1802,14 @@ class RasaClient:
                 "message": message
             }
 
-            if speaker_name:
-                payload["metadata"] = {"speaker_name": speaker_name}
+            #if speaker_name:
+            #    payload["metadata"] = {"speaker_name": speaker_name}
+            if speaker_name or speaker_uid:
+                payload["metadata"] = {}
+                if speaker_name:
+                    payload["metadata"]["speaker_name"] = speaker_name
+                if speaker_uid:
+                    payload["metadata"]["speaker_uid"] = speaker_uid
             
             print(f"[Rasa] Sending message: '{message}'")
             #print(f"[Rasa] Speaker name in metadata: '{speaker_name}'")
@@ -1831,7 +1847,7 @@ class RasaClient:
             # Send a message that matches the trigger_enrollment intent
             payload = {
                 "sender": f"client_{client_id}",
-                "message": "SYSTEM_TRIGGER_ENROLLMENT"  # This matches your NLU training example
+                "message": "SYSTEM_TRIGGER_ENROLLMENT"  # Exact match to NLU training example
             }
             
             async with self.session.post(
@@ -1891,18 +1907,20 @@ class EnrollmentAPIHandler:
             if request.table != "speakers":
                 raise HTTPException(status_code=400, detail=f"Unsupported table: {request.table}")
             
+            # Case-insensitive comparison using LOWER()
             if request.surname:
                 result = self.con.execute("""
                     SELECT uid FROM speakers 
-                    WHERE firstname = ? AND surname = ?
+                    WHERE LOWER(firstname) = LOWER(?) AND LOWER(surname) = LOWER(?)
                 """, (request.firstname, request.surname)).fetchone()
             else:
                 result = self.con.execute("""
                     SELECT uid FROM speakers 
-                    WHERE firstname = ? AND surname IS NULL
+                    WHERE LOWER(firstname) = LOWER(?) AND surname IS NULL
                 """, (request.firstname,)).fetchone()
             
             uid = result[0] if result else None
+            print(f"[Enrollment API] Query result for {request.firstname} {request.surname}: UID={uid}")
             return EnrollmentAPIModels.SpeakerQueryResponse(uid=uid, success=True)
         
         except Exception as e:
@@ -1953,6 +1971,10 @@ class EnrollmentAPIHandler:
         try:
             client_id = request.client_id
             status = request.status
+
+            # Strip "client_" prefix if present to match client_queues key format
+            if client_id.startswith("client_"):
+                client_id = client_id[7:]  # Remove "client_" prefix
             
             if client_id not in client_queues:
                 return EnrollmentAPIModels.EnrollmentStatusResponse(
@@ -2046,7 +2068,7 @@ async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
     
     return processed_any
 
-async def handle_final_utterance_with_rasa(client_id, final_transcription_text, speaker_name, speaker_confidence, nomatch_score):
+async def handle_final_utterance_with_rasa(client_id, final_transcription_text, speaker_name, speaker_uid, speaker_confidence, nomatch_score):
     """
     Process final utterance through Rasa instead of hardcoded logic.
     
@@ -2073,7 +2095,8 @@ async def handle_final_utterance_with_rasa(client_id, final_transcription_text, 
         rasa_response = await rasa_client.send_message(
             final_transcription_text, 
             client_id=f"client_{client_id}",
-            speaker_name=speaker_name.removesuffix('(?)') if is_reliable_utterance else None
+            speaker_name=speaker_name.removesuffix('(?)') if is_reliable_utterance else None,
+            speaker_uid=speaker_uid
         )
         
         # Process the response
@@ -2656,6 +2679,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                     SPEAKER_CONFIDENCE = final_ecapa_result['speaker_confidence']
                                     nomatch_score = final_ecapa_result['nomatch_score']
                                     confidence = final_ecapa_result['confidence']
+                                    speaker_uid = final_ecapa_result['uid_result']
 
                             # We now have accoustic finality. Perform final offline n-best beam search
                             # Then send to rescorer and P&C to determine linguistic finality
@@ -2694,7 +2718,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 await send_message_to_client(client_id, json_string)
 
                                 # Send final utterance to Rasa for intent identification
-                                await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER, confidence, nomatch_score)
+                                await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER, speaker_uid, confidence, nomatch_score)
 
                             if "suggest_enrollment" in final_ecapa_result and final_ecapa_result["suggest_enrollment"]:
                                 if not client_queues[client_id].get("enrollment_active", False):

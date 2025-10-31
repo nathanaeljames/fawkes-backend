@@ -21,7 +21,14 @@ entities:
   - surname
 
 slots:
+  # ECAPA speaker tracking: name, firstname, surname
   ecapa_name:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  ecapa_uid:
     type: text
     initial_value: null
     influence_conversation: false
@@ -39,18 +46,17 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  #imprint_firstname:
-  #  type: text
-  #  mappings:
-  #    - type: from_entity
-  #      entity: firstname
-  #    - type: custom  # For spelling corrections
-  #imprint_surname:
-  #  type: text
-  #  mappings:
-  #    - type: from_entity
-  #      entity: surname
-  #    - type: custom
+  # Imprint speaker tracking: name, uid, firstname, surname, firstname spelled, surname spelled
+  imprint_name:
+    type: text
+    mappings:
+      - type: custom
+  imprint_uid:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
   imprint_firstname:
     type: text
     mappings:
@@ -71,10 +77,6 @@ slots:
         conditions:
           - active_loop: name_collection_form
             requested_slot: imprint_surname
-  imprint_name:
-    type: text
-    mappings:
-      - type: custom
   imprint_firstname_spelled:
     type: text
     initial_value: null
@@ -85,25 +87,32 @@ slots:
     initial_value: null
     mappings:
       - type: custom
+  # Name collection form/ imprint variables: is name complete, spelling stage, enrollment active, enrollment muted
   name_complete:
     type: bool
     initial_value: false
     influence_conversation: true
     mappings:
       - type: custom
-  spelling_stage:
+  spelling_stage: # Tracks: null, "confirming_both", "spelling_first", "spelling_last", "complete"
     type: text
     initial_value: null
     influence_conversation: true
     mappings:
       - type: custom
-    # Tracks: null, "confirming_both", "spelling_first", "spelling_last", "complete"
-  imprint_uid:
-    type: text
-    initial_value: null
+  enrollment_active:
+    type: bool
+    initial_value: false
     influence_conversation: false
     mappings:
       - type: custom
+  enrollment_muted:
+    type: bool
+    initial_value: false
+    influence_conversation: false
+    mappings:
+      - type: custom
+  # Basic action variables: server name, part of day, time of day
   server_name:
     type: text
     initial_value: "Fawkes"
@@ -122,24 +131,6 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  enrollment_active:
-    type: bool
-    initial_value: false
-    influence_conversation: false
-    mappings:
-      - type: custom
-  enrollment_muted:
-    type: bool
-    initial_value: false
-    influence_conversation: false
-    mappings:
-      - type: custom
-#  imprint_name_provided:
-#    type: bool
-#    initial_value: false
-#    influence_conversation: false
-#    mappings:
-#      - type: custom
 
 forms:
   name_collection_form:
@@ -172,7 +163,8 @@ responses:
 
   utter_ask_familar:
   - text: "I don't recognize your voice. Have I met you before?"
-  - text: "Hello there! Who am I speaking to?"  
+  - text: "Hello there! Who am I speaking to?"
+  - text: "Hello! I don't think we've met. What's your name?"
 
   utter_ask_full_name:
   - text: "Can I get your first and last name for record's sake?"
@@ -215,6 +207,11 @@ responses:
 
   utter_pleasure_meet_again:
   - text: "It's a pleasure to meet you again {ecapa_firstname}."
+    condition:
+    - type: slot
+      name: imprint_firstname
+      value: null
+  - text: "It's a pleasure to meet you again {imprint_firstname}."
 
   utter_pleasure_meet:
   - text: "It's a pleasure to meet you {imprint_firstname}."
@@ -227,6 +224,17 @@ responses:
 
   utter_no_record:
   - text: "I don't seem to have a record for you."
+
+  utter_weak_imprint:
+  - text: "I don't seem to have enough voice data to easily recognize your voice."
+
+  utter_thinking_about:
+  - text: "I'm thinking about your mother." 
+    condition:
+    - type: slot
+      name: ecapa_firstname
+      value: null
+  - text: "I'm thinking about your mother {ecapa_firstname}."
 
   utter_default:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
@@ -245,10 +253,10 @@ actions:
   - action_process_spelling
   - action_confirm_full_name
   - action_handle_spelling_confirmation
-  - action_set_imprint_name
   - validate_name_collection_form
   - action_handle_name_input
-  - action_reset_name_provided
+  - action_handle_enrollment_routing
+  - action_reset_enrollment
 
 session_config:
   session_expiration_time: 60

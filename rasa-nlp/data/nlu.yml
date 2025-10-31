@@ -6,7 +6,6 @@ nlu:
     - (hi|hello|hey|howdy|hiya)(\s+there)?(\s+\w+)?[.!?]*
     - (good\s+(morning|evening|afternoon))[.!?]*
     - (what's\s+up|sup|yo)[.!?]*
-
 - intent: user_greet
   examples: |
     - hey
@@ -27,7 +26,6 @@ nlu:
     - (bye|goodbye|farewell|see\s+you)[.!?]*
     - (good\s+night|take\s+care)[.!?]*
     - (catch\s+you\s+later|until\s+next\s+time)[.!?]*
-
 - intent: user_goodbye
   examples: |
     - cu
@@ -50,7 +48,6 @@ nlu:
   examples: |
     - (what\s+time|tell\s+me\s+the\s+time|current\s+time)[.!?]*
     - (what's\s+the\s+time|time\s+please)[.!?]*
-
 - intent: user_ask_time
   examples: |
     - what time is it
@@ -72,7 +69,6 @@ nlu:
     - (tell me (your|ur) name)[.!?]*
     - (who are you)[.!?]*
     - (what do you go by)[.!?]*
-
 - intent: user_ask_name
   examples: |
     - what's your name
@@ -100,6 +96,26 @@ nlu:
     - sure
     - of course
     - definitely
+    - yes we have
+    - yes you have
+    - yes I have
+    - we have met
+    - we've met before
+    - I think so
+    - I believe so
+    - that's right
+    - that's correct
+    - correct
+    - absolutely
+    - you bet
+    - indeed
+    - affirmative
+    - right
+    - exactly
+    - precisely
+    - for sure
+    - we've met
+    - yes we have met
     - /affirm_exact
 
 - regex: deny_exact
@@ -113,13 +129,28 @@ nlu:
     - not now
     - maybe later
     - no thanks
+    - no you haven't
+    - no I haven't
+    - no we haven't
+    - I don't think so
+    - I haven't met you
+    - we haven't met
+    - haven't met you before
+    - no we haven't met
     - /deny_exact
+
+- intent: user_ask_thinking_about
+  examples: |
+    - what are you thinking about
+    - what's on your mind
+    - what is on your mind
+    - what's up
+    - whatcha thinkin about
 
 - regex: provide_full_name_pattern
   examples: |
-    - (?i)(my name is|i'm|i am|it's|call me|this is) [a-z]+ [a-z]+
-    - (?i)(my name is|i'm|i am) \w+ \w+
-
+    - (?i)(my name is|i'm|i am|it's|call me|this is) [a-z]+(?: [a-z]+)+
+    - (?i)(my name is|i'm|i am) \w+(?: \w+)+
 - intent: provide_full_name
   examples: |
     - /provide_full_name_pattern
@@ -219,7 +250,6 @@ nlu:
   examples: |
     - (?i)(my name is|i'm|i am|it's|call me|this is) [a-z]+$
     - (?i)(my name is|i'm|i am) \w+$
-
 - intent: provide_first_name
   examples: |
     - /provide_first_name_pattern
@@ -276,39 +306,38 @@ nlu:
 - regex: trigger_enrollment_exact
   examples: |
     - ^SYSTEM_TRIGGER_ENROLLMENT$
-
 - intent: trigger_enrollment
   examples: |
     - SYSTEM_TRIGGER_ENROLLMENT
     - /trigger_enrollment_exact
 
-- intent: correct_spelling
-  examples: |
-    - actually you spelled that wrong
-    - yes, but it's spelled wrong
-    - it's spelled wrong
-    - no you spelled it wrong
-    - you got the spelling wrong
-    - that spelling is incorrect
-    - no, the spelling is wrong
-    - that's spelled incorrectly
-    - you messed up the spelling
-    - my name is not spelled like that
-    - the spelling is different
-    - I think you misspelled it
+#- intent: correct_spelling
+#  examples: |
+#    - actually you spelled that wrong
+#    - yes, but it's spelled wrong
+#    - it's spelled wrong
+#    - no you spelled it wrong
+#    - you got the spelling wrong
+#    - that spelling is incorrect
+#    - no, the spelling is wrong
+#    - that's spelled incorrectly
+#    - you messed up the spelling
+#    - my name is not spelled like that
+#    - the spelling is different
+#    - I think you misspelled it
 
-- intent: start_spelling
-  examples: |
-    - I'm going to spell that for you
-    - let me spell that out
-    - I'll spell it
-    - spell it out
-    - it's spelled
-    - Yeah, it's spelled
-    - Yes, it's spelled
-    - Sure, it's spelled
-    - It's actually spelled
-    - Actually its spelled
+#- intent: start_spelling
+#  examples: |
+#    - I'm going to spell that for you
+#    - let me spell that out
+#    - I'll spell it
+#    - spell it out
+#    - it's spelled
+#    - Yeah, it's spelled
+#    - Yes, it's spelled
+#    - Sure, it's spelled
+#    - It's actually spelled
+#    - Actually its spelled
 
 - intent: spell_name
   examples: |

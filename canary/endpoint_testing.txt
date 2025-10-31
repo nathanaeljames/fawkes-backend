@@ -26,10 +26,10 @@ curl -X POST http://localhost:9002/api/enrollment_status \
 
 
 # Test querying for a user with surname
-curl -X POST http://localhost:9001/api/query \
+curl -X POST http://localhost:9002/api/query \
   -H "Content-Type: application/json" \
   -d '{
-    "action": "query_database",
+    "action": "query",
     "table": "speakers",
     "firstname": "nathanael",
     "surname": "warren"
