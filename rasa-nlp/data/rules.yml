@@ -25,6 +25,13 @@ rules:
   - action: action_set_time_of_day
   - action: utter_tell_time
 
+- rule: Tell user what i'm thinking about
+  steps:
+  - intent: user_ask_thinking_about
+  - action: action_set_name_slots
+  - action: action_log_slots
+  - action: utter_thinking_about
+
 - rule: Tell the server name when asked
   steps:
   - intent: user_ask_name
@@ -38,16 +45,8 @@ rules:
     - intent: provide_full_name
     - intent: provide_first_name
   - action: action_set_name_slots
+  - action: action_log_slots
   - action: action_handle_name_input
-
-#- rule: Activate name collection when enrollment should proceed
-#  condition:
-#  - slot_was_set: # This broke, need slot condition AND explicit user trigger
-#    - imprint_name_provided: true
-#  steps:
-#  - action: action_reset_name_provided
-#  - action: name_collection_form
-#  - active_loop: name_collection_form
 
 # After form completes - confirm the full name
 - rule: Confirm full name after form completion
@@ -121,13 +120,34 @@ rules:
     - intent: deny
   - action: action_handle_spelling_confirmation
 
-# After spelling is complete, set the imprint_name
-- rule: Set imprint name after spelling complete
-  condition:
-  - slot_was_set:
-    - spelling_stage: complete
+# After spelling is complete, query the userbase
+#- rule: Query userbase after name collection completes
+#  condition:
+#  - slot_was_set:
+#    - spelling_stage: complete
+#  - slot_was_set:
+#    - name_complete: true
+#  steps:
+#  - action: action_query_userbase
+#  - action: action_handle_enrollment_routing
+
+# Handle user's response to recite prompt - affirm
+- rule: User affirms recite prompt
   steps:
-  - action: action_set_imprint_name
+  #- action: utter_ask_recite_prompt
+  - action: action_handle_enrollment_routing
+  - intent: affirm
+  - action: utter_read_prompt
+  - action: action_start_enrollment_recording
+
+# Handle user's response to recite prompt - deny
+- rule: User denies recite prompt
+  steps:
+  #- action: utter_ask_recite_prompt
+  - action: action_handle_enrollment_routing
+  - intent: deny
+  - action: utter_very_well
+  - action: action_reset_enrollment
 
 - rule: Trigger enrollment and ask if familiar
   steps:

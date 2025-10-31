@@ -1,0 +1,91 @@
+flowchart TD
+    Start([User provides name]) --> HandleNameInput{ActionHandleNameInput}
+    
+    %% ECAPA Match Path
+    HandleNameInput -->|ecapa_match = true| EcapaMatch[utter_pleasure_meet_again]
+    EcapaMatch --> ResetEnrollment1[ActionResetEnrollment]
+    ResetEnrollment1 --> End1([End])
+    
+    %% Begin Enrollment Path
+    HandleNameInput -->|name_solicited OR exact_pattern| StartForm[Start name_collection_form]
+    
+    %% Form Collection
+    StartForm --> FormFirstname[Collect imprint_firstname]
+    FormFirstname --> FormSurname[Collect imprint_surname]
+    FormSurname --> FormComplete[Form Complete]
+    
+    %% Confirm Full Name
+    FormComplete --> ConfirmFullName[ActionConfirmFullName]
+    ConfirmFullName --> AskConfirmFull[utter_ask_confirm_full_name]
+    
+    %% Response to Full Name Confirmation
+    AskConfirmFull --> ConfirmFullResp{User Response}
+    ConfirmFullResp -->|affirm| GreatConfirm1[utter_great]
+    GreatConfirm1 --> AskSpellingConfirm[utter_ask_confirm_spelling]
+    
+    ConfirmFullResp -->|deny| ApologyRetry1[utter_apology_retry]
+    ApologyRetry1 --> AskSpellFirst1[utter_ask_spell_firstname]
+    
+    %% Spelling Confirmation Path
+    AskSpellingConfirm --> SpellingResp{User Response}
+    SpellingResp -->|affirm| GreatSpelling[utter_great]
+    GreatSpelling --> SetComplete[Set spelling_stage complete and name_complete true]
+    
+    SpellingResp -->|deny| AskSpellFirst2[utter_ask_spell_firstname]
+    
+    %% Spelling First Name
+    AskSpellFirst1 --> SpellFirst[User spells firstname]
+    AskSpellFirst2 --> SpellFirst
+    SpellFirst --> ProcessSpellFirst[ActionProcessSpelling]
+    ProcessSpellFirst --> ConfirmFirstSpelling[Confirm firstname spelling]
+    
+    ConfirmFirstSpelling --> ConfirmFirstResp{User Response}
+    ConfirmFirstResp -->|affirm| GreatFirst[utter_great]
+    GreatFirst --> AskSpellLast[utter_ask_spell_surname]
+    
+    ConfirmFirstResp -->|deny| ApologyRetry2[utter_apology_retry]
+    ApologyRetry2 --> AskSpellFirst1
+    
+    %% Spelling Last Name
+    AskSpellLast --> SpellLast[User spells surname]
+    SpellLast --> ProcessSpellLast[ActionProcessSpelling]
+    ProcessSpellLast --> ConfirmLastSpelling[Confirm surname spelling]
+    
+    ConfirmLastSpelling --> ConfirmLastResp{User Response}
+    ConfirmLastResp -->|affirm| GreatLast[utter_great]
+    GreatLast --> SetComplete
+    
+    ConfirmLastResp -->|deny| ApologyRetry3[utter_apology_retry]
+    ApologyRetry3 --> AskSpellLast
+    
+    %% Query Userbase Path
+    SetComplete --> QueryUserbase[ActionQueryUserbase]
+    QueryUserbase --> EnrollmentRouting[ActionHandleEnrollmentRouting]
+    
+    %% Branch based on UID
+    EnrollmentRouting -->|imprint_uid exists| ExistingUser[utter_pleasure_meet_again + utter_weak_imprint + utter_ask_recite_prompt]
+    EnrollmentRouting -->|imprint_uid is null| NewUser[utter_pleasure_meet + utter_no_record + utter_ask_recite_prompt]
+    
+    %% Converge at recite prompt response
+    ExistingUser --> ReciteResp{User Response}
+    NewUser --> ReciteResp
+    
+    %% Handle Recite Prompt Response
+    ReciteResp -->|affirm| ReadPrompt[utter_read_prompt]
+    ReadPrompt --> StartRecording[ActionStartEnrollmentRecording]
+    StartRecording --> End2([End - Recording Started])
+    
+    ReciteResp -->|deny| VeryWell[utter_very_well]
+    VeryWell --> ResetEnrollment2[ActionResetEnrollment]
+    ResetEnrollment2 --> End3([End])
+    
+    %% Dark Mode Styling - optimized for black background
+    classDef actionClass fill:#4a9eff,stroke:#00d4ff,stroke-width:3px,color:#000
+    classDef utterClass fill:#ffd93d,stroke:#ffea00,stroke-width:3px,color:#000
+    classDef decisionClass fill:#c77dff,stroke:#ff6bff,stroke-width:3px,color:#000
+    classDef endClass fill:#ff6b6b,stroke:#ff4757,stroke-width:3px,color:#fff
+    
+    class HandleNameInput,ConfirmFullName,ProcessSpellFirst,ProcessSpellLast,QueryUserbase,EnrollmentRouting,StartRecording,ResetEnrollment1,ResetEnrollment2 actionClass
+    class EcapaMatch,AskConfirmFull,GreatConfirm1,AskSpellingConfirm,GreatSpelling,ApologyRetry1,ApologyRetry2,ApologyRetry3,AskSpellFirst1,AskSpellFirst2,GreatFirst,AskSpellLast,GreatLast,ExistingUser,NewUser,ReadPrompt,VeryWell utterClass
+    class ConfirmFullResp,SpellingResp,ConfirmFirstResp,ConfirmLastResp,ReciteResp decisionClass
+    class End1,End2,End3 endClass

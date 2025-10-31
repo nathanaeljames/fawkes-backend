@@ -3,7 +3,7 @@ from rasa_sdk import Action, Tracker, FormValidationAction
 from rasa_sdk.executor import CollectingDispatcher
 import datetime
 from rasa_sdk.types import DomainDict
-from rasa_sdk.events import SlotSet, Form
+from rasa_sdk.events import SlotSet, Form, FollowupAction
 import logging
 import pytz
 import aiohttp
@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # ==========================================================
 # GLOBAL CONFIGURATION FOR FASTAPI SERVER (server01e.py)
 # NOTE: These values must match the binding configuration in server01e.py
-FASTAPI_HOST = "0.0.0.0"
+#FASTAPI_HOST = "0.0.0.0"
+FASTAPI_HOST = "canary"
 FASTAPI_PORT = 9002
 # ==========================================================
 
@@ -32,11 +33,16 @@ class ActionLogSlots(Action):
         
         # Get current slot values
         ecapa_name = tracker.get_slot("ecapa_name")
-        ecapa_firstname = tracker.get_slot("ecapa_firstname") 
+        ecapa_firstname = tracker.get_slot("ecapa_firstname")
+        ecapa_surname = tracker.get_slot("ecapa_surname")
+        ecapa_uid = tracker.get_slot("ecapa_uid")
         imprint_name = tracker.get_slot("imprint_name")
+        imprint_firstname = tracker.get_slot("imprint_firstname")
+        imprint_surname = tracker.get_slot("imprint_surname")
+        imprint_uid = tracker.get_slot("imprint_uid")
         
         # Log to console with timestamp
-        logger.info(f"SLOT VALUES - ecapa_name: '{ecapa_name}', ecapa_firstname: '{ecapa_firstname}', imprint_name: '{imprint_name}'")
+        logger.info(f"SLOT VALUES - ecapa_name: '{ecapa_name}', ecapa_firstname: '{ecapa_firstname}', ecapa_surname: '{ecapa_surname}', ecapa_uid: '{ecapa_uid}', imprint_name: '{imprint_name}', imprint_firstname: '{imprint_firstname}', imprint_surname: '{imprint_surname}', imprint_uid: '{imprint_uid}'")
         
         # Also log the latest message and sender for context
         latest_message = tracker.latest_message.get("text", "")
@@ -57,13 +63,15 @@ class ActionSetNameSlots(Action):
         # Get speaker from metadata
         metadata = tracker.latest_message.get("metadata", {})
         speaker_name_from_metadata = metadata.get("speaker_name")
+        uid_from_metadata = metadata.get("speaker_uid")
 
         EXCLUDED_SPEAKERS = {"unknown_speaker", "unknown speaker", "unregistered"}
         
         # Only update slots if we have new metadata
         # Otherwise, preserve existing slot values
-        if speaker_name_from_metadata is not None:
+        if speaker_name_from_metadata is not None and uid_from_metadata is not None:
             ecapa_name = speaker_name_from_metadata
+            ecapa_uid = uid_from_metadata
             ecapa_firstname = None
             ecapa_surname = None
             
@@ -84,7 +92,8 @@ class ActionSetNameSlots(Action):
             return [
                 SlotSet("ecapa_name", ecapa_name),
                 SlotSet("ecapa_firstname", ecapa_firstname),
-                SlotSet("ecapa_surname", ecapa_surname)
+                SlotSet("ecapa_surname", ecapa_surname),
+                SlotSet("ecapa_uid", ecapa_uid)
             ]
         else:
             # No metadata - preserve existing slot values by returning empty list
@@ -167,7 +176,7 @@ class ActionHandleNameInput(Action):
         import re
         
         # Pattern matches "my name is [word]" or "my name is [word] [word]"
-        pattern = r"^my name is \w+( \w+)?$"
+        pattern = r"^my name is \w+(?: \w+)+$"
         match = re.match(pattern, text.lower().strip())
         
         if match:
@@ -238,6 +247,7 @@ class ActionHandleNameInput(Action):
         ecapa_firstname = tracker.get_slot("ecapa_firstname")
         ecapa_surname = tracker.get_slot("ecapa_surname")
         ecapa_name = tracker.get_slot("ecapa_name")
+        ecapa_uid = tracker.get_slot("ecapa_uid")
         enrollment_active = tracker.get_slot("enrollment_active")
         
         logger.info(f"Routing name input - intent: {intent}, text: '{user_text}'")
@@ -254,7 +264,15 @@ class ActionHandleNameInput(Action):
         if ecapa_match:
             logger.info("Route: Name matches ecapa_name - greeting existing user")
             dispatcher.utter_message(response="utter_pleasure_meet_again")
-            return []
+            #return []
+            #return [SlotSet("imprint_firstname", ecapa_firstname), SlotSet("imprint_surname", ecapa_surname), SlotSet("imprint_uid", ecapa_uid)]
+            # No need to query the database at this point, reset enrollment active flag (if it is set)
+            return [
+                SlotSet("imprint_firstname", ecapa_firstname), 
+                SlotSet("imprint_surname", ecapa_surname), 
+                SlotSet("imprint_uid", ecapa_uid),
+                FollowupAction("action_reset_enrollment")
+            ]
         
         elif name_solicited:
             logger.info("Route: Name was solicited - beginning enrollment")
@@ -274,19 +292,6 @@ class ActionHandleNameInput(Action):
         else:
             logger.info("Route: No enrollment triggered - user likely mentioned someone else's name")
             return []
-
-class ActionResetNameProvided(Action):
-    """Reset the imprint_name_provided slot after form activation"""
-    
-    def name(self) -> Text:
-        return "action_reset_name_provided"
-    
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        logger.info("Resetting imprint_name_provided slot")
-        return [SlotSet("imprint_name_provided", False)]
 
 class ActionProcessSpelling(Action):
     """Process spelling input in various formats and convert to word"""
@@ -431,6 +436,11 @@ class ActionProcessSpelling(Action):
         text = tracker.latest_message.get("text", "").strip()
         intent = tracker.latest_message.get("intent", {}).get("name")
         spelling_stage = tracker.get_slot("spelling_stage")
+
+        # Reject system trigger patterns
+        if "SYSTEM_TRIGGER_ENROLLMENT" in text.upper():
+            logger.warning(f"Rejecting system trigger pattern in spelling: '{text}'")
+            return []
         
         logger.info(f"Processing spelling input: '{text}' (intent: {intent}) at stage: {spelling_stage}")
         
@@ -527,10 +537,11 @@ class ActionHandleSpellingConfirmation(Action):
                 # Spelling confirmed, we're done!
                 #dispatcher.utter_message(response="utter_name_complete")
                 dispatcher.utter_message(response="utter_great")
-                dispatcher.utter_message(response="utter_pleasure_meet")
+                #dispatcher.utter_message(response="utter_pleasure_meet")
                 return [
                     SlotSet("spelling_stage", "complete"),
-                    SlotSet("name_complete", True)
+                    SlotSet("name_complete", True),
+                    FollowupAction("action_query_userbase") 
                 ]
             else:
                 # Need to correct spelling
@@ -554,10 +565,11 @@ class ActionHandleSpellingConfirmation(Action):
                 # Last name spelling confirmed, complete!
                 #dispatcher.utter_message(response="utter_name_complete")
                 dispatcher.utter_message(response="utter_great")
-                dispatcher.utter_message(response="utter_pleasure_meet")
+                #dispatcher.utter_message(response="utter_pleasure_meet")
                 return [
                     SlotSet("spelling_stage", "complete"),
-                    SlotSet("name_complete", True)
+                    SlotSet("name_complete", True),
+                    FollowupAction("action_query_userbase") 
                 ]
             else:
                 # Last name spelling wrong, ask again
@@ -566,27 +578,6 @@ class ActionHandleSpellingConfirmation(Action):
                 return [SlotSet("spelling_stage", "spelling_last")]
         
         return []
-
-class ActionSetImprintName(Action):
-    """Combine imprint_firstname and imprint_surname into imprint_name for database query"""
-    
-    def name(self) -> Text:
-        return "action_set_imprint_name"
-    
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        firstname = tracker.get_slot("imprint_firstname")
-        surname = tracker.get_slot("imprint_surname")
-        
-        if firstname and surname:
-            imprint_name = f"{firstname}_{surname}"
-            logger.info(f"Set imprint_name: {imprint_name}")
-            return [SlotSet("imprint_name", imprint_name)]
-        else:
-            logger.warning(f"Cannot set imprint_name - missing firstname or surname")
-            return []
         
 class ValidateNameCollectionForm(FormValidationAction):
     """Validate and split names if they contain spaces"""
@@ -602,6 +593,11 @@ class ValidateNameCollectionForm(FormValidationAction):
         domain: DomainDict,
     ) -> Dict[Text, Any]:
         """Validate firstname slot and split if it contains spaces"""
+
+        # Reject system trigger patterns
+        if slot_value and "SYSTEM_TRIGGER_ENROLLMENT" in slot_value.upper():
+            logger.warning(f"Rejecting system trigger pattern in firstname: '{slot_value}'")
+            return {"imprint_firstname": None}
         
         if slot_value and " " in slot_value:
             parts = slot_value.split(None, 1)  # Split on first whitespace only
@@ -634,6 +630,11 @@ class ValidateNameCollectionForm(FormValidationAction):
         domain: DomainDict,
     ) -> Dict[Text, Any]:
         """Validate surname slot and capitalize if it contains spaces"""
+
+        # Reject system trigger patterns
+        if slot_value and "SYSTEM_TRIGGER_ENROLLMENT" in slot_value.upper():
+            logger.warning(f"Rejecting system trigger pattern in firstname: '{slot_value}'")
+            return {"imprint_firstname": None}
         
         if slot_value and " " in slot_value:
             # Keep multi-part surnames together (e.g., "Mosier Warren")
@@ -660,7 +661,15 @@ class ActionQueryUserbase(Action):
         
         if not query_firstname or not query_surname:
             logger.warning(f"Missing name information - firstname: {query_firstname}, surname: {query_surname}")
-            return [SlotSet("imprint_uid", None)]
+            return [
+                SlotSet("imprint_uid", None),
+                FollowupAction("action_handle_enrollment_routing")  # Chain to routing even if no name
+            ]
+        
+        # Convert to lowercase for case-insensitive search
+        query_firstname_lower = query_firstname.lower()
+        query_surname_lower = query_surname.lower()
+        logger.info(f"Querying database for: {query_firstname_lower} {query_surname_lower}")
         
         # Query the FastAPI server to check if speaker exists in database
         fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query"
@@ -687,18 +696,28 @@ class ActionQueryUserbase(Action):
                             imprint_name = f"{query_firstname}_{query_surname}" if query_surname else query_firstname
                             return [
                                 SlotSet("imprint_uid", str(uid)),
-                                SlotSet("imprint_name", imprint_name)
+                                SlotSet("imprint_name", imprint_name),
+                                FollowupAction("action_handle_enrollment_routing")
                             ]
                         else:
                             logger.info(f"No record found for {query_firstname} {query_surname}")
-                            return [SlotSet("imprint_uid", None)]
+                            return [
+                                SlotSet("imprint_uid", None),
+                                FollowupAction("action_handle_enrollment_routing")
+                            ]
                     else:
                         logger.error(f"Server returned status {response.status}")
-                        return [SlotSet("imprint_uid", None)]
+                        return [
+                            SlotSet("imprint_uid", None),
+                            FollowupAction("action_handle_enrollment_routing")
+                        ]
                         
         except Exception as e:
             logger.error(f"Error querying userbase: {e}")
-            return [SlotSet("imprint_uid", None)]
+            return [
+                SlotSet("imprint_uid", None),
+                FollowupAction("action_handle_enrollment_routing")
+            ]
 
 class ActionTriggerEnrollment(Action):
     def name(self) -> Text:
@@ -713,6 +732,33 @@ class ActionTriggerEnrollment(Action):
         
         # Add the slot set
         return [SlotSet("enrollment_active", True)]
+
+class ActionHandleEnrollmentRouting(Action):
+    """Handle routing after userbase query based on whether user was found"""
+    
+    def name(self) -> Text:
+        return "action_handle_enrollment_routing"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        imprint_uid = tracker.get_slot("imprint_uid")
+        
+        if imprint_uid:
+            # User found in database - existing user path
+            logger.info(f"User found in database with UID: {imprint_uid}")
+            dispatcher.utter_message(response="utter_pleasure_meet_again")
+            dispatcher.utter_message(response="utter_weak_imprint")
+            dispatcher.utter_message(response="utter_ask_recite_prompt")
+        else:
+            # User not found - new user path
+            logger.info("User not found in database - new user")
+            dispatcher.utter_message(response="utter_pleasure_meet")
+            dispatcher.utter_message(response="utter_no_record")
+            dispatcher.utter_message(response="utter_ask_recite_prompt")
+        
+        return []
 
 class ActionStartEnrollmentRecording(Action):
     def name(self) -> Text:
@@ -794,4 +840,7 @@ class ActionResetEnrollment(Action):
             logger.error(f"An unexpected error occurred during API call: {e}")
         
         # Always set the slot, even if the API call failed, to ensure Rasa's state is updated
-        return [SlotSet("enrollment_active", False)]
+        return [
+            SlotSet("enrollment_active", False),
+            FollowupAction("action_listen")  # Explicitly tell Rasa to just listen
+        ]
