@@ -77,7 +77,7 @@ class ActionSetNameSlots(Action):
             
             # Set ecapa_name and extract firstname/surname if valid
             if ecapa_name and ecapa_name not in EXCLUDED_SPEAKERS:
-                parts = ecapa_name.split("_", 1)  # Split on first underscore only
+                parts = ecapa_name.split(" ", 1)  # Split on first SPACE only
                 ecapa_firstname = parts[0].capitalize()
                 if len(parts) > 1:
                     ecapa_surname = parts[1].capitalize()
@@ -693,7 +693,7 @@ class ActionQueryUserbase(Action):
                         
                         if uid:
                             logger.info(f"Found speaker {query_firstname} {query_surname} with UID: {uid}")
-                            imprint_name = f"{query_firstname}_{query_surname}" if query_surname else query_firstname
+                            imprint_name = f"{query_firstname} {query_surname}" if query_surname else query_firstname
                             return [
                                 SlotSet("imprint_uid", str(uid)),
                                 SlotSet("imprint_name", imprint_name),
@@ -770,6 +770,8 @@ class ActionStartEnrollmentRecording(Action):
         
         sender_id = tracker.sender_id
         imprint_uid = tracker.get_slot("imprint_uid")
+        imprint_firstname = tracker.get_slot("imprint_firstname")
+        imprint_surname = tracker.get_slot("imprint_surname")
         
         # Trigger recording on server
         fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/record"
@@ -780,7 +782,9 @@ class ActionStartEnrollmentRecording(Action):
                     fastapi_url,
                     json={
                         "action": "record",
-                        "uid": imprint_uid
+                        "uid": imprint_uid,
+                        "imprint_firstname": imprint_firstname,
+                        "imprint_surname": imprint_surname
                     },
                     timeout=5
                 ) as response:

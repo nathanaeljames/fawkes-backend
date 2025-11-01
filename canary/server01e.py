@@ -88,7 +88,8 @@ CONFIG = {
     "default_asr_confidence": "certain",
     "rasa_url": "http://rasa-nlp:5005",  # Docker service name
     "rasa_timeout": 10,  # seconds
-    "enable_rasa": True
+    "enable_rasa": True,
+    "samples_path": "/root/fawkes/audio_samples"
 }
 
 # FastAPI for handling Rasa requests
@@ -590,7 +591,7 @@ class XTTSWrapper:
             firstname, surname, gpt_latent_list, gpt_shape_json, xtts_emb_list, xtts_shape_json = row
             
             # Reconstruct the speaker name
-            speaker_name = f"{firstname}_{surname}" if surname else firstname
+            speaker_name = f"{firstname} {surname}" if surname else firstname
             
             try:
                 import json
@@ -705,7 +706,7 @@ class FastECAPASpeakerMatcher:
                 uid, firstname, surname, ecapa_embedding_list = row
                 
                 # Reconstruct speaker name
-                speaker_name = f"{firstname}_{surname}" if surname else firstname
+                speaker_name = f"{firstname} {surname}" if surname else firstname
                 
                 try:
                     # Convert DuckDB array (Python list) to numpy array
@@ -1337,7 +1338,7 @@ class ECAPASpeakerProcessor:
                 return False
             
             uid_db, firstname, surname, existing_embedding_list, total_duration, sample_count = existing_speaker
-            speaker_name = f"{firstname}_{surname}" if surname else firstname
+            speaker_name = f"{firstname} {surname}" if surname else firstname
             print(f"[ECAPA] Found existing speaker: {speaker_name}")
             
             # 2. Get duration of new audio file
@@ -1456,7 +1457,7 @@ class ECAPASpeakerProcessor:
                 return False
             
             uid_db, firstname, surname, existing_embedding_list, total_duration, sample_count = existing_speaker
-            speaker_name = f"{firstname}_{surname}" if surname else firstname
+            speaker_name = f"{firstname} {surname}" if surname else firstname
             print(f"[ECAPA] Found existing speaker: {speaker_name}")
             
             # 2. Calculate duration from audio buffer
