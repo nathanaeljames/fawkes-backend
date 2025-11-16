@@ -850,13 +850,21 @@ class ActionResetEnrollment(Action):
         sender_id = tracker.sender_id
         fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/enrollment_status"
 
-        logger.info(f"Attempting to reset enrollment for client {sender_id} via FastAPI endpoint: {fastapi_url}")
+        # Determine status based on the triggering intent
+        latest_intent = tracker.latest_message.get('intent', {}).get('name', '')
+        
+        if latest_intent == 'system_enrollment_complete_success':
+            status = 'success'
+        else:
+            status = 'aborted'  # User cancelled or other reason
+
+        logger.info(f"Attempting to reset enrollment for client {sender_id} via FastAPI endpoint: {fastapi_url} with status: {status}")
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     fastapi_url, 
-                    json={"client_id": sender_id, "status": "abandoned"},
+                    json={"client_id": sender_id, "status": status},
                     # Use a short timeout since this is an internal communication
                     timeout=5 
                 ) as response:
