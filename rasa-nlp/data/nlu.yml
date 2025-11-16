@@ -303,6 +303,7 @@ nlu:
 #    - internal enrollment activation
 #    # This intent is triggered programmatically, but still needs examples for training
 
+# Trigger enrollment
 - regex: trigger_enrollment_exact
   examples: |
     - ^SYSTEM_TRIGGER_ENROLLMENT$
@@ -310,6 +311,24 @@ nlu:
   examples: |
     - SYSTEM_TRIGGER_ENROLLMENT
     - /trigger_enrollment_exact
+
+# Enrollment success
+- regex: enrollment_success_exact
+  examples: |
+    - ^SYSTEM_ENROLLMENT_SUCCESS$
+- intent: system_enrollment_complete_success
+  examples: |
+    - SYSTEM_ENROLLMENT_SUCCESS
+    - /enrollment_success_exact
+
+# Enrollment abort
+- regex: enrollment_abort_exact
+  examples: |
+    - ^SYSTEM_ENROLLMENT_ABORT$
+- intent: system_enrollment_complete_aborted
+  examples: |
+    - SYSTEM_ENROLLMENT_ABORT
+    - /enrollment_abort_exact
 
 #- intent: correct_spelling
 #  examples: |
@@ -379,6 +398,8 @@ nlu:
     - N A T E
     - W A R R E N
     - C O U R T N E Y
+    - M-O-S-I-E-R space W-A-R-R-E-N
+    - M O S I E R space W A R R E N
 
 - lookup: firstname
   examples: |

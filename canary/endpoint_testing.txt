@@ -82,3 +82,13 @@ curl -X POST http://crunchatizer:5007/conversations/d503e0a213bf4a8298628b86d8bb
     "name": "ecapa_firstname",
     "value": "Aaron"
   }'
+
+
+curl -X POST http://localhost:9002/api/record_pangram \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender_id": "570a867f-2311-418e-9dc1-80695be68141",
+    "imprint_uid": "1",
+    "imprint_firstname": "Nathanael",
+    "imprint_surname": "Warren"
+  }'

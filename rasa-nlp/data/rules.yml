@@ -176,6 +176,16 @@ rules:
 #  - action: action_set_name_slots
 #  - action: action_handle_name_input
 
+- rule: Reset enrollment flags on success
+  steps:
+    - intent: system_enrollment_complete_success
+    - action: action_reset_enrollment
+
+- rule: Reset enrollment flags on abort
+  steps:
+    - intent: system_enrollment_complete_aborted
+    - action: action_reset_enrollment
+
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:
   - intent: nlu_fallback

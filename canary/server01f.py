@@ -81,7 +81,7 @@ CONFIG = {
     "nemo_decoder_type": 'rnnt',
     "audio_sample_rate": 16000,
     "vad_sample_rate": 16000,
-    "vad_threshold": 0.3, # Increased VAD threshold - COMMON FIX
+    "vad_threshold": 0.3, # Increased VAD threshold
     "silence_duration_for_finality_ms": 500, # ms of silence to trigger finality
     "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/",
     "ecapa_tdnn_model_path": "/root/fawkes/models/ecapa_tdnn_embed/ecapa_tdnn.nemo",
@@ -93,7 +93,15 @@ CONFIG = {
     "rasa_url": "http://rasa-nlp:5005",  # Docker service name
     "rasa_timeout": 10,  # seconds
     "enable_rasa": True,
-    "samples_path": "/root/fawkes/audio_samples"
+    "samples_path": "/root/fawkes/audio_samples",
+    "enrollment_min_match": 0.9,
+    "enrollment_max_off_topic": 3,
+    "enrollment_reminder_interval": 3, # seconds
+    "enrollment_timeout": 18, #seconds
+    "enrollment_abort_mode": "consecutive",  # or "total"
+    "enrollment_max_decreases": 3,
+    "enrollment_fuzzy_word_threshold": 0.85,  # 85% similarity for word matching
+    "enrollment_success_threshold": 0.70  # 70% coverage to pass
 }
 
 # FastAPI for handling Rasa requests
@@ -105,9 +113,11 @@ con = duckdb.connect(CONFIG["duckdb_path"])
 
 def setup_database():
     """
-    Sets up the DuckDB table for storing speaker data.
+    Sets up the DuckDB tables for storing speaker and pangram data.
     This function should be called once at program startup.
     """
+    
+    # Create speakers table
     con.execute("""
         CREATE SEQUENCE IF NOT EXISTS seq_uid START 1;
         CREATE TABLE IF NOT EXISTS speakers (
@@ -121,10 +131,22 @@ def setup_database():
             ecapa_embedding FLOAT[],
             total_duration_sec FLOAT DEFAULT 0.0,
             sample_count INTEGER DEFAULT 0,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            pangrams INTEGER[] DEFAULT []
         );
     """)
     print("DuckDB table 'speakers' is ready.")
+    
+    # Create pangrams table
+    con.execute("""
+        CREATE SEQUENCE IF NOT EXISTS seq_pangram_id START 1;
+        CREATE TABLE IF NOT EXISTS pangrams (
+            id INTEGER PRIMARY KEY DEFAULT nextval('seq_pangram_id'),
+            text VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    print("DuckDB table 'pangrams' is ready.")
 
 # Ensure the database connection is closed on exit
 atexit.register(con.close)
@@ -1878,8 +1900,10 @@ class EnrollmentAPIModels:
         surname: Optional[str] = None
     
     class RecordPangramRequest(BaseModel):
-        action: str
-        uid: Optional[str] = None
+        sender_id: str
+        imprint_uid: Optional[str] = None
+        imprint_firstname: Optional[str] = None
+        imprint_surname: Optional[str] = None
 
     class EnrollmentStatusRequest(BaseModel):
         client_id: str
@@ -1900,8 +1924,16 @@ class EnrollmentAPIModels:
 class EnrollmentAPIHandler:
     """Handles FastAPI endpoints for speaker enrollment workflows"""
     
-    def __init__(self, db_connection):
+    def __init__(self, db_connection, recording_manager):
+        """
+        Initialize the API handler.
+        
+        Args:
+            db_connection: Database connection
+            recording_manager: EnrollmentRecordingManager instance
+        """
         self.con = db_connection
+        self.recording_manager = recording_manager
     
     async def query_speaker(self, request: EnrollmentAPIModels.SpeakerQueryRequest) -> EnrollmentAPIModels.SpeakerQueryResponse:
         """
@@ -1945,24 +1977,23 @@ class EnrollmentAPIHandler:
             Response indicating success/failure and descriptive message
         """
         try:
-            uid = int(request.uid) if request.uid else None
-            print(f"[Enrollment] Starting pangram recording for uid: {uid}")
+            # Strip "client_" prefix if present to match client_queues key format
+            client_id = request.sender_id.replace("client_", "") if request.sender_id.startswith("client_") else request.sender_id
+            uid = int(request.imprint_uid) if request.imprint_uid else None
+            firstname = request.imprint_firstname
+            surname = request.imprint_surname
+            print(f"[Enrollment] Starting pangram recording for {firstname} {surname}, uid: {uid}")
             
-            # TODO: Implement pangram recording logic:
-            # 1. Set flag in client state to indicate recording mode
-            # 2. Send pangram text to client
-            # 3. Capture next N seconds of audio
-            # 4. Process audio with ECAPA/XTTS embedding extraction
-            # 5. Store or update speaker profile in database
-            
-            # Example pangram text:
-            pangram = "The quick brown fox jumps over the lazy dog near the bank of the river"
-            
-            # Placeholder success response
-            success = True
-            message = f"Pangram recording initiated for uid: {uid}" if uid else "Pangram recording initiated for new speaker"
-            
-            return EnrollmentAPIModels.RecordPangramResponse(success=success, message=message)
+            result = await self.recording_manager.start_recording(
+                client_id=client_id,
+                uid=uid,
+                firstname=firstname,
+                surname=surname
+            )
+            return EnrollmentAPIModels.RecordPangramResponse(
+                success=True, 
+                message=f"Recording started: {result.get('pangram_text', '')}"
+            )
         
         except Exception as e:
             print(f"[Enrollment] Error in record_pangram: {e}")
@@ -2003,16 +2034,573 @@ class EnrollmentAPIHandler:
                 message=str(e)
             )
 
-# Initialize handler
-enrollment_api_handler = EnrollmentAPIHandler(con)
+class EnrollmentTextUtils:
+    """
+    Utility functions for text processing during enrollment.
+    All methods are static - no instance state needed.
+    
+    Responsibilities:
+    - Text normalization
+    - Fuzzy matching
+    - On-topic detection
+    - Cancel command detection
+    """
+    
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """
+        Normalize text for comparison.
+        
+        Args:
+            text: Input text
+            
+        Returns:
+            Normalized text (lowercase, no punctuation, collapsed whitespace)
+        """
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
+        text = re.sub(r'\s+', ' ', text)     # Collapse whitespace
+        return text.strip()
+    
+    @staticmethod
+    def calculate_fuzzy_match(spoken_text: str, target_text: str) -> float:
+        """
+        Calculate fuzzy match score between spoken and target text.
+        
+        Args:
+            spoken_text: What the user said
+            target_text: Expected pangram text
+            
+        Returns:
+            Match score between 0.0 and 1.0
+        """
+        spoken_normalized = EnrollmentTextUtils.normalize_text(spoken_text)
+        target_normalized = EnrollmentTextUtils.normalize_text(target_text)
+        
+        matcher = SequenceMatcher(None, spoken_normalized, target_normalized)
+        return matcher.ratio()
+    
+    @staticmethod
+    def is_utterance_on_topic(utterance: str, pangram_text: str, threshold: float = 0.3) -> bool:
+        """
+        Check if utterance contains words from the pangram.
+        
+        Args:
+            utterance: User's utterance
+            pangram_text: Expected pangram text
+            threshold: Minimum overlap ratio (default 30%)
+            
+        Returns:
+            True if at least threshold% of utterance words are in pangram
+        """
+        utterance_normalized = EnrollmentTextUtils.normalize_text(utterance)
+        pangram_normalized = EnrollmentTextUtils.normalize_text(pangram_text)
+        
+        utterance_words = set(utterance_normalized.split())
+        pangram_words = set(pangram_normalized.split())
+        
+        if not utterance_words:
+            return False
+        
+        overlap = utterance_words & pangram_words
+        overlap_ratio = len(overlap) / len(utterance_words)
+        
+        return overlap_ratio >= threshold
+    
+    @staticmethod
+    def is_cancel_command(transcript: str) -> bool:
+        """
+        Check if transcript contains a cancel command.
+        
+        Args:
+            transcript: User's transcript
+            
+        Returns:
+            True if cancel command detected
+        """
+        normalized = transcript.lower().strip()
+        cancel_patterns = [
+            'cancel imprint',
+            'cancel enrollment',
+            'stop recording',
+            'abort imprint',
+            'stop imprint'
+        ]
+        return any(pattern in normalized for pattern in cancel_patterns)
 
+class EnrollmentRecordingManager:
+    """
+    Manages enrollment recording sessions.
+    
+    NO TIMING LOGIC - all timing handled in outer loop.
+    """
+    
+    def __init__(self, db_connection, ecapa_processor):
+        #def __init__(self, db_connection, config: Dict, client_queues: Dict):
+        """
+        Initialize the enrollment recording manager.
+        
+        Args:
+            db_connection: Database connection
+            config: Configuration dict
+            client_queues: Global client_queues dict
+        """
+        self.con = db_connection
+        self.ecapa_processor = ecapa_processor
+        #self.config = config
+        #self.client_queues = client_queues
+        #self.session = aiohttp.ClientSession()
+        self.server_name = CONFIG.get("server_name", "Fawkes")
+        self.min_match_threshold = CONFIG.get('enrollment_min_match', 0.90)
+        self.max_off_topic_utterances = CONFIG.get('enrollment_max_off_topic', 3)
+    
+    # PUBLIC METHODS =========================================================================
+    
+    async def start_recording(
+        self,
+        client_id: str,
+        uid: Optional[int],
+        firstname: Optional[str],
+        surname: Optional[str]
+    ) -> Dict:
+        """
+        Start enrollment recording for a client.
+        
+        Args:
+            client_id: The client's ID
+            uid: Optional speaker UID (for updates)
+            firstname: Optional first name
+            surname: Optional surname
+            
+        Returns:
+            Dict with status and details
+        """
+        if client_id not in client_queues:
+            return {"status": "error", "message": "Client not connected"}
+        
+        # Check if already recording
+        if "enrollment_state" in client_queues[client_id]:
+            if client_queues[client_id]["enrollment_state"].get("recording_active"):
+                return {"status": "error", "message": "Recording already active"}
+        
+        # Select pangram
+        pangram_id, pangram_text = await self._select_pangram(uid)
+        if pangram_id is None:
+            return {"status": "error", "message": "No pangrams available"}
+        
+        # Initialize enrollment state (NO TIMING FIELDS)
+        client_queues[client_id]["enrollment_state"] = {
+            "recording_active": True,
+            "audio_buffer": [],
+            "transcript_buffer": [],
+            "pangram_id": pangram_id,
+            "pangram_text": pangram_text,
+            "uid": uid,
+            "firstname": firstname,
+            "surname": surname,
+            "off_topic_count": 0
+        }
+        
+        print(f"[Enrollment] Recording started for {client_id}")
+        print(f"[Enrollment] Pangram: {pangram_text}")
+
+        # Send initial prompt
+        data_to_send = {
+            "speaker": self.server_name,
+            "speaker_confidence": "certain",
+            "final": "True",
+            "transcript": pangram_text,
+            "asr_confidence": "certain"
+        }
+        await send_message_to_client(client_id, json.dumps(data_to_send))
+        
+        return {
+            "status": "started",
+            "pangram_id": pangram_id,
+            "pangram_text": pangram_text
+        }
+    
+    async def process_utterance(
+        self,
+        client_id: str,
+        utterance_audio: bytes,
+        utterance_transcript: str
+    ) -> Optional[str]:
+        """
+        Process a completed utterance during enrollment recording.
+        
+        Args:
+            client_id: The client's ID
+            utterance_audio: Complete audio for this utterance (bytes)
+            utterance_transcript: Transcription of the utterance
+            
+        Returns:
+            'success', 'aborted', or None if still recording
+        """
+        if client_id not in client_queues:
+            return 'aborted'
+        
+        if "enrollment_state" not in client_queues[client_id]:
+            return None
+        
+        enrollment_state = client_queues[client_id]["enrollment_state"]
+        
+        if not enrollment_state["recording_active"]:
+            return None
+        
+        print(f"[Enrollment] Processing utterance: '{utterance_transcript}'")
+        
+        # Convert audio bytes to numpy array and add to buffer
+        audio_int16 = np.frombuffer(utterance_audio, dtype=np.int16)
+        enrollment_state["audio_buffer"].append(audio_int16)
+        
+        # Check for cancellation
+        if EnrollmentTextUtils.is_cancel_command(utterance_transcript):
+            print(f"[Enrollment] Cancel keyword detected")
+            return await self.abort_recording(client_id, reason="cancel")
+        
+        # Check if transcript is on-topic
+        pangram_text = enrollment_state["pangram_text"]
+        
+        if EnrollmentTextUtils.is_utterance_on_topic(utterance_transcript, pangram_text):
+            # On-topic: add to transcript buffer
+            enrollment_state["transcript_buffer"].append(utterance_transcript)
+            print(f"[Enrollment] On-topic utterance added")
+            
+            # Check if pangram is complete
+            combined_transcript = " ".join(enrollment_state["transcript_buffer"])
+            match_score = EnrollmentTextUtils.calculate_fuzzy_match(
+                combined_transcript,
+                pangram_text
+            )
+            
+            print(f"[Enrollment] Match score: {match_score:.2%}")
+            
+            if match_score >= self.min_match_threshold:
+                print(f"[Enrollment] Pangram completed! (match: {match_score:.2%})")
+                return await self._complete_recording(client_id)
+        else:
+            # Off-topic: increment counter
+            enrollment_state["off_topic_count"] += 1
+            print(f"[Enrollment] Off-topic utterance (count: {enrollment_state['off_topic_count']})")
+            
+            if enrollment_state["off_topic_count"] >= self.max_off_topic_utterances:
+                print(f"[Enrollment] Too many off-topic utterances")
+                return await self.abort_recording(client_id, reason="off_topic")
+        
+        return None  # Still recording
+    
+    async def abort_recording(
+        self,
+        client_id: str,
+        reason: str = "other_speaker"
+    ) -> str:
+        """
+        Abort recording (can be called publicly).
+        
+        Args:
+            client_id: Session ID
+            reason: Reason for abort ('other_speaker', 'timeout', 'cancel', 'off_topic')
+        
+        Returns:
+            'aborted'
+        """
+
+        print(f"[Enrollment] ABORT called - client: {client_id}, reason: {reason}")
+
+        messages = {
+            "other_speaker": "Aborting imprint, please try again later with no other speakers present.",
+            "timeout": "Aborting imprint, please try again later.",
+            "off_topic": "Aborting imprint, please try again later.",
+            "cancel": "Aborting imprint, please try again later."
+        }
+        
+        message = messages.get(reason, "Aborting imprint, please try again later.")
+        
+        return await self._abort_recording(client_id, message)
+    
+    # PRIVATE METHODS =========================================================================
+    
+    async def _complete_recording(
+        self,
+        client_id: str
+    ) -> str:
+        """Complete enrollment successfully"""
+        enrollment_state = client_queues[client_id]["enrollment_state"]
+        
+        try:
+            # Save WAV
+            wav_path = await self._save_audio_to_wav(client_id, enrollment_state)
+            print(f"[Enrollment] Saved: {wav_path}")
+            
+            # Update imprint
+            uid = enrollment_state["uid"]
+            firstname = enrollment_state["firstname"]
+            surname = enrollment_state["surname"]
+            
+            # Database changes
+            if uid is None:
+                # Create new speaker
+                success = await self.ecapa_processor.create_initial_speaker_imprint(
+                    wav_path=str(wav_path),
+                    firstname=firstname,
+                    surname=surname
+                )
+                
+                if success:
+                    new_speaker = self.con.execute("""
+                        SELECT uid FROM speakers 
+                        WHERE firstname = ? AND surname = ?
+                        ORDER BY uid DESC LIMIT 1
+                    """, [firstname, surname]).fetchone()
+                    
+                    if new_speaker:
+                        new_uid = new_speaker[0]
+                        await self._mark_pangram_recited(new_uid, enrollment_state["pangram_id"])
+            else:
+                # Update existing
+                success = await self.ecapa_processor.update_speaker_imprint_from_file(
+                    wav_path=str(wav_path),
+                    uid=uid
+                )
+                
+                if success:
+                    await self._mark_pangram_recited(uid, enrollment_state["pangram_id"])
+            
+            # Notify user and Rasa
+            message = "Enrollment completed successfully!"
+            data_to_send = {
+                "speaker": self.server_name,
+                "speaker_confidence": "certain",
+                "final": "True",
+                "transcript": message,
+                "asr_confidence": "certain"
+            }
+            json_string = json.dumps(data_to_send)
+            await send_message_to_client(client_id, json_string)
+            # Handle TTS if not using client-side TTS
+            if not clientSideTTS and active_websockets:
+                asyncio.create_task(stream_tts_audio(client_id, message))
+
+            await self._notify_rasa(client_id, 'success')
+            
+            # Cleanup
+            client_queues[client_id]["enrollment_active"] = False
+            del client_queues[client_id]["enrollment_state"]
+            
+            return 'success'
+            
+        except Exception as e:
+            print(f"[Enrollment] Error completing: {e}")
+            return await self._abort_recording(client_id, "Enrollment failed.")
+    
+    async def _abort_recording(self, client_id: str, message: str) -> str:
+        """Internal abort method."""
+        if client_id not in client_queues:
+            return 'aborted'
+        
+        if "enrollment_state" not in client_queues[client_id]:
+            return 'aborted'
+        
+        enrollment_state = client_queues[client_id]["enrollment_state"]
+        
+        try:
+            # Save WAV for debugging (if any audio was captured)
+            if enrollment_state["audio_buffer"]:
+                wav_path = await self._save_audio_to_wav(client_id, enrollment_state)
+                print(f"[Enrollment] Aborted, saved debug file: {wav_path}")
+            
+            # Notify user - send transcript message to client
+            data_to_send = {
+                "speaker": self.server_name,
+                "speaker_confidence": "certain",
+                "final": "True",
+                "transcript": message,
+                "asr_confidence": "certain"
+            }
+            json_string = json.dumps(data_to_send)
+            await send_message_to_client(client_id, json_string)
+            # Handle TTS if not using client-side TTS
+            if not clientSideTTS and active_websockets:
+                asyncio.create_task(stream_tts_audio(client_id, message))
+                print("called steam_tts_audio")
+            
+            # Notify Rasa
+            await self._notify_rasa(client_id, 'aborted')
+            
+            # Cleanup
+            #enrollment_state["recording_active"] = False
+            client_queues[client_id]["enrollment_active"] = False
+            del client_queues[client_id]["enrollment_state"]
+            
+            return 'aborted'
+            
+        except Exception as e:
+            print(f"[Enrollment] Error during abort: {e}")
+            if "enrollment_state" in client_queues[client_id]:
+                del client_queues[client_id]["enrollment_state"]
+            return 'aborted'
+    
+    async def _save_audio_to_wav(self, client_id: str, enrollment_state: Dict) -> Path:
+        """Save audio buffer to WAV file."""
+        session_id = client_id.replace('-', '')[:8]
+        pangram_id = enrollment_state["pangram_id"]
+        uid = enrollment_state["uid"]
+        surname = enrollment_state.get("surname", "")
+        firstname = enrollment_state.get("firstname", "")
+        
+        # Build filename with surname and firstname
+        if uid is not None:
+            if surname and firstname:
+                filename = f"pangram{pangram_id}_{session_id}_{surname}_{firstname}_uid{uid}.wav"
+            elif surname:
+                filename = f"pangram{pangram_id}_{session_id}_{surname}_uid{uid}.wav"
+            elif firstname:
+                filename = f"pangram{pangram_id}_{session_id}_{firstname}_uid{uid}.wav"
+            else:
+                filename = f"pangram{pangram_id}_{session_id}_uid{uid}.wav"
+        else:
+            if surname and firstname:
+                filename = f"pangram{pangram_id}_{session_id}_{surname}_{firstname}.wav"
+            elif surname:
+                filename = f"pangram{pangram_id}_{session_id}_{surname}.wav"
+            elif firstname:
+                filename = f"pangram{pangram_id}_{session_id}_{firstname}.wav"
+            else:
+                filename = f"pangram{pangram_id}_{session_id}.wav"
+        
+        wav_path = Path(CONFIG['samples_path']) / filename
+        
+        # Concatenate all audio chunks
+        audio_buffer = enrollment_state["audio_buffer"]
+        
+        if not audio_buffer:
+            concatenated = np.array([], dtype=np.int16)
+        else:
+            concatenated = np.concatenate(audio_buffer)
+        
+        # Save using wave module
+        with wave.open(str(wav_path), 'wb') as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(concatenated.tobytes())
+        
+        return wav_path
+    
+    async def _mark_pangram_recited(self, uid: int, pangram_id: int):
+        """Mark pangram as recited in database."""
+        try:
+            result = self.con.execute("""
+                SELECT pangrams FROM speakers WHERE uid = ?
+            """, [uid]).fetchone()
+            
+            if result is None:
+                return
+            
+            current = result[0] if result[0] else []
+            
+            if pangram_id not in current:
+                current.append(pangram_id)
+                self.con.execute("""
+                    UPDATE speakers SET pangrams = ? WHERE uid = ?
+                """, [current, uid])
+                print(f"[Enrollment] Marked pangram {pangram_id} for UID {uid}")
+        
+        except Exception as e:
+            print(f"[Enrollment] Error marking pangram: {e}")
+    
+    async def _notify_rasa(self, client_id: str, status: str):
+        """Notify Rasa of enrollment completion via webhook message."""
+        try:
+            # Map status to system message trigger
+            system_messages = {
+                "success": "SYSTEM_ENROLLMENT_SUCCESS",
+                "aborted": "SYSTEM_ENROLLMENT_ABORT"
+            }
+            
+            system_message = system_messages.get(status)
+            if not system_message:
+                print(f"[Enrollment] Error: Unknown status '{status}'")
+                return False
+            
+            # Send message via webhook endpoint (same pattern as trigger_enrollment)
+            payload = {
+                "sender": f"client_{client_id}",
+                "message": system_message
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{CONFIG['rasa_url']}/webhooks/rest/webhook",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        rasa_response = await response.json()
+                        print(f"[Enrollment] Triggered {status} intent: {system_message}")
+                        print(f"[Enrollment] Rasa response: {rasa_response}")
+                        return True
+                    else:
+                        print(f"[Enrollment] Failed to trigger intent: {response.status}")
+                        return False
+                        
+        except Exception as e:
+            print(f"[Enrollment] Error notifying Rasa: {e}")
+            return False
+    
+    async def _select_pangram(self, uid: Optional[int]) -> Tuple[Optional[int], Optional[str]]:
+        """Select an appropriate pangram for the speaker."""
+        try:
+            if uid is not None:
+                # Get pangrams already recited
+                result = self.con.execute("""
+                    SELECT pangrams FROM speakers WHERE uid = ?
+                """, [uid]).fetchone()
+                
+                recited = result[0] if (result and result[0]) else []
+                
+                # Get unrecited pangrams
+                placeholders = ','.join('?' * len(recited)) if recited else ''
+                query = f"""
+                    SELECT id, text FROM pangrams
+                    WHERE id NOT IN ({placeholders})
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """ if recited else """
+                    SELECT id, text FROM pangrams
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """
+                
+                result = self.con.execute(query, recited if recited else []).fetchone()
+            else:
+                # New speaker: any pangram
+                result = self.con.execute("""
+                    SELECT id, text FROM pangrams
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """).fetchone()
+            
+            if result:
+                return result[0], result[1]
+            else:
+                print("[Enrollment] No pangrams available")
+                return None, None
+                
+        except Exception as e:
+            print(f"[Enrollment] Error selecting pangram: {e}")
+            return None, None
+
+# Initialize handler
+enrollment_api_handler = None
 # Register endpoints
 @app.post("/api/query", response_model=EnrollmentAPIModels.SpeakerQueryResponse)
 async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryRequest):
     """Endpoint for Rasa to query speaker existence in database"""
     return await enrollment_api_handler.query_speaker(request)
 
-@app.post("/api/record", response_model=EnrollmentAPIModels.RecordPangramResponse)
+@app.post("/api/record_pangram", response_model=EnrollmentAPIModels.RecordPangramResponse)
 async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequest):
     """Endpoint for Rasa to initiate speaker pangram recording for enrollment"""
     return await enrollment_api_handler.record_pangram(request)
@@ -2578,6 +3166,9 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
     current_utterance_buffer = b''
     is_speaking = False
     silence_counter = 0
+    last_utterance_time = None # Tracks last VAD activity
+    last_speech_time = None # Tracks last VAD with discernible speech
+    last_prompt_time = None
     # Determine silence threshold in terms of VAD chunks.
     # If your VAD processes in, say, 20ms frames, and your audio_chunk is 560ms,
     # then one audio_chunk corresponds to 28 VAD frames.
@@ -2590,7 +3181,11 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
     SPEAKER = CONFIG["default_speaker"]
     SPEAKER_CONFIDENCE = CONFIG["default_speaker_confidence"]
     ASR_CONFIDENCE = CONFIG["default_asr_confidence"]
-    SERVER = CONFIG["server_name"]
+    server_name = CONFIG.get("server_name", "Fawkes")
+    # Placeholder initializations for if ECAPA fails entirely
+    speaker_uid = None
+    confidence = 0.0
+    nomatch_score = 0.0
 
     try:
         while True:
@@ -2619,6 +3214,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                     if is_voice_active_in_chunk:
                         current_utterance_buffer += chunk_bytes # Accumulate all speech
                         silence_counter = 0 # Reset silence counter
+                        last_utterance_time = time.monotonic()
 
                         if not is_speaking:
                             is_speaking = True
@@ -2640,6 +3236,8 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                         # Perform ASR transcription on the *current audio chunk* if speech is active
                         text = await asyncio.to_thread(nemo_transcriber.transcribe_chunk, audio_chunk_np)
                         final_transcription_text = text  # Keep updating the final transcription
+                        if not final_transcription_text == "":
+                            last_speech_time = time.monotonic()
 
                         # Check if we should extract ECAPA embedding
                         if ecapa_processor.should_extract_now(len(current_utterance_buffer)):
@@ -2652,6 +3250,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 print(f"[Speaker ID] {ecapa_result['speaker_result']}")
                                 SPEAKER = ecapa_result['speaker_result']
                                 SPEAKER_CONFIDENCE = ecapa_result['speaker_confidence']
+                                speaker_uid = ecapa_result['uid_result']
 
                         data_to_send = {
                             "speaker": SPEAKER,
@@ -2663,8 +3262,67 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                         json_string = json.dumps(data_to_send)
                         await send_message_to_client(client_id, json_string)
 
+                        # ABORT recording if speaker is identified 'certain' different from imprint speaker
+                        if "enrollment_state" in client_queues[client_id]:
+                            if client_queues[client_id]["enrollment_state"]["recording_active"]:
+                                # Check if different speaker detected
+                                enrollment_state = client_queues[client_id]["enrollment_state"]
+                                expected_uid = enrollment_state["uid"]
+                                detected_uid = speaker_uid
+                                # Abort conditions:
+                                # 1. New speaker enrollment - ANY positive match is a problem
+                                if expected_uid is None and detected_uid is not None and SPEAKER_CONFIDENCE == "certain":
+                                    print(f"[Enrollment] ABORT: Other speaker detected (UID {detected_uid})")
+                                    await enrollment_recording_manager.abort_recording(
+                                        client_id=client_id,
+                                        reason="other_speaker"
+                                    )
+                                # 2. Existing speaker - DIFFERENT UID detected
+                                elif expected_uid is not None and detected_uid is not None and detected_uid != expected_uid and SPEAKER_CONFIDENCE == "certain":
+                                    print(f"[Enrollment] ABORT: Wrong speaker (expected {expected_uid}, got {detected_uid})")
+                                    await enrollment_recording_manager.abort_recording(
+                                        client_id=client_id,
+                                        reason="other_speaker"
+                                    )
+
                     else: # VAD indicates silence
                         silence_counter += 1
+                        current_time = time.monotonic()
+
+                        #if last_utterance_time is not None:
+                        #    silence_duration = current_time - last_utterance_time
+                        #else:
+                        #    silence_duration = 0.0  # No speech yet, so no silence duration
+                        
+                        if last_speech_time is not None:
+                            nonspeech_duration = current_time - last_speech_time
+                        else:
+                            nonspeech_duration = 0.0
+
+                        # ABORT recording if exceeds timeout, otherwise send reminder if multiple of interval
+                        if "enrollment_state" in client_queues[client_id]:
+                            enrollment_state = client_queues[client_id]["enrollment_state"]
+                            if enrollment_state["recording_active"]: 
+                                # Timeout check
+                                if nonspeech_duration >= CONFIG['enrollment_timeout']:
+                                    print(f"silence duration = {nonspeech_duration}")
+                                    await enrollment_recording_manager.abort_recording(
+                                        client_id, reason="timeout"
+                                    )
+                                # Reminder check
+                                elif nonspeech_duration >= CONFIG['enrollment_reminder_interval']:
+                                    if last_prompt_time is None or (current_time - last_prompt_time) >= CONFIG['enrollment_reminder_interval']:
+                                        reminder_text = "PLEASE FINISH RECITING THE PROMPT"
+                                        data_to_send = {
+                                            "speaker": server_name,
+                                            "speaker_confidence": "certain",
+                                            "final": "True",
+                                            "transcript": reminder_text,
+                                            "asr_confidence": "certain"
+                                        }
+                                        await send_message_to_client(client_id, json.dumps(data_to_send))
+                                        last_prompt_time = current_time
+
                         if is_speaking and silence_counter >= SILENCE_CHUNKS_THRESHOLD:
                             #is_speaking = False
                             #print(f"[{client_id}] Voice activity ended. Processing final utterance.")
@@ -2722,16 +3380,32 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                                 json_string = json.dumps(data_to_send)
                                 await send_message_to_client(client_id, json_string)
 
-                                # Send final utterance to Rasa for intent identification
-                                await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER, speaker_uid, confidence, nomatch_score)
+                                if "enrollment_state" in client_queues[client_id] and client_queues[client_id]["enrollment_state"]["recording_active"]:
+                                    # ENROLLMENT: Process utterance
+                                    #utterance_bytes = b''.join(current_utterance_buffer) 
+                                    result = await enrollment_recording_manager.process_utterance(
+                                        client_id=client_id,
+                                        utterance_audio=current_utterance_buffer,
+                                        utterance_transcript=final_transcription_text
+                                    )  
+                                    if result in ['success', 'aborted']:
+                                        print(f"[Enrollment] Recording {result}")
+                                else:
+                                    # NORMAL: Send final utterance to Rasa for intent identification
+                                    await handle_final_utterance_with_rasa(client_id, final_transcription_text, SPEAKER, speaker_uid, confidence, nomatch_score)
 
                             if "suggest_enrollment" in final_ecapa_result and final_ecapa_result["suggest_enrollment"]:
                                 if not client_queues[client_id].get("enrollment_active", False):
-                                    client_queues[client_id]["enrollment_active"] = True
-                                    print(f"[ECAPA] Triggering enrollment flow for {client_id}")
-                                    if rasa_client:
-                                        await rasa_client.trigger_enrollment(client_id)
-                            # NOTE will need to explicitly set enrollment_active to False upon enrollment completion
+                                    # Check if recording is NOT active
+                                    recording_active = (
+                                        "enrollment_state" in client_queues[client_id] 
+                                        and client_queues[client_id]["enrollment_state"]["recording_active"]
+                                    )
+                                    if not recording_active:
+                                        client_queues[client_id]["enrollment_active"] = True
+                                        print(f"[ECAPA] Triggering enrollment flow for {client_id}")
+                                        if rasa_client:
+                                            await rasa_client.trigger_enrollment(client_id)
 
                             # Reset the buffer and state for the next utterance
                             is_speaking = False
@@ -2773,7 +3447,7 @@ async def main():
     global main_loop, pipertts_wrapper, xtts_wrapper, nemo_vad
     global nemo_transcriber, canary_qwen_transcriber
     global ecapa_matcher, ecapa_processor
-    global rasa_client
+    global rasa_client, enrollment_recording_manager, enrollment_api_handler
 
     xtts_wrapper = canary_qwen_transcriber = None # These are often turned off
     main_loop = asyncio.get_event_loop()  # Store the event loop
@@ -2819,6 +3493,15 @@ async def main():
         device=CONFIG["inference_device"],
         ecapa_matcher=ecapa_matcher,
         sample_rate=CONFIG["audio_sample_rate"]
+    )
+    # Initialize enrollment recording manager
+    enrollment_recording_manager = EnrollmentRecordingManager(
+        db_connection=con,
+        ecapa_processor=ecapa_processor
+    )
+    enrollment_api_handler = EnrollmentAPIHandler(
+        db_connection=con,
+        recording_manager=enrollment_recording_manager
     )
 
     # ADD INITIAL SPEAKERS TO DB
