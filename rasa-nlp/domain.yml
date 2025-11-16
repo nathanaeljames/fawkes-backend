@@ -14,6 +14,8 @@ intents:
   - trigger_enrollment
   - correct_spelling
   - start_spelling
+  - system_enrollment_complete_success
+  - system_enrollment_complete_aborted
 
 
 entities:

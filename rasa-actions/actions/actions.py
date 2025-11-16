@@ -23,6 +23,31 @@ FASTAPI_HOST = "canary"
 FASTAPI_PORT = 9002
 # ==========================================================
 
+# SYSTEM TRIGGER PATTERNS
+# These are exact-match patterns used to trigger intents programmatically
+# and should not be processed as regular user input
+SYSTEM_TRIGGERS = [
+    "SYSTEM_TRIGGER_ENROLLMENT",
+    "SYSTEM_ENROLLMENT_SUCCESS",
+    "SYSTEM_ENROLLMENT_ABORT"
+]
+# ==========================================================
+
+def is_system_trigger(text: str) -> tuple[bool, str]:
+    """
+    Check if text contains a system trigger pattern.
+    Returns: (is_trigger, trigger_name) where trigger_name is the matched pattern or None
+    """
+    if not text:
+        return False, None
+    
+    text_upper = text.upper()
+    for trigger in SYSTEM_TRIGGERS:
+        if trigger in text_upper:
+            return True, trigger
+    
+    return False, None
+
 class ActionLogSlots(Action):
     def name(self) -> Text:
         return "action_log_slots"
@@ -438,8 +463,9 @@ class ActionProcessSpelling(Action):
         spelling_stage = tracker.get_slot("spelling_stage")
 
         # Reject system trigger patterns
-        if "SYSTEM_TRIGGER_ENROLLMENT" in text.upper():
-            logger.warning(f"Rejecting system trigger pattern in spelling: '{text}'")
+        is_trigger, trigger_name = is_system_trigger(text)
+        if is_trigger:
+            logger.warning(f"Ignoring system trigger '{trigger_name}' in spelling action")
             return []
         
         logger.info(f"Processing spelling input: '{text}' (intent: {intent}) at stage: {spelling_stage}")
@@ -595,9 +621,11 @@ class ValidateNameCollectionForm(FormValidationAction):
         """Validate firstname slot and split if it contains spaces"""
 
         # Reject system trigger patterns
-        if slot_value and "SYSTEM_TRIGGER_ENROLLMENT" in slot_value.upper():
-            logger.warning(f"Rejecting system trigger pattern in firstname: '{slot_value}'")
-            return {"imprint_firstname": None}
+        if slot_value:
+            is_trigger, trigger_name = is_system_trigger(slot_value)
+            if is_trigger:
+                logger.warning(f"Ignoring system trigger '{trigger_name}' in firstname validation")
+                return {"imprint_firstname": None}
         
         if slot_value and " " in slot_value:
             parts = slot_value.split(None, 1)  # Split on first whitespace only
@@ -632,9 +660,11 @@ class ValidateNameCollectionForm(FormValidationAction):
         """Validate surname slot and capitalize if it contains spaces"""
 
         # Reject system trigger patterns
-        if slot_value and "SYSTEM_TRIGGER_ENROLLMENT" in slot_value.upper():
-            logger.warning(f"Rejecting system trigger pattern in firstname: '{slot_value}'")
-            return {"imprint_firstname": None}
+        if slot_value:
+            is_trigger, trigger_name = is_system_trigger(slot_value)
+            if is_trigger:
+                logger.warning(f"Ignoring system trigger '{trigger_name}' in surname validation")
+                return {"imprint_surname": None}
         
         if slot_value and " " in slot_value:
             # Keep multi-part surnames together (e.g., "Mosier Warren")
@@ -774,15 +804,15 @@ class ActionStartEnrollmentRecording(Action):
         imprint_surname = tracker.get_slot("imprint_surname")
         
         # Trigger recording on server
-        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/record"
+        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/record_pangram"
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     fastapi_url,
                     json={
-                        "action": "record",
-                        "uid": imprint_uid,
+                        "sender_id": sender_id,
+                        "imprint_uid": imprint_uid,
                         "imprint_firstname": imprint_firstname,
                         "imprint_surname": imprint_surname
                     },
@@ -793,7 +823,6 @@ class ActionStartEnrollmentRecording(Action):
                         result = await response.json()
                         logger.info(f"Recording started for {sender_id}: {result}")
                         return [SlotSet("enrollment_active", True)]
-                        # NOTE instead of trigger enrollment_active I will need to process a success message from the server and set enrollment_active to False rasa and server-side
                     else:
                         logger.error(f"Failed to start recording: {response.status}")
                         return []
