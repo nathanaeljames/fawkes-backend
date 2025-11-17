@@ -94,11 +94,12 @@ CONFIG = {
     "rasa_timeout": 10,  # seconds
     "enable_rasa": True,
     "samples_path": "/root/fawkes/audio_samples",
-    "enrollment_min_match": 0.9,
-    "enrollment_max_off_topic": 3,
+    #"enrollment_min_match": 0.9,
+    "enrollment_off_topic_threshold": 0.5,
+    #"enrollment_max_off_topic": 3,
     "enrollment_reminder_interval": 3, # seconds
     "enrollment_timeout": 18, #seconds
-    "enrollment_abort_mode": "consecutive",  # or "total"
+    #"enrollment_abort_mode": "consecutive",  # or "total"
     "enrollment_max_decreases": 3,
     "enrollment_fuzzy_word_threshold": 0.85,  # 85% similarity for word matching
     "enrollment_success_threshold": 0.70  # 70% coverage to pass
@@ -2063,24 +2064,6 @@ class EnrollmentTextUtils:
         return text.strip()
     
     @staticmethod
-    def calculate_fuzzy_match(spoken_text: str, target_text: str) -> float:
-        """
-        Calculate fuzzy match score between spoken and target text.
-        
-        Args:
-            spoken_text: What the user said
-            target_text: Expected pangram text
-            
-        Returns:
-            Match score between 0.0 and 1.0
-        """
-        spoken_normalized = EnrollmentTextUtils.normalize_text(spoken_text)
-        target_normalized = EnrollmentTextUtils.normalize_text(target_text)
-        
-        matcher = SequenceMatcher(None, spoken_normalized, target_normalized)
-        return matcher.ratio()
-    
-    @staticmethod
     def is_utterance_on_topic(utterance: str, pangram_text: str, threshold: float = 0.3) -> bool:
         """
         Check if utterance contains words from the pangram.
@@ -2106,7 +2089,7 @@ class EnrollmentTextUtils:
         overlap_ratio = len(overlap) / len(utterance_words)
         
         return overlap_ratio >= threshold
-    
+
     @staticmethod
     def is_cancel_command(transcript: str) -> bool:
         """
@@ -2121,12 +2104,84 @@ class EnrollmentTextUtils:
         normalized = transcript.lower().strip()
         cancel_patterns = [
             'cancel imprint',
-            'cancel enrollment',
-            'stop recording',
             'abort imprint',
             'stop imprint'
+            'cancel enrollment',
+            'abort enrollment',
+            'stop enrollment',
+            'cancel recording',
+            'abort recording',
+            'stop recording' 
         ]
         return any(pattern in normalized for pattern in cancel_patterns)
+
+    @staticmethod
+    def fuzzy_word_match(word1: str, word2: str) -> float:
+        """
+        Calculate similarity between two words using SequenceMatcher.
+        
+        Args:
+            word1: First word
+            word2: Second word
+            
+        Returns:
+            Similarity score between 0.0 and 1.0
+        """
+        matcher = SequenceMatcher(None, word1.lower(), word2.lower())
+        return matcher.ratio()
+
+    @staticmethod
+    def calculate_word_coverage(spoken_text: str, target_text: str, 
+                            fuzzy_threshold: float = CONFIG['enrollment_fuzzy_word_threshold']) -> tuple:
+        """
+        Calculate word coverage with fuzzy matching and position tracking.
+        
+        Returns coverage score AND matched word positions for highlighting.
+        Handles duplicate words by matching closest unmatched occurrence.
+        
+        Args:
+            spoken_text: What the user said (accumulated)
+            target_text: Expected pangram text
+            fuzzy_threshold: Minimum similarity for word match (default 0.85)
+            
+        Returns:
+            Tuple of (coverage_score, matched_positions_dict)
+            - coverage_score: float between 0.0 and 1.0
+            - matched_positions_dict: {position: word} for matched pangram words
+        """
+        spoken_normalized = EnrollmentTextUtils.normalize_text(spoken_text)
+        target_normalized = EnrollmentTextUtils.normalize_text(target_text)
+        
+        spoken_words = spoken_normalized.split()
+        target_words = target_normalized.split()
+        
+        # Track which target positions have been matched
+        matched_positions = {}  # {position: word}
+        matched_target_indices = set()
+        
+        # For each spoken word, find best matching unmatched target word
+        for spoken_word in spoken_words:
+            best_match_idx = None
+            best_match_score = 0.0
+            
+            for i, target_word in enumerate(target_words):
+                if i in matched_target_indices:
+                    continue  # Already matched
+                    
+                similarity = EnrollmentTextUtils.fuzzy_word_match(spoken_word, target_word)
+                
+                if similarity >= fuzzy_threshold and similarity > best_match_score:
+                    best_match_score = similarity
+                    best_match_idx = i
+            
+            # If we found a good match, mark it
+            if best_match_idx is not None:
+                matched_positions[best_match_idx] = target_words[best_match_idx]
+                matched_target_indices.add(best_match_idx)
+        
+        coverage_score = len(matched_positions) / len(target_words) if target_words else 0.0
+        
+        return coverage_score, matched_positions
 
 class EnrollmentRecordingManager:
     """
@@ -2147,12 +2202,15 @@ class EnrollmentRecordingManager:
         """
         self.con = db_connection
         self.ecapa_processor = ecapa_processor
+        self.active_sessions = {}
         #self.config = config
         #self.client_queues = client_queues
         #self.session = aiohttp.ClientSession()
         self.server_name = CONFIG.get("server_name", "Fawkes")
-        self.min_match_threshold = CONFIG.get('enrollment_min_match', 0.90)
-        self.max_off_topic_utterances = CONFIG.get('enrollment_max_off_topic', 3)
+        #self.min_match_threshold = CONFIG.get('enrollment_min_match', 0.90)
+        #self.max_off_topic_utterances = CONFIG.get('enrollment_max_off_topic', 3)
+        self.previous_score = {}  # client_id -> last score
+        self.decrease_count = {}  # client_id -> consecutive/total decreases
     
     # PUBLIC METHODS =========================================================================
     
@@ -2188,7 +2246,7 @@ class EnrollmentRecordingManager:
         if pangram_id is None:
             return {"status": "error", "message": "No pangrams available"}
         
-        # Initialize enrollment state (NO TIMING FIELDS)
+        # Initialize enrollment state
         client_queues[client_id]["enrollment_state"] = {
             "recording_active": True,
             "audio_buffer": [],
@@ -2198,8 +2256,18 @@ class EnrollmentRecordingManager:
             "uid": uid,
             "firstname": firstname,
             "surname": surname,
-            "off_topic_count": 0
+            "accumulated_transcript": "",
+            "matched_positions": {},
+            "enrollment_last_speech_time": time.monotonic(),
+            "off_topic_count": 0,
+            "no_progress_count": 0
         }
+
+        # Initialize score tracking
+        self.previous_score[client_id] = 0.0
+        self.decrease_count[client_id] = 0
+        # TODO may want to manage these within "enrollment_state" also for uniformity
+        # In fact may want to eliminate this altogether since off_topic check is adequate for current completion checking logic
         
         print(f"[Enrollment] Recording started for {client_id}")
         print(f"[Enrollment] Pangram: {pangram_text}")
@@ -2218,6 +2286,33 @@ class EnrollmentRecordingManager:
             "status": "started",
             "pangram_id": pangram_id,
             "pangram_text": pangram_text
+        }
+    
+    def get_frontend_highlight_data(self, client_id: str) -> dict:
+        """
+        Prepare matched word data for frontend highlighting.
+        
+        Returns:
+            Dict with pangram words and which positions are matched
+        """
+        if client_id not in client_queues:
+            return {}
+        
+        if "enrollment_state" not in client_queues[client_id]:
+            return {}
+        
+        enrollment_state = client_queues[client_id]["enrollment_state"]
+        pangram = enrollment_state['pangram_text']
+        matched_positions = enrollment_state.get('matched_positions', {})
+        
+        # Split pangram into words with positions
+        normalized_pangram = EnrollmentTextUtils.normalize_text(pangram)
+        pangram_words = normalized_pangram.split()
+        
+        return {
+            "pangram_words": pangram_words,
+            "matched_positions": list(matched_positions.keys()),  # List of matched indices
+            "coverage_score": self.previous_score.get(client_id, 0.0)
         }
     
     async def process_utterance(
@@ -2259,37 +2354,70 @@ class EnrollmentRecordingManager:
             print(f"[Enrollment] Cancel keyword detected")
             return await self.abort_recording(client_id, reason="cancel")
         
-        # Check if transcript is on-topic
+        # Get pangram
         pangram_text = enrollment_state["pangram_text"]
         
-        if EnrollmentTextUtils.is_utterance_on_topic(utterance_transcript, pangram_text):
-            # On-topic: add to transcript buffer
-            enrollment_state["transcript_buffer"].append(utterance_transcript)
-            print(f"[Enrollment] On-topic utterance added")
-            
-            # Check if pangram is complete
-            combined_transcript = " ".join(enrollment_state["transcript_buffer"])
-            match_score = EnrollmentTextUtils.calculate_fuzzy_match(
-                combined_transcript,
-                pangram_text
-            )
-            
-            print(f"[Enrollment] Match score: {match_score:.2%}")
-            
-            if match_score >= self.min_match_threshold:
-                print(f"[Enrollment] Pangram completed! (match: {match_score:.2%})")
-                return await self._complete_recording(client_id)
+        # Add to accumulated transcript
+        if enrollment_state['accumulated_transcript']:
+            enrollment_state['accumulated_transcript'] += " " + utterance_transcript
         else:
-            # Off-topic: increment counter
-            enrollment_state["off_topic_count"] += 1
+            enrollment_state['accumulated_transcript'] = utterance_transcript
+        
+        # Calculate word coverage with matched positions
+        coverage_score, matched_positions = EnrollmentTextUtils.calculate_word_coverage(
+            enrollment_state['accumulated_transcript'],
+            pangram_text
+        )
+        
+        # Store matched positions for frontend
+        enrollment_state['matched_positions'] = matched_positions
+        
+        print(f"[Enrollment] Coverage score: {coverage_score:.1%}")
+        
+        # Track score changes for abort logic
+        prev_score = self.previous_score.get(client_id, 0.0)
+        
+        # CONDITION 1: Track non-increases
+        # (it's not possible for score to decrease with current word-based coverage matcher,
+        # but consecutive non-increases can still be treated as an abort condition)
+        if coverage_score <= prev_score:  # Changed from 
+            enrollment_state["no_progress_count"] = enrollment_state.get("no_progress_count", 0) + 1
+            print(f"[Enrollment] No progress (count: {enrollment_state['no_progress_count']})")
+            
+            if enrollment_state["no_progress_count"] >= CONFIG['enrollment_max_decreases']:
+                print(f"[Enrollment] Too many utterances without progress")
+                return await self.abort_recording(client_id, "no_progress")
+        else:
+            # Reset no-progress counter
+            enrollment_state["no_progress_count"] = 0
+        
+        # CONDITION 2: Check if utterance is on-topic
+        if not EnrollmentTextUtils.is_utterance_on_topic(utterance_transcript, pangram_text, CONFIG['enrollment_off_topic_threshold']):
+            enrollment_state["off_topic_count"] = enrollment_state.get("off_topic_count", 0) + 1
             print(f"[Enrollment] Off-topic utterance (count: {enrollment_state['off_topic_count']})")
             
-            if enrollment_state["off_topic_count"] >= self.max_off_topic_utterances:
+            if enrollment_state["off_topic_count"] >= CONFIG['enrollment_max_decreases']:
                 print(f"[Enrollment] Too many off-topic utterances")
-                return await self.abort_recording(client_id, reason="off_topic")
+                return await self.abort_recording(client_id, "off_topic")
+        #else:
+            # Reset off-topic counter
+            #enrollment_state["off_topic_count"] = 0
+        
+        # Update previous score
+        self.previous_score[client_id] = coverage_score
+
+        # Send highlight data to frontend
+        highlight_data = self.get_frontend_highlight_data(client_id)
+        # Just log it for now
+        print(f"[Enrollment] Highlight data: {len(highlight_data.get('matched_positions', []))} words matched")
+        
+        # Check if we've reached success threshold
+        if coverage_score >= CONFIG['enrollment_success_threshold']:
+            print(f"[Enrollment] Success threshold reached: {coverage_score:.1%}")
+            return await self._complete_recording(client_id)
         
         return None  # Still recording
-    
+
     async def abort_recording(
         self,
         client_id: str,
@@ -2311,6 +2439,7 @@ class EnrollmentRecordingManager:
         messages = {
             "other_speaker": "Aborting imprint, please try again later with no other speakers present.",
             "timeout": "Aborting imprint, please try again later.",
+            "no_progress": "Aborting imprint, please try again later.",
             "off_topic": "Aborting imprint, please try again later.",
             "cancel": "Aborting imprint, please try again later."
         }
@@ -2387,6 +2516,9 @@ class EnrollmentRecordingManager:
             # Cleanup
             client_queues[client_id]["enrollment_active"] = False
             del client_queues[client_id]["enrollment_state"]
+
+            self.previous_score.pop(client_id, None)
+            self.decrease_count.pop(client_id, None)
             
             return 'success'
             
@@ -2432,6 +2564,8 @@ class EnrollmentRecordingManager:
             #enrollment_state["recording_active"] = False
             client_queues[client_id]["enrollment_active"] = False
             del client_queues[client_id]["enrollment_state"]
+            self.previous_score.pop(client_id, None)
+            self.decrease_count.pop(client_id, None)
             
             return 'aborted'
             
@@ -2561,19 +2695,30 @@ class EnrollmentRecordingManager:
                 recited = result[0] if (result and result[0]) else []
                 
                 # Get unrecited pangrams
-                placeholders = ','.join('?' * len(recited)) if recited else ''
-                query = f"""
-                    SELECT id, text FROM pangrams
-                    WHERE id NOT IN ({placeholders})
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                """ if recited else """
-                    SELECT id, text FROM pangrams
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                """
+                if recited:
+                    placeholders = ','.join('?' * len(recited))
+                    query = f"""
+                        SELECT id, text FROM pangrams
+                        WHERE id NOT IN ({placeholders})
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    """
+                    result = self.con.execute(query, recited).fetchone()
+                else:
+                    result = self.con.execute("""
+                        SELECT id, text FROM pangrams
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    """).fetchone()
                 
-                result = self.con.execute(query, recited if recited else []).fetchone()
+                # If no unrecited pangrams, pick any random pangram
+                if not result:
+                    print("[Enrollment] All pangrams recited, selecting random pangram")
+                    result = self.con.execute("""
+                        SELECT id, text FROM pangrams
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    """).fetchone()
             else:
                 # New speaker: any pangram
                 result = self.con.execute("""
@@ -2585,7 +2730,7 @@ class EnrollmentRecordingManager:
             if result:
                 return result[0], result[1]
             else:
-                print("[Enrollment] No pangrams available")
+                print("[Enrollment] No pangrams in database")
                 return None, None
                 
         except Exception as e:
@@ -3238,6 +3383,10 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                         final_transcription_text = text  # Keep updating the final transcription
                         if not final_transcription_text == "":
                             last_speech_time = time.monotonic()
+                            # Also update enrollment-specific timer if recording
+                            if "enrollment_state" in client_queues[client_id]:
+                                if client_queues[client_id]["enrollment_state"].get("recording_active"):
+                                    client_queues[client_id]["enrollment_state"]["enrollment_last_speech_time"] = last_speech_time
 
                         # Check if we should extract ECAPA embedding
                         if ecapa_processor.should_extract_now(len(current_utterance_buffer)):
@@ -3294,15 +3443,21 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                         #else:
                         #    silence_duration = 0.0  # No speech yet, so no silence duration
                         
-                        if last_speech_time is not None:
-                            nonspeech_duration = current_time - last_speech_time
-                        else:
-                            nonspeech_duration = 0.0
+                        #if last_speech_time is not None:
+                        #    nonspeech_duration = current_time - last_speech_time
+                        #else:
+                        #    nonspeech_duration = 0.0
 
                         # ABORT recording if exceeds timeout, otherwise send reminder if multiple of interval
                         if "enrollment_state" in client_queues[client_id]:
                             enrollment_state = client_queues[client_id]["enrollment_state"]
-                            if enrollment_state["recording_active"]: 
+                            if enrollment_state["recording_active"]:
+                                # Use enrollment-specific last speech time
+                                enrollment_last_speech = enrollment_state.get("enrollment_last_speech_time")
+                                if enrollment_last_speech is not None:
+                                    nonspeech_duration = current_time - enrollment_last_speech
+                                else:
+                                    nonspeech_duration = 0.0
                                 # Timeout check
                                 if nonspeech_duration >= CONFIG['enrollment_timeout']:
                                     print(f"silence duration = {nonspeech_duration}")
