@@ -6,7 +6,7 @@
 # rename "NeMo" model's classes/functions for more explicit(?)
 # //Write utterances to files in non-blocking manner for testing
 # NOTES
-# Canary is working but GPU memory paging even with other models diabled. Need more VRAM
+# Canary is working but GPU memory paging even with other models disabled. Need more VRAM
 # May circle back for Lexical/Audio P&C using NeMo's models (Canary is underperforming)
 # May also experiment queueing multiple utterances in a floating frame to increase context available to Canary-Qwen/Samba
 # Samba-ASR adoption may require language model fusion/contextual rescoring/full LLM integration/P&C
@@ -53,7 +53,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import random
-from difflib import SequenceMatcher
+from difflib import get_close_matches, SequenceMatcher
 import re
 
 
@@ -148,6 +148,18 @@ def setup_database():
         );
     """)
     print("DuckDB table 'pangrams' is ready.")
+
+    # Create passages table
+    con.execute("""
+        CREATE SEQUENCE IF NOT EXISTS seq_passage_id START 1;
+        CREATE TABLE IF NOT EXISTS passages (
+            id INTEGER PRIMARY KEY DEFAULT nextval('seq_passage_id'),
+            source VARCHAR NOT NULL,
+            quote TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    print("DuckDB table 'passages' is ready.")
 
 # Ensure the database connection is closed on exit
 atexit.register(con.close)
@@ -1935,31 +1947,95 @@ class EnrollmentAPIHandler:
         """
         self.con = db_connection
         self.recording_manager = recording_manager
-    
+
     async def query_speaker(self, request: EnrollmentAPIModels.SpeakerQueryRequest) -> EnrollmentAPIModels.SpeakerQueryResponse:
         """
-        Query speaker information from database.
+        Query speaker information from database with fuzzy matching.
         Used by Rasa to check if a speaker exists before enrollment.
+        
+        Fuzzy matching handles:
+        - Phonetic similarities (Aaron -> Eron)
+        - Hyphenated names (Mosier-Warren -> Mosier Warren)
+        - Case insensitivity
+        TODO: This method load entire db into memory with each query, not efficient for large databases
         """
         try:
             if request.table != "speakers":
                 raise HTTPException(status_code=400, detail=f"Unsupported table: {request.table}")
             
-            # Case-insensitive comparison using LOWER()
-            if request.surname:
-                result = self.con.execute("""
-                    SELECT uid FROM speakers 
-                    WHERE LOWER(firstname) = LOWER(?) AND LOWER(surname) = LOWER(?)
-                """, (request.firstname, request.surname)).fetchone()
-            else:
-                result = self.con.execute("""
-                    SELECT uid FROM speakers 
-                    WHERE LOWER(firstname) = LOWER(?) AND surname IS NULL
-                """, (request.firstname,)).fetchone()
+            # Normalize input: lowercase, replace hyphens with spaces
+            query_firstname_normalized = request.firstname.lower().replace("-", " ").strip()
+            query_surname_normalized = request.surname.lower().replace("-", " ").strip() if request.surname else ""
+            query_fullname = f"{query_firstname_normalized} {query_surname_normalized}".strip()
             
-            uid = result[0] if result else None
-            print(f"[Enrollment API] Query result for {request.firstname} {request.surname}: UID={uid}")
-            return EnrollmentAPIModels.SpeakerQueryResponse(uid=uid, success=True)
+            print(f"[Enrollment API] Fuzzy query for: '{query_fullname}'")
+            
+            # Fetch all speakers from database
+            if request.surname:
+                # Query with both firstname and surname
+                results = self.con.execute("""
+                    SELECT uid, firstname, surname FROM speakers
+                """).fetchall()
+            else:
+                # Query with firstname only
+                results = self.con.execute("""
+                    SELECT uid, firstname, surname FROM speakers
+                    WHERE surname IS NULL
+                """).fetchall()
+            
+            if not results:
+                print(f"[Enrollment API] No speakers in database")
+                return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=True)
+            
+            # Build list of candidates with normalized names
+            candidates = []
+            for uid, firstname, surname in results:
+                # Normalize database names
+                db_firstname_normalized = firstname.lower().replace("-", " ").strip()
+                db_surname_normalized = surname.lower().replace("-", " ").strip() if surname else ""
+                db_fullname = f"{db_firstname_normalized} {db_surname_normalized}".strip()
+                
+                candidates.append({
+                    "uid": uid,
+                    "firstname": firstname,
+                    "surname": surname,
+                    "normalized_fullname": db_fullname,
+                    "normalized_firstname": db_firstname_normalized,
+                    "normalized_surname": db_surname_normalized
+                })
+            
+            # Find best match
+            best_match = None
+            best_score = 0.0
+            
+            for candidate in candidates:
+                if request.surname:
+                    # Match full name when surname is provided
+                    score = SequenceMatcher(None, query_fullname, candidate["normalized_fullname"]).ratio()
+                else:
+                    # Match firstname only when no surname provided
+                    score = SequenceMatcher(None, query_firstname_normalized, candidate["normalized_firstname"]).ratio()
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = candidate
+            
+            # Threshold for accepting a match (0.75 = 75% similarity)
+            FUZZY_THRESHOLD = 0.75
+            
+            if best_match and best_score >= FUZZY_THRESHOLD:
+                uid = best_match["uid"]
+                matched_name = f"{best_match['firstname']} {best_match['surname']}" if best_match['surname'] else best_match['firstname']
+                print(f"[Enrollment API] Fuzzy match found: '{matched_name}' (UID={uid}, score={best_score:.2f})")
+                return EnrollmentAPIModels.SpeakerQueryResponse(
+                    uid=uid,
+                    firstname=best_match["firstname"],
+                    surname=best_match["surname"],
+                    success=True
+                )
+            else:
+                print(f"[Enrollment API] No match found (best score={best_score:.2f}, threshold={FUZZY_THRESHOLD})")
+                return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=True)
         
         except Exception as e:
             print(f"[Enrollment API] Error querying speaker: {e}")

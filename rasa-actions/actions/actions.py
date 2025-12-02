@@ -677,7 +677,7 @@ class ValidateNameCollectionForm(FormValidationAction):
             return {"imprint_surname": slot_value.capitalize()}
         
         return {"imprint_surname": slot_value}
-    
+
 class ActionQueryUserbase(Action):
     def name(self) -> Text:
         return "action_query_userbase"
@@ -686,20 +686,45 @@ class ActionQueryUserbase(Action):
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
-        query_firstname = tracker.get_slot("imprint_firstname")
-        query_surname = tracker.get_slot("imprint_surname")
+        # Determine which slots to use based on context
+        voiceclone_active = tracker.get_slot("voiceclone_active")
+
+        if voiceclone_active:
+            # Voice cloning flow - use voiceclone slots
+            query_firstname = tracker.get_slot("voiceclone_firstname")
+            query_surname = tracker.get_slot("voiceclone_surname")
+            slot_prefix = "voiceclone"
+        else:
+            # Enrollment flow - use imprint slots
+            query_firstname = tracker.get_slot("imprint_firstname")
+            query_surname = tracker.get_slot("imprint_surname")
+            slot_prefix = "imprint"
         
+        # Check if we have required name information
         if not query_firstname or not query_surname:
             logger.warning(f"Missing name information - firstname: {query_firstname}, surname: {query_surname}")
-            return [
-                SlotSet("imprint_uid", None),
-                FollowupAction("action_handle_enrollment_routing")  # Chain to routing even if no name
-            ]
+            
+            if slot_prefix == "voiceclone":
+                # For voice cloning, we need the full name to proceed
+                if not query_surname and query_firstname:
+                    # Only have firstname, ask for surname
+                    dispatcher.utter_message(response="utter_ask_speaker_surname")
+                    return []
+                else:
+                    # Missing firstname entirely
+                    dispatcher.utter_message(response="utter_ask_whose_voice")
+                    return []
+            else:
+                # For enrollment, chain to routing
+                return [
+                    SlotSet("imprint_uid", None),
+                    FollowupAction("action_handle_enrollment_routing")
+                ]
         
         # Convert to lowercase for case-insensitive search
         query_firstname_lower = query_firstname.lower()
         query_surname_lower = query_surname.lower()
-        logger.info(f"Querying database for: {query_firstname_lower} {query_surname_lower}")
+        logger.info(f"Querying database for: {query_firstname_lower} {query_surname_lower} (context: {slot_prefix})")
         
         # Query the FastAPI server to check if speaker exists in database
         fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query"
@@ -720,34 +745,89 @@ class ActionQueryUserbase(Action):
                     if response.status == HTTPStatus.OK:
                         result = await response.json()
                         uid = result.get("uid")
+                        firstname = result.get("firstname")
+                        surname = result.get("surname")
                         
-                        if uid:
-                            logger.info(f"Found speaker {query_firstname} {query_surname} with UID: {uid}")
-                            imprint_name = f"{query_firstname} {query_surname}" if query_surname else query_firstname
-                            return [
-                                SlotSet("imprint_uid", str(uid)),
-                                SlotSet("imprint_name", imprint_name),
-                                FollowupAction("action_handle_enrollment_routing")
-                            ]
+                        if uid and firstname and surname:
+                            logger.info(f"Found speaker {firstname} {surname} with UID: {uid}")
+                            
+                            if slot_prefix == "voiceclone":
+                                # Voice cloning flow - set speaker name
+                                speaker_name = f"{firstname}_{surname}"
+                                dispatcher.utter_message(response="utter_speaker_found_great")
+                                return [
+                                    SlotSet("voiceclone_speaker_name", speaker_name)
+                                    #SlotSet("voiceclone_uid", str(uid))
+                                ]
+                            else:
+                                # Enrollment flow - set imprint slots and route
+                                imprint_name = f"{firstname} {surname}"
+                                return [
+                                    SlotSet("imprint_uid", str(uid)),
+                                    SlotSet("imprint_name", imprint_name),
+                                    FollowupAction("action_handle_enrollment_routing")
+                                ]
                         else:
                             logger.info(f"No record found for {query_firstname} {query_surname}")
+                            
+                            if slot_prefix == "voiceclone":
+                                # Voice cloning flow - speaker not found
+                                dispatcher.utter_message(response="utter_speaker_not_found")
+                                return [
+                                    SlotSet("voiceclone_speaker_name", None),
+                                    SlotSet("voiceclone_uid", None)
+                                ]
+                            else:
+                                # Enrollment flow - no record, proceed to routing
+                                return [
+                                    SlotSet("imprint_uid", None),
+                                    FollowupAction("action_handle_enrollment_routing")
+                                ]
+                    
+                    elif response.status == HTTPStatus.NOT_FOUND:
+                        logger.info(f"No record found for {query_firstname} {query_surname} (404)")
+                        
+                        if slot_prefix == "voiceclone":
+                            dispatcher.utter_message(response="utter_speaker_not_found")
+                            return [
+                                SlotSet("voiceclone_speaker_name", None),
+                                SlotSet("voiceclone_uid", None)
+                            ]
+                        else:
                             return [
                                 SlotSet("imprint_uid", None),
                                 FollowupAction("action_handle_enrollment_routing")
                             ]
+                    
                     else:
                         logger.error(f"Server returned status {response.status}")
-                        return [
-                            SlotSet("imprint_uid", None),
-                            FollowupAction("action_handle_enrollment_routing")
-                        ]
                         
+                        if slot_prefix == "voiceclone":
+                            dispatcher.utter_message(text="I'm having trouble looking up that speaker. Please try again.")
+                            return [
+                                SlotSet("voiceclone_speaker_name", None)
+                                #SlotSet("voiceclone_uid", None)
+                            ]
+                        else:
+                            return [
+                                SlotSet("imprint_uid", None),
+                                FollowupAction("action_handle_enrollment_routing")
+                            ]
+        
         except Exception as e:
             logger.error(f"Error querying userbase: {e}")
-            return [
-                SlotSet("imprint_uid", None),
-                FollowupAction("action_handle_enrollment_routing")
-            ]
+            
+            if slot_prefix == "voiceclone":
+                dispatcher.utter_message(text="I encountered an error looking up that speaker. Please try again.")
+                return [
+                    SlotSet("voiceclone_speaker_name", None)
+                    #SlotSet("voiceclone_uid", None)
+                ]
+            else:
+                return [
+                    SlotSet("imprint_uid", None),
+                    FollowupAction("action_handle_enrollment_routing")
+                ]
 
 class ActionTriggerEnrollment(Action):
     def name(self) -> Text:
@@ -885,3 +965,15 @@ class ActionResetEnrollment(Action):
             SlotSet("enrollment_active", False),
             FollowupAction("action_listen")  # Explicitly tell Rasa to just listen
         ]
+
+class ActionStartVoiceCloning(Action):
+    """Initiates voice cloning workflow"""
+    
+    def name(self) -> Text:
+        return "action_start_voice_cloning"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        return [SlotSet("voiceclone_active", True)]

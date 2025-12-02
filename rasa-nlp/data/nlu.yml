@@ -330,6 +330,18 @@ nlu:
     - SYSTEM_ENROLLMENT_ABORT
     - /enrollment_abort_exact
 
+# Trigger voice cloning experiment
+- intent: request_voice_cloning
+  examples: |
+    - clone voice
+    - voice cloning
+    - clone my voice
+    - I want to clone a voice
+    - let's try voice cloning
+    - can we do voice cloning
+    - experiment with voice cloning
+    - voice clone
+
 #- intent: correct_spelling
 #  examples: |
 #    - actually you spelled that wrong
