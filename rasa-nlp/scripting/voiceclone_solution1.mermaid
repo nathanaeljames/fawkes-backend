@@ -1,0 +1,53 @@
+flowchart TD
+    Start[Enrollment Success OR User triggers voice cloning] --> AskExperiment{Ask: Would you like to<br/>experiment with voice cloning?}
+    
+    AskExperiment -->|User Affirms| AskWhoseVoice[Ask: Whose voice would<br/>you like to clone?]
+    AskExperiment -->|User Denies| End[Exit Flow]
+    
+    AskWhoseVoice --> ReceiveName[Receive firstname<br/>or firstname + surname]
+    
+    ReceiveName --> QuerySpeakers[Query speakers table via<br/>SpeakerQueryRequest]
+    
+    QuerySpeakers --> CheckMatches{Check<br/>matches}
+    
+    CheckMatches -->|No Match| UtterNoMatch[Utter: I'm sorry I don't seem<br/>to know that speaker's voice]
+    UtterNoMatch --> End
+    
+    CheckMatches -->|Multiple matches<br/>firstname only| AskSurname[Ask: What is the<br/>speaker's last name?]
+    AskSurname --> ReceiveSurname[Receive surname]
+    ReceiveSurname --> QuerySpeakers
+    
+    CheckMatches -->|Single Match| UtterGreat[Utter: Great!]
+    UtterGreat --> SaveUID[Save match uid to<br/>slot 'voiceclone_uid']
+    
+    SaveUID --> QueryPassages[Query passages table for<br/>unique sources]
+    
+    QueryPassages --> AskSource[Ask: Would you like to hear a passage<br/>from source1, source2, or source3?]
+    
+    AskSource --> ReceiveSourceChoice[Receive user's<br/>source choice]
+    
+    ReceiveSourceChoice --> FuzzyMatch{Fuzzy match<br/>to sources}
+    
+    FuzzyMatch -->|No Match| AskSource
+    
+    FuzzyMatch -->|Match Found| SelectQuote[Select random quote from passages<br/>WHERE source = match]
+    
+    SelectQuote --> SendToWebsocket[Send uid + quote to<br/>websocket endpoint]
+    
+    SendToWebsocket --> ConvertAndSynthesize[Convert uid to speaker_name<br/>Call synthesize_xtts_audio<br/>via parallel_tts_pipeline]
+    
+    ConvertAndSynthesize --> PlayAudio[Stream audio to user]
+    
+    PlayAudio --> AskAnother{Ask: Would you like to<br/>hear another quote?}
+    
+    AskAnother -->|User Affirms| AskSource
+    AskAnother -->|User Denies| End
+    
+    style Start fill:#1e3a8a,stroke:#60a5fa,stroke-width:3px,color:#fff
+    style End fill:#7f1d1d,stroke:#f87171,stroke-width:3px,color:#fff
+    style SaveUID fill:#14532d,stroke:#4ade80,stroke-width:3px,color:#fff
+    style PlayAudio fill:#78350f,stroke:#fbbf24,stroke-width:3px,color:#fff
+    style AskExperiment fill:#312e81,stroke:#a78bfa,stroke-width:2px,color:#fff
+    style CheckMatches fill:#312e81,stroke:#a78bfa,stroke-width:2px,color:#fff
+    style FuzzyMatch fill:#312e81,stroke:#a78bfa,stroke-width:2px,color:#fff
+    style AskAnother fill:#312e81,stroke:#a78bfa,stroke-width:2px,color:#fff

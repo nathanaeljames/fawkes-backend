@@ -148,6 +148,7 @@ rules:
   - intent: deny
   - action: utter_very_well
   - action: action_reset_enrollment
+  #- TODO action: action_mute_enrollment
 
 - rule: Trigger enrollment and ask if familiar
   steps:
@@ -176,15 +177,51 @@ rules:
 #  - action: action_set_name_slots
 #  - action: action_handle_name_input
 
-- rule: Reset enrollment flags on success
+- rule: Reset enrollment flags on success and transition to voice cloning
   steps:
     - intent: system_enrollment_complete_success
     - action: action_reset_enrollment
+    - action: utter_ask_experiment_voice_cloning
 
 - rule: Reset enrollment flags on abort
   steps:
     - intent: system_enrollment_complete_aborted
     - action: action_reset_enrollment
+
+# User triggers voice cloning directly
+- rule: User requests voice cloning
+  steps:
+    - intent: request_voice_cloning
+    - action: action_start_voice_cloning
+    - action: utter_ask_whose_voice
+
+# Handle voice cloning affirmative response
+- rule: User affirms voice cloning
+  condition:
+    - action: utter_ask_experiment_voice_cloning
+  steps:
+    - intent: affirm
+    - action: action_start_voice_cloning
+    - action: utter_ask_whose_voice
+
+# Handle voice cloning denial
+- rule: User denies voice cloning
+  condition:
+    - action: utter_ask_experiment_voice_cloning
+  steps:
+    - intent: deny
+    - action: action_reset_voice_cloning
+
+# Double check username in voice clone flow
+- rule: Query speaker after name provided
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+  steps:
+    - or:
+      - intent: provide_first_name
+      - intent: provide_full_name
+    - action: action_query_userbase
 
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:

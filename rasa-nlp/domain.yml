@@ -16,6 +16,7 @@ intents:
   - start_spelling
   - system_enrollment_complete_success
   - system_enrollment_complete_aborted
+  - request_voice_cloning
 
 
 entities:
@@ -48,7 +49,7 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  # Imprint speaker tracking: name, uid, firstname, surname, firstname spelled, surname spelled
+  # IMPRINT speaker tracking: name, uid, firstname, surname, firstname spelled, surname spelled
   imprint_name:
     type: text
     mappings:
@@ -89,7 +90,31 @@ slots:
     initial_value: null
     mappings:
       - type: custom
-  # Name collection form/ imprint variables: is name complete, spelling stage, enrollment active, enrollment muted
+  # VOICECLONE speaker tracking
+  voiceclone_speaker_name:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  voiceclone_firstname:
+    type: text
+    mappings:
+      - type: from_entity
+        entity: firstname
+        intent: [provide_full_name, provide_first_name]
+        conditions:
+          - active_loop: null
+  voiceclone_surname:
+    type: text
+    initial_value: null
+    mappings:
+      - type: from_entity
+        entity: surname
+        intent: provide_full_name
+        conditions:
+          - active_loop: null
+  # IMPRINT workflow - Name collection form/ imprint variables: is name complete, spelling stage, enrollment active, enrollment muted
   name_complete:
     type: bool
     initial_value: false
@@ -112,6 +137,29 @@ slots:
     type: bool
     initial_value: false
     influence_conversation: false
+    mappings:
+      - type: custom
+  # VOICECLONE workflow
+  available_passage_sources:
+    type: list
+    initial_value: []
+    influence_conversation: false
+    mappings:
+      - type: custom
+  selected_passage_source:
+    type: text
+    initial_value: null
+    mappings:
+      - type: from_entity
+        entity: passage_source
+        intent: select_passage_source
+      - type: from_text
+        conditions:
+          - active_loop: null
+  voiceclone_active:
+    type: bool
+    initial_value: false
+    influence_conversation: true
     mappings:
       - type: custom
   # Basic action variables: server name, part of day, time of day
@@ -242,6 +290,27 @@ responses:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
   - text: "I don't understand. Can you try saying that differently?"
 
+  utter_ask_experiment_voice_cloning:
+    - text: "Would you like to experiment with voice cloning?"
+  
+  utter_ask_whose_voice:
+    - text: "Whose voice would you like to clone?"
+  
+  utter_ask_speaker_surname:
+    - text: "What is the speaker's last name?"
+  
+  utter_speaker_not_found:
+    - text: "I'm sorry, I don't seem to know that speaker's voice."
+
+  utter_ask_passage_source:
+    - text: "Would you like to hear a passage from {available_passage_sources}?"
+  
+  utter_ask_another_quote:
+    - text: "Would you like to hear another quote?"
+  
+  utter_voice_cloning_complete:
+    - text: "Voice cloning experiment complete."
+
 actions:
   - action_log_slots
   - action_set_time_of_day
@@ -259,6 +328,7 @@ actions:
   - action_handle_name_input
   - action_handle_enrollment_routing
   - action_reset_enrollment
+  - action_start_voice_cloning
 
 session_config:
   session_expiration_time: 60
