@@ -245,6 +245,8 @@ nlu:
     - [Ricardo](firstname) [Martínez Rivera](surname)
     - [Kristin](firstname) [Scott Thomas](surname)
     - [Robert](firstname) [Hanbury Brown](surname)
+    - [Mary-Ann](firstname) [Johnson](surname)
+    - [Jean-Luc](firstname) [Picard](surname)
 
 - regex: provide_first_name_pattern
   examples: |
