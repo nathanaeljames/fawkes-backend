@@ -24,7 +24,6 @@ curl -X POST http://localhost:9002/api/enrollment_status \
     "status": "abandoned"
   }'
 
-
 # Test querying for a user with surname
 curl -X POST http://localhost:9002/api/query \
   -H "Content-Type: application/json" \
@@ -73,8 +72,7 @@ curl -X POST http://localhost:9001/api/record \
 # If error: {"error": "error message", "success": false}
 
 
-Set slots with curl
-
+# Set slots with curl
 curl -X POST http://crunchatizer:5007/conversations/d503e0a213bf4a8298628b86d8bbda45/tracker/events \
   -H "Content-Type: application/json" \
   -d '{
@@ -83,12 +81,13 @@ curl -X POST http://crunchatizer:5007/conversations/d503e0a213bf4a8298628b86d8bb
     "value": "Aaron"
   }'
 
-
+# Trigger record pangram
 curl -X POST http://localhost:9002/api/record_pangram \
   -H "Content-Type: application/json" \
   -d '{
-    "sender_id": "570a867f-2311-418e-9dc1-80695be68141",
+    "sender_id": "a527264f-8c1e-4237-8801-55eda506083a",
     "imprint_uid": "1",
     "imprint_firstname": "Nathanael",
     "imprint_surname": "Warren"
   }'
+

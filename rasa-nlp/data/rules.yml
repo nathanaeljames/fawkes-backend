@@ -197,18 +197,16 @@ rules:
 
 # Handle voice cloning affirmative response
 - rule: User affirms voice cloning
-  condition:
-    - action: utter_ask_experiment_voice_cloning
   steps:
+    - action: utter_ask_experiment_voice_cloning
     - intent: affirm
     - action: action_start_voice_cloning
     - action: utter_ask_whose_voice
 
 # Handle voice cloning denial
 - rule: User denies voice cloning
-  condition:
-    - action: utter_ask_experiment_voice_cloning
   steps:
+    - action: utter_ask_experiment_voice_cloning
     - intent: deny
     - action: action_reset_voice_cloning
 
