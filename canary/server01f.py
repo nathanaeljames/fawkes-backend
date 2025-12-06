@@ -1924,6 +1924,8 @@ class EnrollmentAPIModels:
     
     class SpeakerQueryResponse(BaseModel):
         uid: Optional[int] = None
+        firstname: Optional[str] = None
+        surname: Optional[str] = None
         success: bool = True
     
     class RecordPangramResponse(BaseModel):
@@ -1937,7 +1939,7 @@ class EnrollmentAPIModels:
 class EnrollmentAPIHandler:
     """Handles FastAPI endpoints for speaker enrollment workflows"""
     
-    def __init__(self, db_connection, recording_manager):
+    def __init__(self, db_connection, recording_manager, ecapa_matcher):
         """
         Initialize the API handler.
         
@@ -1947,88 +1949,83 @@ class EnrollmentAPIHandler:
         """
         self.con = db_connection
         self.recording_manager = recording_manager
+        self.ecapa_matcher = ecapa_matcher
 
     async def query_speaker(self, request: EnrollmentAPIModels.SpeakerQueryRequest) -> EnrollmentAPIModels.SpeakerQueryResponse:
         """
-        Query speaker information from database with fuzzy matching.
+        Query speaker information using in-memory speaker matrix with fuzzy matching.
         Used by Rasa to check if a speaker exists before enrollment.
         
         Fuzzy matching handles:
         - Phonetic similarities (Aaron -> Eron)
-        - Hyphenated names (Mosier-Warren -> Mosier Warren)
+        - Hyphenated names (Mosier-Warren -> Mosier Warren) - BIDIRECTIONAL
         - Case insensitivity
-        TODO: This method load entire db into memory with each query, not efficient for large databases
+        - Multi-word surnames with mixed hyphens/spaces
         """
         try:
             if request.table != "speakers":
                 raise HTTPException(status_code=400, detail=f"Unsupported table: {request.table}")
             
-            # Normalize input: lowercase, replace hyphens with spaces
+            # Check if we have any speakers loaded
+            if not self.ecapa_matcher.speaker_names or len(self.ecapa_matcher.speaker_names) == 0:
+                print(f"[Enrollment API] No speakers loaded in memory")
+                return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=True)
+            
+            # Normalize input: lowercase, convert ALL hyphens to spaces
             query_firstname_normalized = request.firstname.lower().replace("-", " ").strip()
             query_surname_normalized = request.surname.lower().replace("-", " ").strip() if request.surname else ""
             query_fullname = f"{query_firstname_normalized} {query_surname_normalized}".strip()
             
-            print(f"[Enrollment API] Fuzzy query for: '{query_fullname}'")
+            print(f"[Enrollment API] Fuzzy query for: '{query_fullname}' (original: '{request.firstname} {request.surname or ''}')")
             
-            # Fetch all speakers from database
-            if request.surname:
-                # Query with both firstname and surname
-                results = self.con.execute("""
-                    SELECT uid, firstname, surname FROM speakers
-                """).fetchall()
-            else:
-                # Query with firstname only
-                results = self.con.execute("""
-                    SELECT uid, firstname, surname FROM speakers
-                    WHERE surname IS NULL
-                """).fetchall()
-            
-            if not results:
-                print(f"[Enrollment API] No speakers in database")
-                return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=True)
-            
-            # Build list of candidates with normalized names
-            candidates = []
-            for uid, firstname, surname in results:
-                # Normalize database names
-                db_firstname_normalized = firstname.lower().replace("-", " ").strip()
-                db_surname_normalized = surname.lower().replace("-", " ").strip() if surname else ""
-                db_fullname = f"{db_firstname_normalized} {db_surname_normalized}".strip()
-                
-                candidates.append({
-                    "uid": uid,
-                    "firstname": firstname,
-                    "surname": surname,
-                    "normalized_fullname": db_fullname,
-                    "normalized_firstname": db_firstname_normalized,
-                    "normalized_surname": db_surname_normalized
-                })
-            
-            # Find best match
+            # Use existing in-memory data from ecapa_matcher
+            # No database query needed - we already have all speaker names!
             best_match = None
             best_score = 0.0
             
-            for candidate in candidates:
+            for idx, speaker_name in enumerate(self.ecapa_matcher.speaker_names):
+                uid = self.ecapa_matcher.speaker_uids[idx]
+                
+                # Parse the speaker name from matrix (format: "firstname surname" or "firstname")
+                name_parts = speaker_name.split()
+                if len(name_parts) >= 2:
+                    db_firstname = name_parts[0]
+                    db_surname = " ".join(name_parts[1:])  # Handle multi-part surnames
+                else:
+                    db_firstname = name_parts[0]
+                    db_surname = ""
+                
+                # Normalize database names the same way: convert hyphens to spaces
+                db_firstname_normalized = db_firstname.lower().replace("-", " ").strip()
+                db_surname_normalized = db_surname.lower().replace("-", " ").strip() if db_surname else ""
+                db_fullname = f"{db_firstname_normalized} {db_surname_normalized}".strip()
+                
+                # Calculate similarity score
                 if request.surname:
                     # Match full name when surname is provided
-                    score = SequenceMatcher(None, query_fullname, candidate["normalized_fullname"]).ratio()
+                    score = SequenceMatcher(None, query_fullname, db_fullname).ratio()
                 else:
                     # Match firstname only when no surname provided
-                    score = SequenceMatcher(None, query_firstname_normalized, candidate["normalized_firstname"]).ratio()
+                    score = SequenceMatcher(None, query_firstname_normalized, db_firstname_normalized).ratio()
                 
                 if score > best_score:
                     best_score = score
-                    best_match = candidate
+                    best_match = {
+                        "uid": uid,
+                        "firstname": db_firstname,
+                        "surname": db_surname if db_surname else None,
+                        "speaker_name": speaker_name
+                    }
             
             # Threshold for accepting a match (0.75 = 75% similarity)
             FUZZY_THRESHOLD = 0.75
+            # TODO move all constants to config and organize clearly
             
             if best_match and best_score >= FUZZY_THRESHOLD:
-                uid = best_match["uid"]
                 matched_name = f"{best_match['firstname']} {best_match['surname']}" if best_match['surname'] else best_match['firstname']
-                print(f"[Enrollment API] Fuzzy match found: '{matched_name}' (UID={uid}, score={best_score:.2f})")
+                print(f"[Enrollment API] Fuzzy match found: '{matched_name}' (UID={best_match['uid']}, score={best_score:.2f})")
                 return EnrollmentAPIModels.SpeakerQueryResponse(
-                    uid=uid,
+                    uid=best_match["uid"],
                     firstname=best_match["firstname"],
                     surname=best_match["surname"],
                     success=True
@@ -2750,7 +2747,8 @@ class EnrollmentRecordingManager:
                         rasa_response = await response.json()
                         print(f"[Enrollment] Triggered {status} intent: {system_message}")
                         print(f"[Enrollment] Rasa response: {rasa_response}")
-                        return True
+                        #return True
+                        return await process_rasa_response(client_id, rasa_response)
                     else:
                         print(f"[Enrollment] Failed to trigger intent: {response.status}")
                         return False
@@ -3732,7 +3730,8 @@ async def main():
     )
     enrollment_api_handler = EnrollmentAPIHandler(
         db_connection=con,
-        recording_manager=enrollment_recording_manager
+        recording_manager=enrollment_recording_manager,
+        ecapa_matcher=ecapa_matcher
     )
 
     # ADD INITIAL SPEAKERS TO DB

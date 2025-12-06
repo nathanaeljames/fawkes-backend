@@ -705,15 +705,15 @@ class ActionQueryUserbase(Action):
             logger.warning(f"Missing name information - firstname: {query_firstname}, surname: {query_surname}")
             
             if slot_prefix == "voiceclone":
-                # For voice cloning, we need the full name to proceed
-                if not query_surname and query_firstname:
-                    # Only have firstname, ask for surname
-                    dispatcher.utter_message(response="utter_ask_speaker_surname")
-                    return []
-                else:
-                    # Missing firstname entirely
-                    dispatcher.utter_message(response="utter_ask_whose_voice")
-                    return []
+                # Check if we have incomplete name info
+                if not query_firstname or not query_surname:
+                    dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+                    # Clear slots on error so they don't persist
+                    return [
+                        SlotSet("voiceclone_firstname", None),
+                        SlotSet("voiceclone_surname", None),
+                        SlotSet("voiceclone_speaker_name", None)
+                    ]
             else:
                 # For enrollment, chain to routing
                 return [
@@ -753,7 +753,7 @@ class ActionQueryUserbase(Action):
                             
                             if slot_prefix == "voiceclone":
                                 # Voice cloning flow - set speaker name
-                                speaker_name = f"{firstname}_{surname}"
+                                speaker_name = f"{firstname}_{surname}".lower()
                                 dispatcher.utter_message(response="utter_speaker_found_great")
                                 return [
                                     SlotSet("voiceclone_speaker_name", speaker_name)
@@ -962,8 +962,8 @@ class ActionResetEnrollment(Action):
         
         # Always set the slot, even if the API call failed, to ensure Rasa's state is updated
         return [
-            SlotSet("enrollment_active", False),
-            FollowupAction("action_listen")  # Explicitly tell Rasa to just listen
+            SlotSet("enrollment_active", False)
+            #FollowupAction("action_listen")  # Explicitly tell Rasa to just listen
         ]
 
 class ActionStartVoiceCloning(Action):
@@ -977,3 +977,23 @@ class ActionStartVoiceCloning(Action):
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
         return [SlotSet("voiceclone_active", True)]
+
+class ActionResetVoiceCloning(Action):
+    """Reset voice cloning slots and state"""
+    
+    def name(self) -> Text:
+        return "action_reset_voice_cloning"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        return [
+            SlotSet("voiceclone_active", False),
+            SlotSet("voiceclone_speaker_name", None),
+            SlotSet("voiceclone_firstname", None),
+            SlotSet("voiceclone_surname", None),
+            SlotSet("available_passage_sources", []),
+            SlotSet("selected_passage_source", None),
+            SlotSet("selected_quote", None)
+        ]
