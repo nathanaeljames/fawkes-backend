@@ -192,6 +192,7 @@ rules:
 - rule: User requests voice cloning
   steps:
     - intent: request_voice_cloning
+    - action: action_reset_voice_cloning
     - action: action_start_voice_cloning
     - action: utter_ask_whose_voice
 
@@ -219,7 +220,36 @@ rules:
     - or:
       - intent: provide_first_name
       - intent: provide_full_name
+    - action: action_set_voiceclone_lazyname
     - action: action_query_userbase
+
+# Query speaker after name provided in voice clone flow
+#- rule: Query speaker after name provided
+#  condition:
+#    - slot_was_set:
+#        - voiceclone_active: true
+#  steps:
+#    - action: action_query_userbase
+
+# User confirms speaker match (70-94% confidence)
+- rule: User confirms speaker match
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+        - voiceclone_candidate
+  steps:
+    - intent: affirm
+    - action: action_confirm_speaker_match
+
+# User rejects speaker match
+- rule: User rejects speaker match
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+        - voiceclone_candidate
+  steps:
+    - intent: deny
+    - action: action_reject_speaker_match
 
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:
