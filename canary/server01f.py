@@ -85,7 +85,7 @@ CONFIG = {
     "silence_duration_for_finality_ms": 500, # ms of silence to trigger finality
     "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/",
     "ecapa_tdnn_model_path": "/root/fawkes/models/ecapa_tdnn_embed/ecapa_tdnn.nemo",
-    "duckdb_path": "./speakers/speakers.duckdb",
+    "duckdb_path": "./speakers/database.duckdb",
     "server_name": "Fawkes",
     "default_speaker": "unknown speaker",
     "default_speaker_confidence": "uncertain",
@@ -3792,11 +3792,11 @@ async def main():
     wav_path_3 = "/root/fawkes/audio_samples/_preprocessed/neilgaiman_01.wav"
     try:
         #await xtts_wrapper.extract_xtts_embed(wav_path, firstname="neil", surname="gaiman")
-        #await ecapa_processor.create_initial_speaker_imprint(wav_path, firstname="nathanael", surname="warren")
+        #await ecapa_processor.create_initial_speaker_imprint(wav_path, firstname="Nathanael", surname="Warren")
         results = await asyncio.gather(
-            ecapa_processor.create_initial_speaker_imprint(wav_path_1, firstname="nathanael", surname="warren"),
-            ecapa_processor.create_initial_speaker_imprint(wav_path_2, firstname="courtney", surname="mosierwarren"),
-            ecapa_processor.create_initial_speaker_imprint(wav_path_3, firstname="neil", surname="gaiman")
+            ecapa_processor.create_initial_speaker_imprint(wav_path_1, firstname="Nathanael", surname="Warren"),
+            ecapa_processor.create_initial_speaker_imprint(wav_path_2, firstname="Courtney", surname="Mosier Warren"),
+            ecapa_processor.create_initial_speaker_imprint(wav_path_3, firstname="Neil", surname="Gaiman")
         )
     except FileNotFoundError:
         print(f"Error: The file(s) were not found. Please check the paths and try again.")
@@ -3819,11 +3819,11 @@ async def main():
         "/root/fawkes/audio_samples/_preprocessed/nate_iphone_mic.wav",
         "/root/fawkes/audio_samples/_preprocessed/nate_samson_meteorite.wav"
     ]
-    result = await manual_sequential_ecapa("nathanael", "warren", nathanael_wavs)
+    result = await manual_sequential_ecapa("Nathanael", "Warren", nathanael_wavs)
     courtney_wavs = [
         "/root/fawkes/audio_samples/_preprocessed/courtney_01.wav"
     ]
-    result = await manual_sequential_ecapa("courtney", "mosierwarren", courtney_wavs)
+    result = await manual_sequential_ecapa("Courtney", "Mosier Warren", courtney_wavs)
     '''
 
     # Initialize persistent Rasa client if enabled
