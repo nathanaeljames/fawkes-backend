@@ -1,0 +1,82 @@
+flowchart TD
+    Start[User triggers voice cloning] --> Init[action_start_voice_cloning<br/>Sets voiceclone_active = true]
+    Init --> Ask[Fawkes: Whose voice would<br/>you like to clone?]
+    
+    Ask --> UserInput[User provides name<br/>provide_first_name OR<br/>provide_full_name intent]
+    UserInput --> Capture[action_set_voiceclone_lazyname<br/>Captures full text to<br/>voiceclone_lazyname slot]
+    Capture --> Query[action_query_userbase<br/>POST /api/query<br/>full_name: lazyname]
+    
+    Query --> CheckStatus{Response<br/>Status?}
+    
+    CheckStatus -->|not_found| NotFound[Manual format message:<br/>I'm sorry I don't seem to have<br/>any speaker on file with the<br/>name voiceclone_lazyname]
+    NotFound --> ResetNotFound[action_reset_voice_cloning<br/>+ FollowupAction action_listen]
+    ResetNotFound --> End1[Exit: Return to listening]
+    
+    CheckStatus -->|success| CheckConf{Confidence<br/>Level?}
+    
+    CheckConf -->|≥ 0.95<br/>High| SetHigh[Set slots FIRST:<br/>voiceclone_candidate = matched_name<br/>voiceclone_verified = speaker_name<br/>voiceclone_confidence = confidence<br/>voiceclone_lazyname = None]
+    SetHigh --> MsgHigh[Manual format message:<br/>Proceeding to voice clone<br/>with matched_name]
+    MsgHigh --> ResetRetryHigh[Reset voiceclone_retry_count = 0]
+    ResetRetryHigh --> Continue1[TODO: Continue to<br/>passage selection]
+    
+    CheckConf -->|0.70-0.94<br/>Medium| SetMed[Set slots FIRST:<br/>voiceclone_candidate = matched_name<br/>voiceclone_verified = speaker_name<br/>voiceclone_confidence = confidence<br/>voiceclone_lazyname = None]
+    SetMed --> MsgMed[Manual format message:<br/>Did you mean matched_name?]
+    MsgMed --> WaitResp{User<br/>Response?}
+    
+    WaitResp -->|affirm| Confirm[action_confirm_speaker_match]
+    Confirm --> MsgConfirm[Manual format message:<br/>Proceeding to voice clone<br/>with voiceclone_candidate]
+    MsgConfirm --> ClearConf[Clear voiceclone_confidence<br/>Reset voiceclone_retry_count = 0]
+    ClearConf --> Continue2[TODO: Continue to<br/>passage selection]
+    
+    WaitResp -->|deny| Reject[action_reject_speaker_match<br/>Clear candidate, verified, confidence]
+    Reject --> CheckRetryDeny{retry_count<br/>< 2?}
+    
+    CheckRetryDeny -->|Yes| RetryDeny[Manual format message:<br/>I'm sorry I didn't catch that.<br/>Can you say their first and last name?<br/>Increment retry_count]
+    RetryDeny --> UserInput
+    
+    CheckRetryDeny -->|No| AbortDeny[Manual format message:<br/>I'm sorry I don't seem to have<br/>any speaker on file with the<br/>name voiceclone_lazyname]
+    AbortDeny --> ResetDeny[Reset retry_count = 0<br/>action_reset_voice_cloning<br/>+ FollowupAction action_listen]
+    ResetDeny --> End2[Exit: Return to listening]
+    
+    CheckConf -->|< 0.70<br/>Low| CheckRetryLow{retry_count<br/>< 2?}
+    
+    CheckRetryLow -->|Yes| RetryLow[Manual format message:<br/>I'm sorry I didn't catch that.<br/>Can you say their first and last name?<br/>Increment retry_count]
+    RetryLow --> UserInput
+    
+    CheckRetryLow -->|No| AbortLow[Manual format message:<br/>I'm sorry I don't seem to have<br/>any speaker on file with the<br/>name voiceclone_lazyname]
+    AbortLow --> ResetLow[Reset retry_count = 0<br/>action_reset_voice_cloning<br/>+ FollowupAction action_listen]
+    ResetLow --> End3[Exit: Return to listening]
+    
+    %% Start/End Nodes
+    style Start fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    style End1 fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    style End2 fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    style End3 fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    
+    %% Form/Input Nodes
+    style UserInput fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style Ask fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style MsgHigh fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style MsgMed fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style MsgConfirm fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style NotFound fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style RetryDeny fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style RetryLow fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style AbortDeny fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    style AbortLow fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    
+    %% Action Handlers
+    style Init fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Capture fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Query fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style SetHigh fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style SetMed fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ResetRetryHigh fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Confirm fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ClearConf fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Reject fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ResetNotFound fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ResetDeny fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style ResetLow fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Continue1 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    style Continue2 fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
