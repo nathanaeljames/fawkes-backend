@@ -90,24 +90,6 @@ slots:
     initial_value: null
     mappings:
       - type: custom
-  # VOICECLONE speaker tracking
-  voiceclone_lazyname:
-    type: text
-    initial_value: null
-    mappings:
-      - type: custom
-  voiceclone_candidate:
-    type: text
-    initial_value: null
-    influence_conversation: false
-    mappings:
-      - type: custom
-  voiceclone_verified:
-    type: text
-    initial_value: null
-    influence_conversation: false
-    mappings:
-      - type: custom
   # IMPRINT workflow - Name collection form/ imprint variables: is name complete, spelling stage, enrollment active, enrollment muted
   name_complete:
     type: bool
@@ -133,7 +115,25 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  # VOICECLONE workflow
+  # VOICECLONE speaker tracking
+  voiceclone_lazyname:
+    type: text
+    initial_value: null
+    mappings:
+      - type: custom
+  voiceclone_candidate:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  voiceclone_verified:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  # VOICECLONE name selection
   voiceclone_confidence:
     type: float
     initial_value: null
@@ -152,6 +152,7 @@ slots:
     influence_conversation: true
     mappings:
       - type: custom
+  # VOICECLONE passage selection
   available_passage_sources:
     type: list
     initial_value: []
@@ -162,7 +163,8 @@ slots:
     type: text
     initial_value: null
     mappings:
-      - type: custom
+      - type: from_text
+        intent: select_passage_source
   selected_quote:
     type: text
     initial_value: null
@@ -349,6 +351,8 @@ actions:
   - action_confirm_speaker_match
   - action_reject_speaker_match
   - action_set_voiceclone_lazyname
+  - action_fetch_passage_sources
+  - action_select_and_synthesize_passage
 
 session_config:
   session_expiration_time: 60

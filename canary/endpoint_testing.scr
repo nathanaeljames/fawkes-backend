@@ -85,7 +85,7 @@ curl -X POST http://crunchatizer:5007/conversations/d503e0a213bf4a8298628b86d8bb
 curl -X POST http://localhost:9002/api/record_pangram \
   -H "Content-Type: application/json" \
   -d '{
-    "sender_id": "a527264f-8c1e-4237-8801-55eda506083a",
+    "sender_id": "fd44157e-409e-48f4-bbe3-3d4790683a37",
     "imprint_uid": "1",
     "imprint_firstname": "Nathanael",
     "imprint_surname": "Warren"

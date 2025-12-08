@@ -2860,6 +2860,7 @@ class EnrollmentRecordingManager:
 # Initialize handler
 enrollment_api_handler = None
 # Register endpoints
+# TODO change /api/query to api/speakers/query for clarity/ uniformity
 @app.post("/api/query", response_model=EnrollmentAPIModels.SpeakerQueryResponse)
 async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryRequest):
     """Endpoint for Rasa to query speaker existence in database"""
@@ -3779,52 +3780,6 @@ async def main():
         recording_manager=enrollment_recording_manager,
         ecapa_matcher=ecapa_matcher
     )
-
-    # ADD INITIAL SPEAKERS TO DB
-    '''
-    # 1. Query the database to see how many speakers are there before adding
-    print("--- Number of speakers BEFORE adding new speaker ---")
-    results_before = con.execute("SELECT COUNT(*) FROM speakers").fetchall()
-    print(f"Current speaker count: {results_before[0][0]}")
-    # 2. Call the extract_embed function
-    wav_path_1 = "/root/fawkes/audio_samples/_preprocessed/nate_jabra_mic.wav"
-    wav_path_2 = "/root/fawkes/audio_samples/_preprocessed/courtney_02.wav"
-    wav_path_3 = "/root/fawkes/audio_samples/_preprocessed/neilgaiman_01.wav"
-    try:
-        #await xtts_wrapper.extract_xtts_embed(wav_path, firstname="neil", surname="gaiman")
-        #await ecapa_processor.create_initial_speaker_imprint(wav_path, firstname="Nathanael", surname="Warren")
-        results = await asyncio.gather(
-            ecapa_processor.create_initial_speaker_imprint(wav_path_1, firstname="Nathanael", surname="Warren"),
-            ecapa_processor.create_initial_speaker_imprint(wav_path_2, firstname="Courtney", surname="Mosier Warren"),
-            ecapa_processor.create_initial_speaker_imprint(wav_path_3, firstname="Neil", surname="Gaiman")
-        )
-    except FileNotFoundError:
-        print(f"Error: The file(s) were not found. Please check the paths and try again.")
-    except Exception as e:
-        print(f"An error occurred while adding the speaker: {e}")
-    # 3. Query the database again to see if the speaker was added successfully
-    print("\n--- Speakers AFTER adding new speaker ---")
-    results_after = con.execute("SELECT firstname, surname FROM speakers").fetchall()
-    print("Updated speaker list:")
-    for row in results_after:
-        print(f"- {row[0]} {row[1]}")
-    # Re-load the speakers into the model's speaker manager to make the new speaker available
-    xtts_wrapper._load_speakers_from_db()
-    '''
-    # ADD SEQUENTIAL ECAPA UPDATES MANUALLY
-    '''
-    nathanael_wavs = [
-        "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav",
-        "/root/fawkes/audio_samples/_preprocessed/nathanael_02.wav", 
-        "/root/fawkes/audio_samples/_preprocessed/nate_iphone_mic.wav",
-        "/root/fawkes/audio_samples/_preprocessed/nate_samson_meteorite.wav"
-    ]
-    result = await manual_sequential_ecapa("Nathanael", "Warren", nathanael_wavs)
-    courtney_wavs = [
-        "/root/fawkes/audio_samples/_preprocessed/courtney_01.wav"
-    ]
-    result = await manual_sequential_ecapa("Courtney", "Mosier Warren", courtney_wavs)
-    '''
 
     # Initialize persistent Rasa client if enabled
     if CONFIG.get("enable_rasa", False):
