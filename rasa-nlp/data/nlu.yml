@@ -500,3 +500,15 @@ nlu:
     - hill
     - edwards
     - brown
+
+# User selects a passage source
+- intent: select_passage_source
+  examples: |
+    - fifty shades
+    - lightning thief
+    - the lightning thief
+    - fifty shades of grey
+    - pg 13 fifty shades
+    - PG-13 Fifty Shades of Grey
+    - percy jackson
+    - lightning thief book
