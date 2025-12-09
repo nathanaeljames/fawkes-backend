@@ -1927,6 +1927,11 @@ class EnrollmentAPIModels:
     class EnrollmentStatusRequest(BaseModel):
         client_id: str
         status: str  # "completed" or "abandoned"
+
+    class PassagesQueryRequest(BaseModel):
+        action: str  # "unique_sources", "match_source", "select_quote"
+        fuzzy_source: Optional[str] = None  # For match_source
+        source_name: Optional[str] = None   # For select_quote
     
     class SpeakerQueryResponse(BaseModel):
         uid: Optional[int] = None
@@ -1944,6 +1949,14 @@ class EnrollmentAPIModels:
     class EnrollmentStatusResponse(BaseModel):
         success: bool
         message: str = ""
+
+    class PassagesQueryResponse(BaseModel):
+        action: str
+        sources: Optional[List[str]] = None # For unique_sources
+        source_name: Optional[str] = None # For match_source
+        confidence: Optional[float] = None
+        quote: Optional[str] = None # For select_quote
+        success: bool = True
 
 class EnrollmentAPIHandler:
     """Handles FastAPI endpoints for speaker enrollment workflows"""
@@ -2084,6 +2097,139 @@ class EnrollmentAPIHandler:
                 success=False
             )
     
+    async def query_passages(self, request: EnrollmentAPIModels.PassagesQueryRequest) -> EnrollmentAPIModels.PassagesQueryResponse:
+        """
+        Unified function to handle all passage queries.
+        Handles: unique_sources, match_source, select_quote
+        """
+        try:
+            # Action 1: Get unique sources
+            if request.action == "unique_sources":
+                sources = self.con.execute("""
+                    SELECT DISTINCT source 
+                    FROM passages 
+                    ORDER BY source
+                """).fetchall()
+                
+                source_list = [row[0] for row in sources]
+                print(f"[Passages] Found {len(source_list)} unique sources")
+                
+                return EnrollmentAPIModels.PassagesQueryResponse(
+                    action="unique_sources",
+                    success=True,
+                    sources=source_list
+                )
+            
+            # Action 2: Match source (fuzzy matching)
+            elif request.action == "match_source":
+                if not request.fuzzy_source:
+                    print(f"[Passages] Invalid query - no fuzzy_source provided")
+                    return EnrollmentAPIModels.PassagesQueryResponse(
+                        action="match_source",
+                        success=False,
+                        source_name=None,
+                        confidence=0.0
+                    )
+                
+                # Get all available sources
+                sources = self.con.execute("""
+                    SELECT DISTINCT source 
+                    FROM passages
+                """).fetchall()
+                
+                available_sources = [row[0] for row in sources]
+                
+                if not available_sources:
+                    print(f"[Passages] No sources in database")
+                    return EnrollmentAPIModels.PassagesQueryResponse(
+                        action="match_source",
+                        success=True,
+                        source_name=None,
+                        confidence=0.0
+                    )
+                
+                # Fuzzy matching logic (inline, like query_speaker)
+                # Normalize: case-insensitive, treat hyphens and spaces equivalently
+                normalized_query = request.fuzzy_source.lower().replace('-', ' ')
+                
+                best_match = None
+                best_score = 0.0
+                
+                for source in available_sources:
+                    normalized_source = source.lower().replace('-', ' ')
+                    
+                    # Use SequenceMatcher for fuzzy matching
+                    score = SequenceMatcher(None, normalized_query, normalized_source).ratio()
+                    
+                    # Also check for substring matches (boost confidence)
+                    if normalized_query in normalized_source or normalized_source in normalized_query:
+                        score = max(score, 0.90)  # Substring match gets high confidence
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = source
+                
+                print(f"[Passages] Match: '{request.fuzzy_source}' → '{best_match}' ({best_score:.2%})")
+                
+                return EnrollmentAPIModels.PassagesQueryResponse(
+                    action="match_source",
+                    success=True,
+                    source_name=best_match,
+                    confidence=round(best_score, 2)
+                )
+            
+            # Action 3: Select random quote from verified source
+            elif request.action == "select_quote":
+                if not request.source_name:
+                    print(f"[Passages] Invalid query - no source_name provided")
+                    return EnrollmentAPIModels.PassagesQueryResponse(
+                        action="select_quote",
+                        success=False,
+                        quote=None
+                    )
+                
+                # Get random quote from source
+                quotes = self.con.execute("""
+                    SELECT quote 
+                    FROM passages 
+                    WHERE source = ?
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """, (request.source_name,)).fetchall()
+                
+                if not quotes:
+                    print(f"[Passages] No quotes found for '{request.source_name}'")
+                    return EnrollmentAPIModels.PassagesQueryResponse(
+                        action="select_quote",
+                        success=True,
+                        quote=None
+                    )
+                
+                selected_quote = quotes[0][0]
+                print(f"[Passages] Selected quote from '{request.source_name}': {selected_quote[:60]}...")
+                
+                return EnrollmentAPIModels.PassagesQueryResponse(
+                    action="select_quote",
+                    success=True,
+                    quote=selected_quote
+                )
+            
+            else:
+                print(f"[Passages] Invalid action: {request.action}")
+                return EnrollmentAPIModels.PassagesQueryResponse(
+                    action=request.action,
+                    success=False
+                )
+            
+        except Exception as e:
+            print(f"[Passages] Error in query_passages: {e}")
+            import traceback
+            traceback.print_exc()
+            return EnrollmentAPIModels.PassagesQueryResponse(
+                action=request.action,
+                success=False
+            )
+
     async def record_pangram(self, request: EnrollmentAPIModels.RecordPangramRequest) -> EnrollmentAPIModels.RecordPangramResponse:
         """
         Initiate pangram recording for speaker enrollment.
@@ -2865,6 +3011,11 @@ enrollment_api_handler = None
 async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryRequest):
     """Endpoint for Rasa to query speaker existence in database"""
     return await enrollment_api_handler.query_speaker(request)
+
+@app.post("/api/passages/query", response_model=EnrollmentAPIModels.PassagesQueryResponse)
+async def query_passages_endpoint(request: EnrollmentAPIModels.PassagesQueryRequest):
+    """Endpoint for Rasa to query passages (sources, matching, quotes)"""
+    return await enrollment_api_handler.query_passages(request)
 
 @app.post("/api/record_pangram", response_model=EnrollmentAPIModels.RecordPangramResponse)
 async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequest):

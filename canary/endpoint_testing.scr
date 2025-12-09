@@ -91,3 +91,41 @@ curl -X POST http://localhost:9002/api/record_pangram \
     "imprint_surname": "Warren"
   }'
 
+# Get unique sources
+curl -X POST http://localhost:9002/api/passages/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "unique_sources"
+  }'
+
+# High confidence source match (exact)
+curl -X POST http://localhost:9002/api/passages/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "match_source",
+    "fuzzy_source": "The Lightning Thief"
+  }'
+
+# Medium confidence source match (fuzzy)
+curl -X POST http://localhost:9002/api/passages/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "match_source",
+    "fuzzy_source": "lightning thief"
+  }'
+
+# Substring match (boosted confidence)
+curl -X POST http://localhost:9002/api/passages/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "match_source",
+    "fuzzy_source": "fifty shades"
+  }'
+
+# No match
+curl -X POST http://localhost:9002/api/passages/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "match_source",
+    "fuzzy_source": "harry potter"
+  }'
