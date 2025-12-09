@@ -1,6 +1,7 @@
 """
 Database Setup Script
-This script creates the DuckDB database structure and populates pangrams and passages.
+This script creates the DuckDB database structure and syncs pangrams and passages with CSV files.
+CSV files are the source of truth - items not in CSV will be removed from database.
 For speakers, it only creates the table structure - use populate_speakers.py to add initial speakers.
 """
 
@@ -20,7 +21,7 @@ def setup_database():
     """
     Sets up the DuckDB tables for storing speaker, pangram, and passage data.
     Speakers table: Creates structure only (use populate_speakers.py to add speakers)
-    Pangrams/Passages: Creates and populates from CSV files
+    Pangrams/Passages: Creates and syncs with CSV files (CSV is source of truth)
     """
     print("=" * 80)
     print("DATABASE SETUP")
@@ -103,85 +104,147 @@ def setup_database():
 
 def populate_pangrams(con):
     """
-    Populate pangrams table from pangrams.csv.
-    Only inserts new pangrams that don't already exist.
+    Sync pangrams table with pangrams.csv (CSV is source of truth).
+    Inserts new pangrams and removes pangrams not in CSV.
+    Handles duplicate pangrams in the database.
     """
-    print("=== Populating Pangrams ===")
+    print("=== Syncing Pangrams ===")
     
     if not PANGRAMS_CSV.exists():
         print(f"⚠ Warning: {PANGRAMS_CSV} not found, skipping pangrams")
         return
     
-    # Get existing pangrams
-    existing_pangrams = set()
-    existing = con.execute("SELECT text FROM pangrams").fetchall()
-    for row in existing:
-        existing_pangrams.add(row[0])
-    
-    print(f"Found {len(existing_pangrams)} existing pangram(s)")
-    
-    # Read and insert new pangrams
-    inserted_count = 0
-    with open(PANGRAMS_CSV, 'r', encoding='utf-8') as f:
+    # Read pangrams from CSV
+    csv_pangrams = set()
+    with open(PANGRAMS_CSV, 'r', encoding='utf-8-sig') as f:  # utf-8-sig strips BOM
         reader = csv.DictReader(f)
         for row in reader:
-            pangram_text = row['text'].strip()
-            
-            if pangram_text not in existing_pangrams:
-                con.execute("""
-                    INSERT INTO pangrams (text) VALUES (?)
-                """, [pangram_text])
-                inserted_count += 1
-                print(f"  + Inserted: {pangram_text[:60]}...")
+            csv_pangrams.add(row['text'].strip())
     
-    if inserted_count == 0:
-        print("  No new pangrams to insert")
-    else:
+    print(f"Found {len(csv_pangrams)} pangram(s) in CSV")
+    
+    # Get ALL pangrams from database (including duplicates)
+    all_db_pangrams = con.execute("SELECT id, text FROM pangrams").fetchall()
+    db_pangram_ids = {}  # text -> list of IDs
+    for row in all_db_pangrams:
+        text = row[1]
+        if text not in db_pangram_ids:
+            db_pangram_ids[text] = []
+        db_pangram_ids[text].append(row[0])
+    
+    print(f"Found {len(all_db_pangrams)} existing pangram(s) in database")
+    if len(all_db_pangrams) > len(db_pangram_ids):
+        print(f"  ⚠ Warning: {len(all_db_pangrams) - len(db_pangram_ids)} duplicate(s) detected")
+    
+    # Remove pangrams not in CSV (including ALL duplicate instances)
+    removed_count = 0
+    for text, ids in db_pangram_ids.items():
+        if text not in csv_pangrams:
+            # Delete all instances of this pangram
+            for pangram_id in ids:
+                con.execute("DELETE FROM pangrams WHERE id = ?", [pangram_id])
+                removed_count += 1
+                print(f"  - Removed ID#{pangram_id}: {text[:60]}...")
+        elif len(ids) > 1:
+            # Keep one, remove duplicates
+            for pangram_id in ids[1:]:
+                con.execute("DELETE FROM pangrams WHERE id = ?", [pangram_id])
+                removed_count += 1
+                print(f"  - Removed duplicate ID#{pangram_id}: {text[:60]}...")
+    
+    if removed_count > 0:
+        print(f"✓ Removed {removed_count} pangram(s)")
+    
+    # Get unique pangrams currently in database after cleanup
+    existing_pangrams = set(db_pangram_ids.keys())
+    
+    # Insert new pangrams
+    to_insert = csv_pangrams - existing_pangrams
+    inserted_count = 0
+    for pangram_text in to_insert:
+        con.execute("INSERT INTO pangrams (text) VALUES (?)", [pangram_text])
+        inserted_count += 1
+        print(f"  + Inserted: {pangram_text[:60]}...")
+    
+    if inserted_count == 0 and removed_count == 0:
+        print("  No changes needed")
+    elif inserted_count > 0:
         print(f"✓ Inserted {inserted_count} new pangram(s)")
-
 
 def populate_passages(con):
     """
-    Populate passages table from passages.csv.
-    Only inserts new passages that don't already exist.
+    Sync passages table with passages.csv (CSV is source of truth).
+    Inserts new passages and removes passages not in CSV.
+    Handles duplicate passages in the database.
     """
-    print("\n=== Populating Passages ===")
+    print("\n=== Syncing Passages ===")
     
     if not PASSAGES_CSV.exists():
         print(f"⚠ Warning: {PASSAGES_CSV} not found, skipping passages")
         return
     
-    # Get existing passages (using source + quote as unique identifier)
-    existing_passages = set()
-    existing = con.execute("SELECT source, quote FROM passages").fetchall()
-    for row in existing:
-        existing_passages.add((row[0], row[1]))
-    
-    print(f"Found {len(existing_passages)} existing passage(s)")
-    
-    # Read and insert new passages
-    inserted_count = 0
-    with open(PASSAGES_CSV, 'r', encoding='utf-8') as f:
+    # Read passages from CSV
+    csv_passages = set()
+    with open(PASSAGES_CSV, 'r', encoding='utf-8-sig') as f:  # utf-8-sig strips BOM
         reader = csv.reader(f)
         for row in reader:
             if len(row) < 2:
                 continue
-            
             source = row[0].strip()
             quote = row[1].strip()
-            
-            if (source, quote) not in existing_passages:
-                con.execute("""
-                    INSERT INTO passages (source, quote) VALUES (?, ?)
-                """, [source, quote])
-                inserted_count += 1
-                print(f"  + Inserted from '{source}': {quote[:50]}...")
+            csv_passages.add((source, quote))
     
-    if inserted_count == 0:
-        print("  No new passages to insert")
-    else:
+    print(f"Found {len(csv_passages)} passage(s) in CSV")
+    
+    # Get ALL passages from database (including duplicates)
+    all_db_passages = con.execute("SELECT id, source, quote FROM passages").fetchall()
+    db_passage_ids = {}  # (source, quote) -> list of IDs
+    for row in all_db_passages:
+        key = (row[1], row[2])
+        if key not in db_passage_ids:
+            db_passage_ids[key] = []
+        db_passage_ids[key].append(row[0])
+    
+    print(f"Found {len(all_db_passages)} existing passage(s) in database")
+    if len(all_db_passages) > len(db_passage_ids):
+        print(f"  ⚠ Warning: {len(all_db_passages) - len(db_passage_ids)} duplicate(s) detected")
+    
+    # Remove passages not in CSV (including ALL duplicate instances)
+    removed_count = 0
+    for key, ids in db_passage_ids.items():
+        if key not in csv_passages:
+            source, quote = key
+            # Delete all instances of this passage
+            for passage_id in ids:
+                con.execute("DELETE FROM passages WHERE id = ?", [passage_id])
+                removed_count += 1
+                print(f"  - Removed ID#{passage_id} from '{source}': {quote[:50]}...")
+        elif len(ids) > 1:
+            # Keep one, remove duplicates
+            for passage_id in ids[1:]:
+                source, quote = key
+                con.execute("DELETE FROM passages WHERE id = ?", [passage_id])
+                removed_count += 1
+                print(f"  - Removed duplicate ID#{passage_id} from '{source}': {quote[:50]}...")
+    
+    if removed_count > 0:
+        print(f"✓ Removed {removed_count} passage(s)")
+    
+    # Get unique passages currently in database after cleanup
+    existing_passages = set(db_passage_ids.keys())
+    
+    # Insert new passages
+    to_insert = csv_passages - existing_passages
+    inserted_count = 0
+    for source, quote in to_insert:
+        con.execute("INSERT INTO passages (source, quote) VALUES (?, ?)", [source, quote])
+        inserted_count += 1
+        print(f"  + Inserted from '{source}': {quote[:50]}...")
+    
+    if inserted_count == 0 and removed_count == 0:
+        print("  No changes needed")
+    elif inserted_count > 0:
         print(f"✓ Inserted {inserted_count} new passage(s)")
-
 
 if __name__ == "__main__":
     setup_database()
