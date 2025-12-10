@@ -17,6 +17,7 @@ intents:
   - system_enrollment_complete_success
   - system_enrollment_complete_aborted
   - request_voice_cloning
+  - select_passage_source
 
 
 entities:
@@ -115,7 +116,7 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  # VOICECLONE speaker tracking
+  # VOICECLONE name selection workflow
   voiceclone_lazyname:
     type: text
     initial_value: null
@@ -127,13 +128,12 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  voiceclone_verified:
+  voiceclone_speakername:
     type: text
     initial_value: null
     influence_conversation: false
     mappings:
       - type: custom
-  # VOICECLONE name selection
   voiceclone_confidence:
     type: float
     initial_value: null
@@ -152,19 +152,49 @@ slots:
     influence_conversation: true
     mappings:
       - type: custom
-  # VOICECLONE passage selection
+  # VOICECLONE passage selection workflow - mirrors voiceclone workflow
+  passagecollect_active:
+    type: bool
+    initial_value: false
+    influence_conversation: true
+    mappings:
+      - type: custom
+  psource_lazystring:
+    type: text
+    initial_value: null
+    mappings:
+      - type: from_text
+        intent: select_passage_source
+  psource_candidate:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  psource_verified:
+    type: text
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  psource_confidence:
+    type: float
+    initial_value: null
+    influence_conversation: false
+    mappings:
+      - type: custom
+  psource_retry_count:
+    type: any
+    initial_value: 0
+    influence_conversation: false
+    mappings:
+      - type: custom
   available_passage_sources:
     type: list
     initial_value: []
     influence_conversation: false
     mappings:
       - type: custom
-  selected_passage_source:
-    type: text
-    initial_value: null
-    mappings:
-      - type: from_text
-        intent: select_passage_source
   selected_quote:
     type: text
     initial_value: null
@@ -329,6 +359,15 @@ responses:
   utter_voice_cloning_complete:
     - text: "Voice cloning experiment complete."
 
+  utter_confirm_passage_source:
+    - text: "Did you mean {psource_candidate}?"
+
+  utter_ask_passage_retry:
+    - text: "I'm sorry I didn't catch that. Can you say the source clearly?"
+
+  utter_psource_abort:
+    - text: "I'm sorry I don't seem to have any quotations from {psource_lazystring}."
+
 actions:
   - action_log_slots
   - action_set_time_of_day
@@ -351,8 +390,12 @@ actions:
   - action_confirm_speaker_match
   - action_reject_speaker_match
   - action_set_voiceclone_lazyname
-  - action_fetch_passage_sources
-  - action_select_and_synthesize_passage
+  - action_query_passages
+  - action_handle_passage_match
+  - action_confirm_passage_match
+  - action_reject_passage_match
+  - action_reset_passage_selection
+  - action_handle_speaker_match
 
 session_config:
   session_expiration_time: 60

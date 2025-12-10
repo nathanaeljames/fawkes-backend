@@ -161,6 +161,7 @@ rules:
   - slot_was_set:
     - enrollment_active: true
   steps:
+  - action: utter_ask_familar
   - or:
     - intent: affirm
     - intent: deny
@@ -192,7 +193,7 @@ rules:
 - rule: User requests voice cloning
   steps:
     - intent: request_voice_cloning
-    - action: action_reset_voice_cloning
+    #- action: action_reset_voice_cloning
     - action: action_start_voice_cloning
     - action: utter_ask_whose_voice
 
@@ -250,6 +251,53 @@ rules:
   steps:
     - intent: deny
     - action: action_reject_speaker_match
+
+# Step 1: After voiceclone verified, fetch unique sources
+- rule: Fetch passage sources after speaker verified
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+        - passagecollect_active: true
+  steps:
+   # - action: utter_voiceclone_proceed
+    - action: action_query_passages  # Action: unique_sources
+    - action: utter_ask_passage_source
+
+# Step 2: Query for match after user provides source name
+- rule: Query passage source after name provided
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+        - passagecollect_active: true
+        - available_passage_sources
+  steps:
+    - intent: select_passage_source
+    - action: action_query_passages  # Action: match_source
+    - action: action_handle_passage_match
+
+# Step 3a: User confirms passage source match (70-94% confidence)
+- rule: User confirms passage source match
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+        - passagecollect_active: true
+        - psource_candidate
+  steps:
+    - action: utter_confirm_passage_source
+    - intent: affirm
+    - action: action_confirm_passage_match
+
+# Step 3b: User rejects passage source match
+- rule: User rejects passage source match
+  condition:
+    - slot_was_set:
+        - voiceclone_active: true
+        - passagecollect_active: true
+        - psource_candidate
+  steps:
+    - action: utter_confirm_passage_source
+    - intent: deny
+    - action: action_reject_passage_match
 
 - rule: Respond to out-of-scope messages with action_do_nothing
   steps:
