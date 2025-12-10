@@ -29,18 +29,18 @@ CONFIG = {
 # Initial speakers to add - UPDATE THESE PATHS TO YOUR AUDIO SAMPLES
 INITIAL_SPEAKERS = [
     {
-        "firstname": "nathanael",
-        "surname": "warren", 
+        "firstname": "Nathanael",
+        "surname": "Warren", 
         "wav_path": "/root/fawkes/audio_samples/_preprocessed/nate_jabra_mic.wav"
     },
     {
-        "firstname": "courtney",
-        "surname": "mosierwarren",
+        "firstname": "Courtney",
+        "surname": "Mosier Warren",
         "wav_path": "/root/fawkes/audio_samples/_preprocessed/courtney_02.wav"
     },
     {
-        "firstname": "neil",
-        "surname": "gaiman",
+        "firstname": "Neil",
+        "surname": "Gaiman",
         "wav_path": "/root/fawkes/audio_samples/_preprocessed/neilgaiman_01.wav"
     }
 ]
@@ -48,8 +48,8 @@ INITIAL_SPEAKERS = [
 # Sequential updates - Additional audio samples to improve existing speaker embeddings
 SPEAKER_UPDATES = [
     {
-        "firstname": "nathanael",
-        "surname": "warren",
+        "firstname": "Nathanael",
+        "surname": "Warren",
         "wav_paths": [
             "/root/fawkes/audio_samples/_preprocessed/nathanael_01.wav",
             "/root/fawkes/audio_samples/_preprocessed/nathanael_02.wav",
@@ -58,8 +58,8 @@ SPEAKER_UPDATES = [
         ]
     },
     {
-        "firstname": "courtney",
-        "surname": "mosierwarren",
+        "firstname": "Courtney",
+        "surname": "Mosier Warren",
         "wav_paths": [
             "/root/fawkes/audio_samples/_preprocessed/courtney_01.wav"
         ]

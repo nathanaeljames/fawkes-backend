@@ -731,7 +731,7 @@ class ActionQueryUserbase(Action):
                             # ALWAYS set candidate and verified slots first
                             events = [
                                 SlotSet("voiceclone_candidate", matched_name),
-                                SlotSet("voiceclone_verified", speaker_name),
+                                SlotSet("voiceclone_speakername", speaker_name),
                                 SlotSet("voiceclone_confidence", confidence),
                                 SlotSet("voiceclone_lazyname", None)
                             ]
@@ -740,6 +740,8 @@ class ActionQueryUserbase(Action):
                                 # High confidence: proceed automatically
                                 #dispatcher.utter_message(response="utter_voiceclone_proceed")
                                 dispatcher.utter_message(text=f"Proceeding to voice clone with {matched_name}")
+                                #events.append(SlotSet("voiceclone_verified", speaker_name))
+                                events.append(SlotSet("passagecollect_active", True))
                                 events.append(SlotSet("voiceclone_retry_count", 0))
                                 return events
                             
@@ -844,79 +846,6 @@ class ActionQueryUserbase(Action):
                     SlotSet("imprint_uid", None),
                     FollowupAction("action_handle_enrollment_routing")
                 ]
-
-class ActionSetVoicecloneLazyname(Action):
-    """Capture user utterance for voice cloning when voiceclone_active=true"""
-    def name(self) -> Text:
-        return "action_set_voiceclone_lazyname"
-
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        voiceclone_active = tracker.get_slot("voiceclone_active")
-        
-        if not voiceclone_active:
-            # Not in voice cloning flow, do nothing
-            return []
-        
-        # Get the user's last message text
-        user_text = tracker.latest_message.get('text', '').strip()
-        
-        if not user_text:
-            logger.warning("No text in user message for voiceclone_lazyname")
-            return []
-        
-        logger.info(f"Captured voiceclone_lazyname: {user_text}")
-        return [SlotSet("voiceclone_lazyname", user_text)]
-
-class ActionConfirmSpeakerMatch(Action):
-    """User confirmed the speaker match"""
-    def name(self) -> Text:
-        return "action_confirm_speaker_match"
-
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        # Candidate and verified already set by ActionQueryUserbase
-        # Just proceed with confirmation message
-        dispatcher.utter_message(response="utter_voiceclone_proceed")
-        
-        return [
-            SlotSet("voiceclone_confidence", None),
-            SlotSet("voiceclone_retry_count", 0)
-        ]
-
-class ActionRejectSpeakerMatch(Action):
-    """User rejected the speaker match - retry once then abort"""
-    def name(self) -> Text:
-        return "action_reject_speaker_match"
-
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        retry_count = tracker.get_slot("voiceclone_retry_count") or 0
-        
-        # Clear candidate and verified
-        events = [
-            SlotSet("voiceclone_candidate", None),
-            SlotSet("voiceclone_verified", None),
-            SlotSet("voiceclone_confidence", None)
-        ]
-        
-        if retry_count < 2:
-            dispatcher.utter_message(response="utter_ask_voiceclone_retry")
-            events.append(SlotSet("voiceclone_retry_count", retry_count + 1))
-        else:
-            dispatcher.utter_message(response="utter_voiceclone_abort")
-            events.extend([
-                SlotSet("voiceclone_retry_count", 0),
-                FollowupAction("action_reset_voice_cloning")
-            ])
-        
-        return events
 
 class ActionTriggerEnrollment(Action):
     def name(self) -> Text:
@@ -1055,6 +984,7 @@ class ActionResetEnrollment(Action):
             #FollowupAction("action_listen")  # Explicitly tell Rasa to just listen
         ]
 
+# Voice clone actions
 class ActionStartVoiceCloning(Action):
     """Initiates voice cloning workflow"""
     
@@ -1067,6 +997,80 @@ class ActionStartVoiceCloning(Action):
         
         return [SlotSet("voiceclone_active", True)]
 
+class ActionSetVoicecloneLazyname(Action):
+    """Capture user utterance for voice cloning when voiceclone_active=true"""
+    def name(self) -> Text:
+        return "action_set_voiceclone_lazyname"
+
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        voiceclone_active = tracker.get_slot("voiceclone_active")
+        
+        if not voiceclone_active:
+            # Not in voice cloning flow, do nothing
+            return []
+        
+        # Get the user's last message text
+        user_text = tracker.latest_message.get('text', '').strip()
+        
+        if not user_text:
+            logger.warning("No text in user message for voiceclone_lazyname")
+            return []
+        
+        logger.info(f"Captured voiceclone_lazyname: {user_text}")
+        return [SlotSet("voiceclone_lazyname", user_text)]
+
+class ActionConfirmSpeakerMatch(Action):
+    """User confirmed the speaker match"""
+    def name(self) -> Text:
+        return "action_confirm_speaker_match"
+
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        # Candidate and verified already set by ActionQueryUserbase
+        # Just proceed with confirmation message
+        dispatcher.utter_message(response="utter_voiceclone_proceed")
+        
+        return [
+            SlotSet("voiceclone_confidence", None),
+            SlotSet("passagecollect_active", True),
+            SlotSet("voiceclone_retry_count", 0)
+        ]
+
+class ActionRejectSpeakerMatch(Action):
+    """User rejected the speaker match - retry once then abort"""
+    def name(self) -> Text:
+        return "action_reject_speaker_match"
+
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        retry_count = tracker.get_slot("voiceclone_retry_count") or 0
+        
+        # Clear candidate and verified
+        events = [
+            SlotSet("voiceclone_candidate", None),
+            SlotSet("voiceclone_speakername", None),
+            SlotSet("voiceclone_confidence", None)
+        ]
+        
+        if retry_count < 2:
+            dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+            events.append(SlotSet("voiceclone_retry_count", retry_count + 1))
+        else:
+            dispatcher.utter_message(response="utter_voiceclone_abort")
+            events.extend([
+                SlotSet("voiceclone_retry_count", 0),
+                FollowupAction("action_reset_voice_cloning")
+            ])
+        
+        return events
+
 class ActionResetVoiceCloning(Action):
     """Reset voice cloning slots and state"""
     
@@ -1077,15 +1081,324 @@ class ActionResetVoiceCloning(Action):
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
+        logger.info("Resetting voice cloning workflow")
+        
         return [
+            # Voice cloning speaker selection slots
             SlotSet("voiceclone_active", False),
             SlotSet("voiceclone_lazyname", None),
             SlotSet("voiceclone_candidate", None),
-            SlotSet("voiceclone_verified", None),
+            SlotSet("voiceclone_speakername", None),
             SlotSet("voiceclone_confidence", None),
             SlotSet("voiceclone_retry_count", 0),
+            # Passage selection slots
+            SlotSet("passagecollect_active", False),
+            SlotSet("psource_lazystring", None),
+            SlotSet("psource_candidate", None),
+            SlotSet("psource_verified", None),
+            SlotSet("psource_confidence", None),
+            SlotSet("psource_retry_count", 0),
             SlotSet("available_passage_sources", []),
-            SlotSet("selected_passage_source", None),
             SlotSet("selected_quote", None),
+            # Return to listening
             FollowupAction("action_listen")
+        ]
+
+class ActionQueryPassages(Action):
+    """
+    Unified action to query passages table.
+    Handles: unique_sources, match_source, select_quote
+    Mirrors action_query_userbase pattern.
+    """
+    
+    def name(self) -> Text:
+        return "action_query_passages"
+    
+    async def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        # Determine which action to take based on workflow state
+        psource_lazystring = tracker.get_slot("psource_lazystring")
+        psource_verified = tracker.get_slot("psource_verified")
+        available_sources = tracker.get_slot("available_passage_sources")
+        
+        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/passages/query"
+        
+        # Step 1: Get unique sources (no lazystring, no verified, no available sources)
+        if not psource_lazystring and not psource_verified and not available_sources:
+            action_type = "unique_sources"
+            payload = {"action": action_type}
+            
+        # Step 2: Match source (has lazystring, no verified)
+        elif psource_lazystring and not psource_verified:
+            action_type = "match_source"
+            payload = {
+                "action": action_type,
+                "fuzzy_source": psource_lazystring
+            }
+            
+        # Step 3: Select quote (has verified)
+        elif psource_verified:
+            action_type = "select_quote"
+            payload = {
+                "action": action_type,
+                "source_name": psource_verified
+            }
+        else:
+            logger.error("ActionQueryPassages: Invalid state")
+            return []
+        
+        logger.info(f"ActionQueryPassages: {action_type} - payload: {payload}")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    fastapi_url,
+                    json=payload,
+                    timeout=5
+                ) as response:
+                    
+                    if response.status == HTTPStatus.OK:
+                        result = await response.json()
+                        
+                        # Handle unique_sources response
+                        if action_type == "unique_sources":
+                            sources = result.get("sources", [])
+                            
+                            if len(sources) == 0:
+                                dispatcher.utter_message(text="I don't have any passages available.")
+                                return []
+                            
+                            # Format for natural speech
+                            if len(sources) == 1:
+                                formatted = sources[0]
+                            elif len(sources) == 2:
+                                formatted = f"{sources[0]} or {sources[1]}"
+                            else:
+                                formatted = ", ".join(sources[:-1]) + f", or {sources[-1]}"
+                            
+                            logger.info(f"Found {len(sources)} passage sources")
+                            return [SlotSet("available_passage_sources", formatted)]
+                        
+                        # Handle match_source response
+                        elif action_type == "match_source":
+                            source_name = result.get("source_name")
+                            confidence = result.get("confidence", 0.0)
+                            
+                            if source_name:
+                                logger.info(f"Matched '{psource_lazystring}' → '{source_name}' ({confidence:.2%})")
+                                return [
+                                    SlotSet("psource_candidate", source_name),
+                                    SlotSet("psource_confidence", confidence)
+                                ]
+                            else:
+                                logger.warning(f"No match found for '{psource_lazystring}'")
+                                return [
+                                    SlotSet("psource_candidate", None),
+                                    SlotSet("psource_confidence", 0.0)
+                                ]
+                        
+                        # Handle select_quote response
+                        elif action_type == "select_quote":
+                            quote = result.get("quote")
+                            
+                            if quote:
+                                logger.info(f"Selected quote from '{psource_verified}': {quote[:60]}...")
+                                return [SlotSet("selected_quote", quote)]
+                            else:
+                                logger.error(f"No quote found for '{psource_verified}'")
+                                dispatcher.utter_message(text="I couldn't find a quote from that source.")
+                                return []
+                    
+                    else:
+                        logger.error(f"Passages query failed: {response.status}")
+                        return []
+                        
+        except Exception as e:
+            logger.error(f"Error querying passages: {e}")
+            return []
+
+class ActionSetPsourceLazystring(Action):
+    """Capture ANY text as passage source name"""
+    
+    def name(self) -> Text:
+        return "action_set_psource_lazystring"
+
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        passagecollect_active = tracker.get_slot("passagecollect_active")
+        
+        if not passagecollect_active:
+            # Not in passage collection flow, do nothing
+            return []
+
+        user_text = tracker.latest_message.get('text', '').strip()
+        if not user_text:
+            logger.warning("No text in user message for psource_lazystring")
+            return []
+        
+        logger.info(f"Captured psource_lazystring: {user_text}")
+        return [SlotSet("psource_lazystring", user_text)]
+
+class ActionHandlePassageMatch(Action):
+    """
+    Handle the fuzzy match result for passage source.
+    Routes based on confidence: >=95% auto-verify, >=70% confirm, <70% retry
+    Mirrors action_handle_speaker_match pattern.
+    """
+    
+    def name(self) -> Text:
+        return "action_handle_passage_match"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        candidate = tracker.get_slot("psource_candidate")
+        confidence = tracker.get_slot("psource_confidence") or 0.0
+        retry_count = tracker.get_slot("psource_retry_count") or 0
+        lazystring = tracker.get_slot("psource_lazystring")
+        
+        logger.info(f"Passage match - candidate: {candidate}, confidence: {confidence:.2%}, retry: {retry_count}")
+        
+        # No candidate found
+        if not candidate:
+            if retry_count >= 2:
+                # Abort after 2 retries
+                logger.info("Passage match abort - max retries reached")
+                dispatcher.utter_message(response="utter_psource_abort")
+                return [
+                    FollowupAction("action_reset_passage_selection")
+                ]
+            else:
+                # Retry
+                logger.info("Passage match retry")
+                dispatcher.utter_message(response="utter_ask_passage_retry")
+                dispatcher.utter_message(response="utter_ask_passage_source")
+                return [
+                    SlotSet("psource_candidate", None),
+                    SlotSet("psource_confidence", None),
+                    SlotSet("psource_lazystring", None),
+                    SlotSet("psource_retry_count", retry_count + 1)
+                ]
+        
+        # High confidence - auto verify
+        if confidence >= 0.95:
+            logger.info(f"High confidence match ({confidence:.2%}) - auto-verifying '{candidate}'")
+            return [
+                SlotSet("psource_verified", candidate),
+                SlotSet("psource_retry_count", 0),
+                SlotSet("psource_lazystring", None),
+                # Trigger quote selection
+                FollowupAction("action_query_passages")
+            ]
+        
+        # Medium confidence - ask for confirmation
+        elif confidence >= 0.70:
+            logger.info(f"Medium confidence match ({confidence:.2%}) - confirming '{candidate}'")
+            dispatcher.utter_message(response="utter_confirm_passage_source")
+            return []
+        
+        # Low confidence - retry
+        else:
+            if retry_count >= 2:
+                # Abort after 2 retries
+                logger.info(f"Low confidence ({confidence:.2%}) and max retries - aborting")
+                dispatcher.utter_message(response="utter_psource_abort")
+                return [
+                    FollowupAction("action_reset_passage_selection")
+                ]
+            else:
+                # Retry
+                logger.info(f"Low confidence ({confidence:.2%}) - retry {retry_count + 1}")
+                dispatcher.utter_message(response="utter_ask_passage_retry")
+                dispatcher.utter_message(response="utter_ask_passage_source")
+                return [
+                    SlotSet("psource_candidate", None),
+                    SlotSet("psource_confidence", None),
+                    SlotSet("psource_lazystring", None),
+                    SlotSet("psource_retry_count", retry_count + 1)
+                ]
+
+class ActionConfirmPassageMatch(Action):
+    """User confirmed the passage source match"""
+    
+    def name(self) -> Text:
+        return "action_confirm_passage_match"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        candidate = tracker.get_slot("psource_candidate")
+        
+        logger.info(f"User confirmed passage source: '{candidate}'")
+        
+        return [
+            SlotSet("psource_verified", candidate),
+            SlotSet("psource_candidate", None),
+            SlotSet("psource_confidence", None),
+            SlotSet("psource_lazystring", None),
+            SlotSet("psource_retry_count", 0),
+            # Trigger quote selection
+            FollowupAction("action_query_passages")
+        ]
+
+class ActionRejectPassageMatch(Action):
+    """User rejected the passage source match - retry"""
+    
+    def name(self) -> Text:
+        return "action_reject_passage_match"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        retry_count = tracker.get_slot("psource_retry_count") or 0
+        
+        # Clear candidate
+        events = [
+            SlotSet("psource_candidate", None),
+            SlotSet("psource_confidence", None),
+            SlotSet("psource_lazystring", None)
+        ]
+        
+        if retry_count < 2:
+            logger.info(f"User rejected match - retry {retry_count + 1}")
+            dispatcher.utter_message(response="utter_ask_passage_retry")
+            dispatcher.utter_message(response="utter_ask_passage_source")
+            events.append(SlotSet("psource_retry_count", retry_count + 1))
+        else:
+            logger.info("User rejected match - max retries, aborting")
+            dispatcher.utter_message(response="utter_psource_abort")
+            events.extend([
+                SlotSet("psource_retry_count", 0),
+                FollowupAction("action_reset_passage_selection")
+            ])
+        
+        return events
+
+class ActionResetPassageSelection(Action):
+    """Reset all passage selection slots"""
+    
+    def name(self) -> Text:
+        return "action_reset_passage_selection"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        logger.info("Resetting passage selection workflow")
+        
+        return [
+            SlotSet("psource_lazystring", None),
+            SlotSet("psource_candidate", None),
+            SlotSet("psource_verified", None),
+            SlotSet("psource_confidence", None),
+            SlotSet("psource_retry_count", 0),
+            SlotSet("selected_quote", None),
+            # Don't reset available_passage_sources - may want to reuse
         ]
