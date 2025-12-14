@@ -679,173 +679,140 @@ class ValidateNameCollectionForm(FormValidationAction):
         return {"imprint_surname": slot_value}
 
 class ActionQueryUserbase(Action):
+    """Query speaker database - works for BOTH enrollment and voiceclone contexts"""
+    
     def name(self) -> Text:
         return "action_query_userbase"
-    
-    async def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        voiceclone_active = tracker.get_slot("voiceclone_active")
-        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query"
 
-        if voiceclone_active:
-            # Voice cloning flow - use voiceclone_lazyname for fuzzy matching
-            lazyname = tracker.get_slot("voiceclone_lazyname")
-            
-            if not lazyname:
-                dispatcher.utter_message(response="utter_ask_whose_voice")
-                return [SlotSet("voiceclone_lazyname", None)]
-            
-            logger.info(f"Querying database for: {lazyname} (context: voiceclone, fuzzy match)")
-            
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        fastapi_url,
-                        json={
-                            "full_name": lazyname
-                        },
-                        timeout=5
-                    ) as response:
-                        
-                        if response.status == HTTPStatus.OK:
-                            data = await response.json()
-                            
-                            if data.get('status') == 'not_found':
-                                # No speakers found
-                                dispatcher.utter_message(response="utter_voiceclone_abort")
-                                return [
-                                    SlotSet("voiceclone_lazyname", None),
-                                    FollowupAction("action_reset_voice_cloning")
-                                ]
-                            
-                            confidence = data.get('confidence', 0)
-                            speaker_name = data.get('speaker_name')  # Backend format: firstname_surname
-                            firstname = data.get('firstname')
-                            surname = data.get('surname')
-                            matched_name = f"{firstname} {surname}"  # Human readable
-                            
-                            logger.info(f"Speaker match: {matched_name} (confidence: {confidence})")
-                            
-                            # ALWAYS set candidate and verified slots first
-                            events = [
-                                SlotSet("voiceclone_candidate", matched_name),
-                                SlotSet("voiceclone_speakername", speaker_name),
-                                SlotSet("voiceclone_confidence", confidence),
-                                SlotSet("voiceclone_lazyname", None)
-                            ]
-                            
-                            if confidence >= 0.95:
-                                # High confidence: proceed automatically
-                                #dispatcher.utter_message(response="utter_voiceclone_proceed")
-                                dispatcher.utter_message(text=f"Proceeding to voice clone with {matched_name}")
-                                #events.append(SlotSet("voiceclone_verified", speaker_name))
-                                events.append(SlotSet("passagecollect_active", True))
-                                events.append(SlotSet("voiceclone_retry_count", 0))
-                                return events
-                            
-                            elif confidence >= 0.70:
-                                # Medium confidence: ask for verification
-                                #dispatcher.utter_message(response="utter_confirm_speaker_match")
-                                dispatcher.utter_message(text=f"Did you mean {matched_name}?")
-                                return events
-                            
-                            else:
-                                # Low confidence: retry once then abort
-                                retry_count = tracker.get_slot("voiceclone_retry_count") or 0
-                                
-                                if retry_count < 2:  # Changed from 1 to 2
-                                    dispatcher.utter_message(response="utter_ask_voiceclone_retry")
-                                    return [
-                                        SlotSet("voiceclone_lazyname", None),
-                                        SlotSet("voiceclone_retry_count", retry_count + 1)
-                                    ]
-                                else:
-                                    # Max retries exceeded - abort
-                                    dispatcher.utter_message(response="utter_voiceclone_abort")
-                                    return [
-                                        SlotSet("voiceclone_lazyname", None),
-                                        SlotSet("voiceclone_retry_count", 0),
-                                        FollowupAction("action_reset_voice_cloning")
-                                    ]
-                        
-                        else:
-                            logger.error(f"Server returned status {response.status}")
-                            dispatcher.utter_message(text="I'm having trouble looking up that speaker. Please try again.")
-                            return [SlotSet("voiceclone_lazyname", None)]
-            
-            except Exception as e:
-                logger.error(f"Error querying userbase: {e}")
-                dispatcher.utter_message(text="I encountered an error looking up that speaker. Please try again.")
-                return [SlotSet("voiceclone_lazyname", None)]
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
         
+        # Determine context
+        enrollment_active = tracker.get_slot("enrollment_active")
+        voiceclone_active = tracker.get_slot("voiceclone_active")
+        
+        # Build request payload based on context
+        if enrollment_active:
+            context = "enrollment"
+            imprint_firstname = tracker.get_slot("imprint_firstname")
+            imprint_surname = tracker.get_slot("imprint_surname")
+            
+            if not imprint_firstname and not imprint_surname:
+                logger.warning("action_query_userbase called with no firstname/surname in enrollment context!")
+                return []
+            
+            # Enrollment uses separate firstname/surname parameters
+            request_payload = {
+                "firstname": imprint_firstname,
+                "surname": imprint_surname or ""
+            }
+            logger.info(f"Querying database for: {imprint_firstname} {imprint_surname} (context: enrollment, exact match)")
+            
+        elif voiceclone_active:
+            context = "voiceclone"
+            voiceclone_lazyname = tracker.get_slot("voiceclone_lazyname")
+            
+            if not voiceclone_lazyname:
+                logger.warning("action_query_userbase called with no voiceclone_lazyname in voiceclone context!")
+                return []
+            
+            # Voiceclone uses single full_name parameter with fuzzy matching
+            request_payload = {
+                "full_name": voiceclone_lazyname
+            }
+            logger.info(f"Querying database for: {voiceclone_lazyname} (context: voiceclone, fuzzy match)")
+            
         else:
-            # Enrollment flow - unchanged
-            query_firstname = tracker.get_slot("imprint_firstname")
-            query_surname = tracker.get_slot("imprint_surname")
-            
-            if not query_firstname or not query_surname:
-                logger.warning(f"Missing name information - firstname: {query_firstname}, surname: {query_surname}")
-                return [
-                    SlotSet("imprint_uid", None),
-                    FollowupAction("action_handle_enrollment_routing")
-                ]
-            
-            logger.info(f"Querying database for: {query_firstname} {query_surname} (context: enrollment, exact match)")
-            
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        fastapi_url,
-                        json={
-                            "firstname": query_firstname,
-                            "surname": query_surname
-                        },
-                        timeout=5
-                    ) as response:
+            logger.warning("action_query_userbase called without enrollment or voiceclone context!")
+            return []
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query",
+                    json=request_payload,
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
                         
-                        if response.status == HTTPStatus.OK:
-                            result = await response.json()
-                            uid = result.get("uid")
-                            firstname = result.get("firstname")
-                            surname = result.get("surname")
-                            
-                            if uid and firstname and surname:
-                                logger.info(f"Found speaker {firstname} {surname} with UID: {uid}")
-                                imprint_name = f"{firstname} {surname}"
+                        if context == "enrollment":
+                            # Enrollment response: SpeakerQueryResponse with uid/firstname/surname/success
+                            if data.get("success") and data.get("uid"):
+                                uid = data["uid"]
+                                firstname = data.get("firstname", "")
+                                surname = data.get("surname", "")
+                                speaker_name = f"{firstname} {surname}".strip()
+                                
+                                logger.info(f"Enrollment match found: {speaker_name} (UID={uid})")
+                                
                                 return [
-                                    SlotSet("imprint_uid", str(uid)),
-                                    SlotSet("imprint_name", imprint_name),
-                                    FollowupAction("action_handle_enrollment_routing")
+                                    SlotSet("ecapa_name", speaker_name),
+                                    SlotSet("ecapa_uid", uid),
+                                    SlotSet("imprint_name", speaker_name)
                                 ]
                             else:
-                                logger.info(f"No record found for {query_firstname} {query_surname}")
+                                # No match found for enrollment
+                                logger.info("No match found in database for enrollment")
                                 return [
-                                    SlotSet("imprint_uid", None),
-                                    FollowupAction("action_handle_enrollment_routing")
+                                    SlotSet("ecapa_name", None),
+                                    SlotSet("ecapa_uid", None)
                                 ]
                         
-                        elif response.status == HTTPStatus.NOT_FOUND:
-                            logger.info(f"No record found for {query_firstname} {query_surname} (404)")
+                        elif context == "voiceclone":
+                            # Voiceclone response: dict with status/confidence/speaker_name
+                            if data.get("status") == "success":
+                                candidate = data.get("speaker_name")  # Formatted as "firstname_surname"
+                                confidence = data.get("confidence", 0.0)
+                                
+                                logger.info(f"Voiceclone match: {candidate} (confidence: {confidence:.2f})")
+                                
+                                return [
+                                    SlotSet("voiceclone_candidate", candidate),
+                                    SlotSet("voiceclone_speakername", candidate),
+                                    SlotSet("voiceclone_confidence", confidence)
+                                ]
+                            else:
+                                # No match found for voiceclone (status = "not_found")
+                                confidence = data.get("confidence", 0.0)
+                                logger.info(f"No match found in database for voiceclone (confidence: {confidence})")
+                                
+                                return [
+                                    SlotSet("voiceclone_candidate", None),
+                                    SlotSet("voiceclone_speakername", None),
+                                    SlotSet("voiceclone_confidence", confidence)
+                                ]
+                    
+                    else:
+                        logger.error(f"Query failed with status {response.status}")
+                        if context == "enrollment":
                             return [
-                                SlotSet("imprint_uid", None),
-                                FollowupAction("action_handle_enrollment_routing")
+                                SlotSet("ecapa_name", None),
+                                SlotSet("ecapa_uid", None)
                             ]
-                        
-                        else:
-                            logger.error(f"Server returned status {response.status}")
+                        elif context == "voiceclone":
                             return [
-                                SlotSet("imprint_uid", None),
-                                FollowupAction("action_handle_enrollment_routing")
+                                SlotSet("voiceclone_candidate", None),
+                                SlotSet("voiceclone_speakername", None),
+                                SlotSet("voiceclone_confidence", 0.0)
                             ]
-            
-            except Exception as e:
-                logger.error(f"Error querying userbase: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error querying userbase: {e}")
+            if context == "enrollment":
                 return [
-                    SlotSet("imprint_uid", None),
-                    FollowupAction("action_handle_enrollment_routing")
+                    SlotSet("ecapa_name", None),
+                    SlotSet("ecapa_uid", None)
                 ]
+            elif context == "voiceclone":
+                return [
+                    SlotSet("voiceclone_candidate", None),
+                    SlotSet("voiceclone_speakername", None),
+                    SlotSet("voiceclone_confidence", 0.0)
+                ]
+        
+        return []
 
 class ActionTriggerEnrollment(Action):
     def name(self) -> Text:
@@ -986,7 +953,7 @@ class ActionResetEnrollment(Action):
 
 # Voice clone actions
 class ActionStartVoiceCloning(Action):
-    """Initiates voice cloning workflow"""
+    """Initialize voice cloning workflow"""
     
     def name(self) -> Text:
         return "action_start_voice_cloning"
@@ -995,7 +962,13 @@ class ActionStartVoiceCloning(Action):
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
-        return [SlotSet("voiceclone_active", True)]
+        logger.info("Starting voice cloning workflow")
+        
+        return [
+            SlotSet("voiceclone_active", True),
+            SlotSet("vcspeakercollect_active", True),  # ← NEW: Enable speaker collection phase
+            SlotSet("passagecollect_active", False)
+        ]
 
 class ActionSetVoicecloneLazyname(Action):
     """Capture user utterance for voice cloning when voiceclone_active=true"""
@@ -1022,27 +995,113 @@ class ActionSetVoicecloneLazyname(Action):
         logger.info(f"Captured voiceclone_lazyname: {user_text}")
         return [SlotSet("voiceclone_lazyname", user_text)]
 
+class ActionHandleSpeakerMatch(Action):
+    """Route based on speaker match confidence threshold"""
+    
+    def name(self) -> Text:
+        return "action_handle_speaker_match"
+
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        confidence = tracker.get_slot("voiceclone_confidence")
+        candidate = tracker.get_slot("voiceclone_candidate")
+        retry_count = tracker.get_slot("voiceclone_retry_count") or 0
+        
+        # Guard: No candidate found
+        if candidate is None or confidence is None:
+            logger.warning(f"No speaker match found (confidence: {confidence})")
+            
+            if retry_count < 2:
+                dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+                return [
+                    SlotSet("voiceclone_candidate", None),
+                    SlotSet("voiceclone_confidence", None),
+                    SlotSet("voiceclone_lazyname", None),
+                    SlotSet("voiceclone_retry_count", retry_count + 1)
+                    # vcspeakercollect_active stays TRUE - rule will re-trigger
+                ]
+            else:
+                dispatcher.utter_message(response="utter_voiceclone_abort")
+                return [
+                    FollowupAction("action_reset_voice_cloning")
+                ]
+        
+        # High confidence: Auto-verify (>= 95%)
+        if confidence >= 0.95:
+            logger.info(f"Auto-verifying speaker: {candidate} (confidence: {confidence:.2f})")
+            dispatcher.utter_message(response="utter_voiceclone_proceed", voiceclone_candidate=candidate)
+            
+            return [
+                SlotSet("vcspeakercollect_active", False),  # ← End speaker collection
+                SlotSet("passagecollect_active", True),     # ← Start passage collection
+                SlotSet("voiceclone_candidate", None),
+                SlotSet("voiceclone_lazyname", None),
+                SlotSet("voiceclone_confidence", None),
+                SlotSet("voiceclone_retry_count", 0),
+                FollowupAction("action_query_passages")
+            ]
+        
+        # Medium confidence: Ask for confirmation (70-94%)
+        elif confidence >= 0.70:
+            logger.info(f"Requesting confirmation for: {candidate} (confidence: {confidence:.2f})")
+            dispatcher.utter_message(response="utter_confirm_speaker_match", voiceclone_candidate=candidate)
+            return []  # Wait for affirm/deny, vcspeakercollect_active stays TRUE
+        
+        # Low confidence: Retry or abort (< 70%)
+        else:
+            logger.warning(f"Low confidence match: {candidate} (confidence: {confidence:.2f})")
+            
+            if retry_count < 2:
+                dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+                return [
+                    SlotSet("voiceclone_candidate", None),
+                    SlotSet("voiceclone_confidence", None),
+                    SlotSet("voiceclone_lazyname", None),
+                    SlotSet("voiceclone_retry_count", retry_count + 1)
+                    # vcspeakercollect_active stays TRUE - rule will re-trigger
+                ]
+            else:
+                dispatcher.utter_message(response="utter_voiceclone_abort")
+                return [
+                    FollowupAction("action_reset_voice_cloning")
+                ]
+
 class ActionConfirmSpeakerMatch(Action):
-    """User confirmed the speaker match"""
+    """Handle user confirmation of speaker match (70-94% confidence)"""
+    
     def name(self) -> Text:
         return "action_confirm_speaker_match"
 
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
         
-        # Candidate and verified already set by ActionQueryUserbase
-        # Just proceed with confirmation message
-        dispatcher.utter_message(response="utter_voiceclone_proceed")
+        candidate = tracker.get_slot("voiceclone_candidate")
+        
+        if candidate is None:
+            logger.error("action_confirm_speaker_match called with no candidate!")
+            dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+            return [
+                SlotSet("voiceclone_retry_count", tracker.get_slot("voiceclone_retry_count") + 1)
+            ]
+        
+        dispatcher.utter_message(response="utter_voiceclone_proceed", voiceclone_candidate=candidate)
         
         return [
+            SlotSet("vcspeakercollect_active", False),  # ← End speaker collection
+            SlotSet("passagecollect_active", True),     # ← Start passage collection
+            SlotSet("voiceclone_candidate", None),
+            SlotSet("voiceclone_lazyname", None),
             SlotSet("voiceclone_confidence", None),
-            SlotSet("passagecollect_active", True),
-            SlotSet("voiceclone_retry_count", 0)
+            SlotSet("voiceclone_retry_count", 0),
+            FollowupAction("action_query_passages")
         ]
 
 class ActionRejectSpeakerMatch(Action):
     """User rejected the speaker match - retry once then abort"""
+    
     def name(self) -> Text:
         return "action_reject_speaker_match"
 
@@ -1056,12 +1115,14 @@ class ActionRejectSpeakerMatch(Action):
         events = [
             SlotSet("voiceclone_candidate", None),
             SlotSet("voiceclone_speakername", None),
-            SlotSet("voiceclone_confidence", None)
+            SlotSet("voiceclone_confidence", None),
+            SlotSet("voiceclone_lazyname", None)
         ]
         
         if retry_count < 2:
             dispatcher.utter_message(response="utter_ask_voiceclone_retry")
             events.append(SlotSet("voiceclone_retry_count", retry_count + 1))
+            # vcspeakercollect_active stays TRUE - rule will re-trigger
         else:
             dispatcher.utter_message(response="utter_voiceclone_abort")
             events.extend([
@@ -1084,15 +1145,17 @@ class ActionResetVoiceCloning(Action):
         logger.info("Resetting voice cloning workflow")
         
         return [
-            # Voice cloning speaker selection slots
+            # Main workflow flags
             SlotSet("voiceclone_active", False),
+            SlotSet("vcspeakercollect_active", False),  # ← Reset speaker collection phase
+            SlotSet("passagecollect_active", False),
+            # Speaker selection slots
             SlotSet("voiceclone_lazyname", None),
             SlotSet("voiceclone_candidate", None),
             SlotSet("voiceclone_speakername", None),
             SlotSet("voiceclone_confidence", None),
             SlotSet("voiceclone_retry_count", 0),
             # Passage selection slots
-            SlotSet("passagecollect_active", False),
             SlotSet("psource_lazystring", None),
             SlotSet("psource_candidate", None),
             SlotSet("psource_verified", None),

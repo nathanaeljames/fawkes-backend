@@ -117,6 +117,18 @@ slots:
     mappings:
       - type: custom
   # VOICECLONE name selection workflow
+  voiceclone_active:
+    type: bool
+    initial_value: false
+    influence_conversation: true
+    mappings:
+      - type: custom
+  vcspeakercollect_active:
+    type: bool
+    initial_value: false
+    influence_conversation: true
+    mappings:
+      - type: custom
   voiceclone_lazyname:
     type: text
     initial_value: null
@@ -146,12 +158,6 @@ slots:
     influence_conversation: false
     mappings:
       - type: custom
-  voiceclone_active:
-    type: bool
-    initial_value: false
-    influence_conversation: true
-    mappings:
-      - type: custom
   # VOICECLONE passage selection workflow - mirrors voiceclone workflow
   passagecollect_active:
     type: bool
@@ -163,8 +169,7 @@ slots:
     type: text
     initial_value: null
     mappings:
-      - type: from_text
-        intent: select_passage_source
+      - type: custom
   psource_candidate:
     type: text
     initial_value: null
@@ -396,6 +401,7 @@ actions:
   - action_reject_passage_match
   - action_reset_passage_selection
   - action_handle_speaker_match
+  - action_set_psource_lazystring 
 
 session_config:
   session_expiration_time: 60
