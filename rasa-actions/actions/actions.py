@@ -1141,39 +1141,6 @@ class ActionRejectVcspeakerMatch(Action):
         
         return events
 
-class ActionResetVoiceCloning(Action):
-    """Reset voice cloning slots and state"""
-    
-    def name(self) -> Text:
-        return "action_reset_voice_cloning"
-    
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        logger.info("Resetting voice cloning workflow")
-        
-        return [
-            # Main workflow flag
-            SlotSet("voiceclone_active", False),
-            # Speaker selection slots
-            SlotSet("vcspeaker_lazystring", None),
-            SlotSet("vcspeaker_candidate", None),
-            SlotSet("vcspeaker_usestring", None),
-            SlotSet("vcspeaker_confidence", None),
-            SlotSet("vcspeaker_retry_count", 0),
-            # Passage selection slots
-            SlotSet("vcpsource_lazystring", None),
-            SlotSet("vcpsource_candidate", None),
-            SlotSet("vcpsource_usestring", None),
-            SlotSet("vcpsource_confidence", None),
-            SlotSet("vcpsource_retry_count", 0),
-            SlotSet("available_vcpassage_sources", None),
-            SlotSet("selected_vcquote", None),
-            # Return to listening
-            #FollowupAction("action_listen")
-        ]
-
 class ActionQueryVcpassages(Action):
     """
     Unified action to query passages table.
@@ -1537,3 +1504,50 @@ class ActionHandleAnotherQuoteDeny(Action):
         
         # Reset all voice cloning slots
         return [FollowupAction("action_reset_voice_cloning")]
+    
+class ActionResetVoiceCloning(Action):
+    """Reset voice cloning slots and state"""
+    
+    def name(self) -> Text:
+        return "action_reset_voice_cloning"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        logger.info("Resetting voice cloning workflow")
+
+        # Check if this is an abort scenario (high retry count)
+        speaker_retry = tracker.get_slot("vcspeaker_retry_count") or 0
+        passage_retry = tracker.get_slot("vcpsource_retry_count") or 0
+        is_abort = (speaker_retry >= 2) or (passage_retry >= 2)
+        
+        events = [
+            # Main workflow flag
+            SlotSet("voiceclone_active", False),
+            # Speaker selection slots
+            SlotSet("vcspeaker_lazystring", None),
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_usestring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_retry_count", 0),
+            # Passage selection slots
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("available_vcpassage_sources", None),
+            SlotSet("selected_vcquote", None),
+            # Return to listening
+            #FollowupAction("action_listen")
+            # TODO if we get here as result of abort (no follow up action) we need this line to prevent utter_default
+            # However if we get here as a result of rule 'User requests voice cloning' this interrupts follow up action_start_voice_cloning
+        ]
+
+        # If abort scenario, return to listening (prevents utter_default)
+        # If user-initiated reset, let rule continue (allows action_start_voice_cloning)
+        if is_abort:
+            events.append(FollowupAction("action_listen"))
+        
+        return events
