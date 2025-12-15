@@ -711,17 +711,17 @@ class ActionQueryUserbase(Action):
             
         elif voiceclone_active:
             context = "voiceclone"
-            voiceclone_lazyname = tracker.get_slot("voiceclone_lazyname")
+            vcspeaker_lazystring = tracker.get_slot("vcspeaker_lazystring")
             
-            if not voiceclone_lazyname:
-                logger.warning("action_query_userbase called with no voiceclone_lazyname in voiceclone context!")
+            if not vcspeaker_lazystring:
+                logger.warning("action_query_userbase called with no vcspeaker_lazystring in voiceclone context!")
                 return []
             
             # Voiceclone uses single full_name parameter with fuzzy matching
             request_payload = {
-                "full_name": voiceclone_lazyname
+                "full_name": vcspeaker_lazystring
             }
-            logger.info(f"Querying database for: {voiceclone_lazyname} (context: voiceclone, fuzzy match)")
+            logger.info(f"Querying database for: {vcspeaker_lazystring} (context: voiceclone, fuzzy match)")
             
         else:
             logger.warning("action_query_userbase called without enrollment or voiceclone context!")
@@ -763,15 +763,18 @@ class ActionQueryUserbase(Action):
                         elif context == "voiceclone":
                             # Voiceclone response: dict with status/confidence/speaker_name
                             if data.get("status") == "success":
-                                candidate = data.get("speaker_name")  # Formatted as "firstname_surname"
+                                speaker_name = data.get("speaker_name")  # Formatted as "firstname_surname"
+                                firstname = data.get("firstname", "")
+                                surname = data.get("surname", "")
+                                candidate = f"{firstname} {surname}".strip()
                                 confidence = data.get("confidence", 0.0)
                                 
                                 logger.info(f"Voiceclone match: {candidate} (confidence: {confidence:.2f})")
                                 
                                 return [
-                                    SlotSet("voiceclone_candidate", candidate),
-                                    SlotSet("voiceclone_speakername", candidate),
-                                    SlotSet("voiceclone_confidence", confidence)
+                                    SlotSet("vcspeaker_candidate", candidate),
+                                    SlotSet("vcspeaker_usestring", speaker_name),
+                                    SlotSet("vcspeaker_confidence", confidence)
                                 ]
                             else:
                                 # No match found for voiceclone (status = "not_found")
@@ -779,9 +782,9 @@ class ActionQueryUserbase(Action):
                                 logger.info(f"No match found in database for voiceclone (confidence: {confidence})")
                                 
                                 return [
-                                    SlotSet("voiceclone_candidate", None),
-                                    SlotSet("voiceclone_speakername", None),
-                                    SlotSet("voiceclone_confidence", confidence)
+                                    SlotSet("vcspeaker_candidate", None),
+                                    SlotSet("vcspeaker_usestring", None),
+                                    SlotSet("vcspeaker_confidence", confidence)
                                 ]
                     
                     else:
@@ -793,9 +796,9 @@ class ActionQueryUserbase(Action):
                             ]
                         elif context == "voiceclone":
                             return [
-                                SlotSet("voiceclone_candidate", None),
-                                SlotSet("voiceclone_speakername", None),
-                                SlotSet("voiceclone_confidence", 0.0)
+                                SlotSet("vcspeaker_candidate", None),
+                                SlotSet("vcspeaker_usestring", None),
+                                SlotSet("vcspeaker_confidence", 0.0)
                             ]
         
         except Exception as e:
@@ -807,9 +810,9 @@ class ActionQueryUserbase(Action):
                 ]
             elif context == "voiceclone":
                 return [
-                    SlotSet("voiceclone_candidate", None),
-                    SlotSet("voiceclone_speakername", None),
-                    SlotSet("voiceclone_confidence", 0.0)
+                    SlotSet("vcspeaker_candidate", None),
+                    SlotSet("vcspeaker_usestring", None),
+                    SlotSet("vcspeaker_confidence", 0.0)
                 ]
         
         return []
@@ -966,64 +969,38 @@ class ActionStartVoiceCloning(Action):
         
         return [
             SlotSet("voiceclone_active", True),
-            SlotSet("vcspeakercollect_active", True),  # ← NEW: Enable speaker collection phase
-            SlotSet("passagecollect_active", False)
+            Form("vcspeaker_collection_form")  # Activate form for speaker name collection
         ]
 
-class ActionSetVoicecloneLazyname(Action):
-    """Capture user utterance for voice cloning when voiceclone_active=true"""
-    def name(self) -> Text:
-        return "action_set_voiceclone_lazyname"
-
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        voiceclone_active = tracker.get_slot("voiceclone_active")
-        
-        if not voiceclone_active:
-            # Not in voice cloning flow, do nothing
-            return []
-        
-        # Get the user's last message text
-        user_text = tracker.latest_message.get('text', '').strip()
-        
-        if not user_text:
-            logger.warning("No text in user message for voiceclone_lazyname")
-            return []
-        
-        logger.info(f"Captured voiceclone_lazyname: {user_text}")
-        return [SlotSet("voiceclone_lazyname", user_text)]
-
-class ActionHandleSpeakerMatch(Action):
+class ActionHandleVcspeakerMatch(Action):
     """Route based on speaker match confidence threshold"""
     
     def name(self) -> Text:
-        return "action_handle_speaker_match"
+        return "action_handle_vcspeaker_match"
 
     async def run(
         self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
     ) -> List[Dict[Text, Any]]:
         
-        confidence = tracker.get_slot("voiceclone_confidence")
-        candidate = tracker.get_slot("voiceclone_candidate")
-        retry_count = tracker.get_slot("voiceclone_retry_count") or 0
+        confidence = tracker.get_slot("vcspeaker_confidence")
+        candidate = tracker.get_slot("vcspeaker_candidate")
+        retry_count = tracker.get_slot("vcspeaker_retry_count") or 0
         
         # Guard: No candidate found
         if candidate is None or confidence is None:
             logger.warning(f"No speaker match found (confidence: {confidence})")
             
             if retry_count < 2:
-                dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+                dispatcher.utter_message(response="utter_ask_vcspeaker_retry")
                 return [
-                    SlotSet("voiceclone_candidate", None),
-                    SlotSet("voiceclone_confidence", None),
-                    SlotSet("voiceclone_lazyname", None),
-                    SlotSet("voiceclone_retry_count", retry_count + 1)
-                    # vcspeakercollect_active stays TRUE - rule will re-trigger
+                    SlotSet("vcspeaker_candidate", None),
+                    SlotSet("vcspeaker_confidence", None),
+                    SlotSet("vcspeaker_lazystring", None),
+                    SlotSet("vcspeaker_retry_count", retry_count + 1),
+                    Form("vcspeaker_collection_form")  # Reactivate form to retry
                 ]
             else:
-                dispatcher.utter_message(response="utter_voiceclone_abort")
+                dispatcher.utter_message(response="utter_vcspeaker_abort")
                 return [
                     FollowupAction("action_reset_voice_cloning")
                 ]
@@ -1031,102 +1008,134 @@ class ActionHandleSpeakerMatch(Action):
         # High confidence: Auto-verify (>= 95%)
         if confidence >= 0.95:
             logger.info(f"Auto-verifying speaker: {candidate} (confidence: {confidence:.2f})")
-            dispatcher.utter_message(response="utter_voiceclone_proceed", voiceclone_candidate=candidate)
-            
+            # Delegate to confirm action which handles passage form activation
             return [
-                SlotSet("vcspeakercollect_active", False),  # ← End speaker collection
-                SlotSet("passagecollect_active", True),     # ← Start passage collection
-                SlotSet("voiceclone_candidate", None),
-                SlotSet("voiceclone_lazyname", None),
-                SlotSet("voiceclone_confidence", None),
-                SlotSet("voiceclone_retry_count", 0),
-                FollowupAction("action_query_passages")
+                FollowupAction("action_confirm_vcspeaker_match")
             ]
         
         # Medium confidence: Ask for confirmation (70-94%)
         elif confidence >= 0.70:
             logger.info(f"Requesting confirmation for: {candidate} (confidence: {confidence:.2f})")
-            dispatcher.utter_message(response="utter_confirm_speaker_match", voiceclone_candidate=candidate)
-            return []  # Wait for affirm/deny, vcspeakercollect_active stays TRUE
+            dispatcher.utter_message(response="utter_confirm_vcspeaker_candidate", vcspeaker_candidate=candidate)
+            return []  # Wait for affirm/deny
         
         # Low confidence: Retry or abort (< 70%)
         else:
             logger.warning(f"Low confidence match: {candidate} (confidence: {confidence:.2f})")
             
             if retry_count < 2:
-                dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+                dispatcher.utter_message(response="utter_ask_vcspeaker_retry")
                 return [
-                    SlotSet("voiceclone_candidate", None),
-                    SlotSet("voiceclone_confidence", None),
-                    SlotSet("voiceclone_lazyname", None),
-                    SlotSet("voiceclone_retry_count", retry_count + 1)
-                    # vcspeakercollect_active stays TRUE - rule will re-trigger
+                    SlotSet("vcspeaker_candidate", None),
+                    SlotSet("vcspeaker_confidence", None),
+                    SlotSet("vcspeaker_lazystring", None),
+                    SlotSet("vcspeaker_retry_count", retry_count + 1),
+                    Form("vcspeaker_collection_form")  # Reactivate form to retry
                 ]
             else:
-                dispatcher.utter_message(response="utter_voiceclone_abort")
+                dispatcher.utter_message(response="utter_vcspeaker_abort")
                 return [
                     FollowupAction("action_reset_voice_cloning")
                 ]
 
-class ActionConfirmSpeakerMatch(Action):
+class ActionConfirmVcspeakerMatch(Action):
     """Handle user confirmation of speaker match (70-94% confidence)"""
     
     def name(self) -> Text:
-        return "action_confirm_speaker_match"
+        return "action_confirm_vcspeaker_match"
 
     async def run(
         self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
     ) -> List[Dict[Text, Any]]:
         
-        candidate = tracker.get_slot("voiceclone_candidate")
+        candidate = tracker.get_slot("vcspeaker_candidate")
         
         if candidate is None:
-            logger.error("action_confirm_speaker_match called with no candidate!")
-            dispatcher.utter_message(response="utter_ask_voiceclone_retry")
+            logger.error("action_confirm_vcspeaker_match called with no candidate!")
+            dispatcher.utter_message(response="utter_ask_vcspeaker_retry")
             return [
-                SlotSet("voiceclone_retry_count", tracker.get_slot("voiceclone_retry_count") + 1)
+                SlotSet("vcspeaker_retry_count", (tracker.get_slot("vcspeaker_retry_count") or 0) + 1),
+                Form("vcspeaker_collection_form")  # Reactivate form to retry
             ]
         
-        dispatcher.utter_message(response="utter_voiceclone_proceed", voiceclone_candidate=candidate)
-        
-        return [
-            SlotSet("vcspeakercollect_active", False),  # ← End speaker collection
-            SlotSet("passagecollect_active", True),     # ← Start passage collection
-            SlotSet("voiceclone_candidate", None),
-            SlotSet("voiceclone_lazyname", None),
-            SlotSet("voiceclone_confidence", None),
-            SlotSet("voiceclone_retry_count", 0),
-            FollowupAction("action_query_passages")
+        # Store verified speaker name
+        events = [
+            SlotSet("vcspeaker_usestring", candidate),
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_lazystring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_retry_count", 0)
         ]
+        
+        # Query available passage sources before activating form
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/passages/query"
+                payload = {"action": "unique_sources"}
+                
+                async with session.post(url, json=payload) as response:
+                    if response.status == HTTPStatus.OK:
+                        data = await response.json()
+                        sources = data.get("sources", [])  # Note: "sources" not "unique_sources"
+                        
+                        if sources:
+                            # Format sources list for natural speech
+                            if len(sources) == 1:
+                                formatted_sources = sources[0]
+                            elif len(sources) == 2:
+                                formatted_sources = f"{sources[0]} or {sources[1]}"
+                            else:
+                                formatted_sources = ", ".join(sources[:-1]) + f", or {sources[-1]}"
+                            
+                            dispatcher.utter_message(response="utter_vcspeaker_proceed", vcspeaker_candidate=candidate)
+                            events.extend([
+                                SlotSet("available_vcpassage_sources", formatted_sources),
+                                Form("vcpsource_collection_form")  # Activate form for passage source collection
+                            ])
+                        else:
+                            dispatcher.utter_message(text="I don't seem to have any recorded passages for that speaker.")
+                            events.append(FollowupAction("action_reset_voice_cloning"))
+                    else:
+                        logger.error(f"Failed to query passages: {response.status}")
+                        dispatcher.utter_message(text="I'm having trouble finding passages. Please try again.")
+                        events.append(FollowupAction("action_reset_voice_cloning"))
+        except Exception as e:
+            logger.error(f"Error querying passages: {e}")
+            dispatcher.utter_message(text="I encountered an error. Please try again.")
+            events.append(FollowupAction("action_reset_voice_cloning"))
+        
+        return events
 
-class ActionRejectSpeakerMatch(Action):
+class ActionRejectVcspeakerMatch(Action):
     """User rejected the speaker match - retry once then abort"""
     
     def name(self) -> Text:
-        return "action_reject_speaker_match"
+        return "action_reject_vcspeaker_match"
 
     def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
-        retry_count = tracker.get_slot("voiceclone_retry_count") or 0
+        retry_count = tracker.get_slot("vcspeaker_retry_count") or 0
         
         # Clear candidate and verified
         events = [
-            SlotSet("voiceclone_candidate", None),
-            SlotSet("voiceclone_speakername", None),
-            SlotSet("voiceclone_confidence", None),
-            SlotSet("voiceclone_lazyname", None)
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_usestring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_lazystring", None)
         ]
         
         if retry_count < 2:
-            dispatcher.utter_message(response="utter_ask_voiceclone_retry")
-            events.append(SlotSet("voiceclone_retry_count", retry_count + 1))
-            # vcspeakercollect_active stays TRUE - rule will re-trigger
-        else:
-            dispatcher.utter_message(response="utter_voiceclone_abort")
+            dispatcher.utter_message(response="utter_ask_vcspeaker_retry")
             events.extend([
-                SlotSet("voiceclone_retry_count", 0),
+                SlotSet("vcspeaker_retry_count", retry_count + 1),
+                Form("vcspeaker_collection_form")  # Reactivate form to retry
+            ])
+        else:
+            dispatcher.utter_message(response="utter_vcspeaker_abort")
+            events.extend([
+                SlotSet("vcspeaker_retry_count", 0),
                 FollowupAction("action_reset_voice_cloning")
             ])
         
@@ -1145,29 +1154,27 @@ class ActionResetVoiceCloning(Action):
         logger.info("Resetting voice cloning workflow")
         
         return [
-            # Main workflow flags
+            # Main workflow flag
             SlotSet("voiceclone_active", False),
-            SlotSet("vcspeakercollect_active", False),  # ← Reset speaker collection phase
-            SlotSet("passagecollect_active", False),
             # Speaker selection slots
-            SlotSet("voiceclone_lazyname", None),
-            SlotSet("voiceclone_candidate", None),
-            SlotSet("voiceclone_speakername", None),
-            SlotSet("voiceclone_confidence", None),
-            SlotSet("voiceclone_retry_count", 0),
+            SlotSet("vcspeaker_lazystring", None),
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_usestring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_retry_count", 0),
             # Passage selection slots
-            SlotSet("psource_lazystring", None),
-            SlotSet("psource_candidate", None),
-            SlotSet("psource_verified", None),
-            SlotSet("psource_confidence", None),
-            SlotSet("psource_retry_count", 0),
-            SlotSet("available_passage_sources", []),
-            SlotSet("selected_quote", None),
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("available_vcpassage_sources", None),
+            SlotSet("selected_vcquote", None),
             # Return to listening
-            FollowupAction("action_listen")
+            #FollowupAction("action_listen")
         ]
 
-class ActionQueryPassages(Action):
+class ActionQueryVcpassages(Action):
     """
     Unified action to query passages table.
     Handles: unique_sources, match_source, select_quote
@@ -1175,44 +1182,44 @@ class ActionQueryPassages(Action):
     """
     
     def name(self) -> Text:
-        return "action_query_passages"
+        return "action_query_vcpassages"
     
     async def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
         # Determine which action to take based on workflow state
-        psource_lazystring = tracker.get_slot("psource_lazystring")
-        psource_verified = tracker.get_slot("psource_verified")
-        available_sources = tracker.get_slot("available_passage_sources")
+        vcpsource_lazystring = tracker.get_slot("vcpsource_lazystring")
+        vcpsource_usestring = tracker.get_slot("vcpsource_usestring")
+        available_sources = tracker.get_slot("available_vcpassage_sources")
         
         fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/passages/query"
         
         # Step 1: Get unique sources (no lazystring, no verified, no available sources)
-        if not psource_lazystring and not psource_verified and not available_sources:
+        if not vcpsource_lazystring and not vcpsource_usestring and not available_sources:
             action_type = "unique_sources"
             payload = {"action": action_type}
             
         # Step 2: Match source (has lazystring, no verified)
-        elif psource_lazystring and not psource_verified:
+        elif vcpsource_lazystring and not vcpsource_usestring:
             action_type = "match_source"
             payload = {
                 "action": action_type,
-                "fuzzy_source": psource_lazystring
+                "fuzzy_source": vcpsource_lazystring
             }
             
         # Step 3: Select quote (has verified)
-        elif psource_verified:
+        elif vcpsource_usestring:
             action_type = "select_quote"
             payload = {
                 "action": action_type,
-                "source_name": psource_verified
+                "source_name": vcpsource_usestring
             }
         else:
-            logger.error("ActionQueryPassages: Invalid state")
+            logger.error("ActionQueryVcpassages: Invalid state")
             return []
         
-        logger.info(f"ActionQueryPassages: {action_type} - payload: {payload}")
+        logger.info(f"ActionQueryVcpassages: {action_type} - payload: {payload}")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -1242,7 +1249,7 @@ class ActionQueryPassages(Action):
                                 formatted = ", ".join(sources[:-1]) + f", or {sources[-1]}"
                             
                             logger.info(f"Found {len(sources)} passage sources")
-                            return [SlotSet("available_passage_sources", formatted)]
+                            return [SlotSet("available_vcpassage_sources", formatted)]
                         
                         # Handle match_source response
                         elif action_type == "match_source":
@@ -1250,16 +1257,16 @@ class ActionQueryPassages(Action):
                             confidence = result.get("confidence", 0.0)
                             
                             if source_name:
-                                logger.info(f"Matched '{psource_lazystring}' → '{source_name}' ({confidence:.2%})")
+                                logger.info(f"Matched '{vcpsource_lazystring}' → '{source_name}' ({confidence:.2%})")
                                 return [
-                                    SlotSet("psource_candidate", source_name),
-                                    SlotSet("psource_confidence", confidence)
+                                    SlotSet("vcpsource_candidate", source_name),
+                                    SlotSet("vcpsource_confidence", confidence)
                                 ]
                             else:
-                                logger.warning(f"No match found for '{psource_lazystring}'")
+                                logger.warning(f"No match found for '{vcpsource_lazystring}'")
                                 return [
-                                    SlotSet("psource_candidate", None),
-                                    SlotSet("psource_confidence", 0.0)
+                                    SlotSet("vcpsource_candidate", None),
+                                    SlotSet("vcpsource_confidence", 0.0)
                                 ]
                         
                         # Handle select_quote response
@@ -1267,10 +1274,14 @@ class ActionQueryPassages(Action):
                             quote = result.get("quote")
                             
                             if quote:
-                                logger.info(f"Selected quote from '{psource_verified}': {quote[:60]}...")
-                                return [SlotSet("selected_quote", quote)]
+                                logger.info(f"Selected quote from '{vcpsource_usestring}': {quote[:60]}...")
+                                return [
+                                    SlotSet("selected_vcquote", quote),
+                                    Form(None),  # Deactivate form
+                                    FollowupAction("action_perform_voice_clone")  # Trigger voice cloning
+                                ]
                             else:
-                                logger.error(f"No quote found for '{psource_verified}'")
+                                logger.error(f"No quote found for '{vcpsource_usestring}'")
                                 dispatcher.utter_message(text="I couldn't find a quote from that source.")
                                 return []
                     
@@ -1282,48 +1293,24 @@ class ActionQueryPassages(Action):
             logger.error(f"Error querying passages: {e}")
             return []
 
-class ActionSetPsourceLazystring(Action):
-    """Capture ANY text as passage source name"""
-    
-    def name(self) -> Text:
-        return "action_set_psource_lazystring"
-
-    async def run(
-        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
-    ) -> List[Dict[Text, Any]]:
-        
-        passagecollect_active = tracker.get_slot("passagecollect_active")
-        
-        if not passagecollect_active:
-            # Not in passage collection flow, do nothing
-            return []
-
-        user_text = tracker.latest_message.get('text', '').strip()
-        if not user_text:
-            logger.warning("No text in user message for psource_lazystring")
-            return []
-        
-        logger.info(f"Captured psource_lazystring: {user_text}")
-        return [SlotSet("psource_lazystring", user_text)]
-
-class ActionHandlePassageMatch(Action):
+class ActionHandleVcpassageMatch(Action):
     """
     Handle the fuzzy match result for passage source.
     Routes based on confidence: >=95% auto-verify, >=70% confirm, <70% retry
-    Mirrors action_handle_speaker_match pattern.
+    Mirrors action_handle_vcspeaker_match pattern.
     """
     
     def name(self) -> Text:
-        return "action_handle_passage_match"
+        return "action_handle_vcpassage_match"
     
     def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
-        candidate = tracker.get_slot("psource_candidate")
-        confidence = tracker.get_slot("psource_confidence") or 0.0
-        retry_count = tracker.get_slot("psource_retry_count") or 0
-        lazystring = tracker.get_slot("psource_lazystring")
+        candidate = tracker.get_slot("vcpsource_candidate")
+        confidence = tracker.get_slot("vcpsource_confidence") or 0.0
+        retry_count = tracker.get_slot("vcpsource_retry_count") or 0
+        lazystring = tracker.get_slot("vcpsource_lazystring")
         
         logger.info(f"Passage match - candidate: {candidate}, confidence: {confidence:.2%}, retry: {retry_count}")
         
@@ -1332,37 +1319,34 @@ class ActionHandlePassageMatch(Action):
             if retry_count >= 2:
                 # Abort after 2 retries
                 logger.info("Passage match abort - max retries reached")
-                dispatcher.utter_message(response="utter_psource_abort")
+                dispatcher.utter_message(response="utter_vcpsource_abort")
                 return [
-                    FollowupAction("action_reset_passage_selection")
+                    FollowupAction("action_reset_vcpassage_selection")
                 ]
             else:
                 # Retry
                 logger.info("Passage match retry")
-                dispatcher.utter_message(response="utter_ask_passage_retry")
-                dispatcher.utter_message(response="utter_ask_passage_source")
+                dispatcher.utter_message(response="utter_ask_vcpsource_retry")
                 return [
-                    SlotSet("psource_candidate", None),
-                    SlotSet("psource_confidence", None),
-                    SlotSet("psource_lazystring", None),
-                    SlotSet("psource_retry_count", retry_count + 1)
+                    SlotSet("vcpsource_candidate", None),
+                    SlotSet("vcpsource_confidence", None),
+                    SlotSet("vcpsource_lazystring", None),
+                    SlotSet("vcpsource_retry_count", retry_count + 1),
+                    Form("vcpsource_collection_form")  # Reactivate form to retry
                 ]
         
         # High confidence - auto verify
         if confidence >= 0.95:
             logger.info(f"High confidence match ({confidence:.2%}) - auto-verifying '{candidate}'")
+            # Delegate to confirm action which handles quote selection
             return [
-                SlotSet("psource_verified", candidate),
-                SlotSet("psource_retry_count", 0),
-                SlotSet("psource_lazystring", None),
-                # Trigger quote selection
-                FollowupAction("action_query_passages")
+                FollowupAction("action_confirm_vcpassage_match")
             ]
         
         # Medium confidence - ask for confirmation
         elif confidence >= 0.70:
             logger.info(f"Medium confidence match ({confidence:.2%}) - confirming '{candidate}'")
-            dispatcher.utter_message(response="utter_confirm_passage_source")
+            dispatcher.utter_message(response="utter_confirm_vcpsource_candidate")
             return []
         
         # Low confidence - retry
@@ -1370,85 +1354,87 @@ class ActionHandlePassageMatch(Action):
             if retry_count >= 2:
                 # Abort after 2 retries
                 logger.info(f"Low confidence ({confidence:.2%}) and max retries - aborting")
-                dispatcher.utter_message(response="utter_psource_abort")
+                dispatcher.utter_message(response="utter_vcpsource_abort")
                 return [
-                    FollowupAction("action_reset_passage_selection")
+                    FollowupAction("action_reset_vcpassage_selection")
                 ]
             else:
                 # Retry
                 logger.info(f"Low confidence ({confidence:.2%}) - retry {retry_count + 1}")
-                dispatcher.utter_message(response="utter_ask_passage_retry")
-                dispatcher.utter_message(response="utter_ask_passage_source")
+                dispatcher.utter_message(response="utter_ask_vcpsource_retry")
                 return [
-                    SlotSet("psource_candidate", None),
-                    SlotSet("psource_confidence", None),
-                    SlotSet("psource_lazystring", None),
-                    SlotSet("psource_retry_count", retry_count + 1)
+                    SlotSet("vcpsource_candidate", None),
+                    SlotSet("vcpsource_confidence", None),
+                    SlotSet("vcpsource_lazystring", None),
+                    SlotSet("vcpsource_retry_count", retry_count + 1),
+                    Form("vcpsource_collection_form")  # Reactivate form to retry
                 ]
 
-class ActionConfirmPassageMatch(Action):
+class ActionConfirmVcpassageMatch(Action):
     """User confirmed the passage source match"""
     
     def name(self) -> Text:
-        return "action_confirm_passage_match"
+        return "action_confirm_vcpassage_match"
     
     def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
-        candidate = tracker.get_slot("psource_candidate")
+        candidate = tracker.get_slot("vcpsource_candidate")
         
         logger.info(f"User confirmed passage source: '{candidate}'")
         
         return [
-            SlotSet("psource_verified", candidate),
-            SlotSet("psource_candidate", None),
-            SlotSet("psource_confidence", None),
-            SlotSet("psource_lazystring", None),
-            SlotSet("psource_retry_count", 0),
+            SlotSet("vcpsource_usestring", candidate),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_retry_count", 0),
             # Trigger quote selection
-            FollowupAction("action_query_passages")
+            FollowupAction("action_query_vcpassages")
         ]
 
-class ActionRejectPassageMatch(Action):
+class ActionRejectVcpassageMatch(Action):
     """User rejected the passage source match - retry"""
     
     def name(self) -> Text:
-        return "action_reject_passage_match"
+        return "action_reject_vcpassage_match"
     
     def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
             domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
         
-        retry_count = tracker.get_slot("psource_retry_count") or 0
+        retry_count = tracker.get_slot("vcpsource_retry_count") or 0
         
         # Clear candidate
         events = [
-            SlotSet("psource_candidate", None),
-            SlotSet("psource_confidence", None),
-            SlotSet("psource_lazystring", None)
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_lazystring", None)
         ]
         
         if retry_count < 2:
             logger.info(f"User rejected match - retry {retry_count + 1}")
-            dispatcher.utter_message(response="utter_ask_passage_retry")
-            dispatcher.utter_message(response="utter_ask_passage_source")
-            events.append(SlotSet("psource_retry_count", retry_count + 1))
+            dispatcher.utter_message(response="utter_ask_vcpsource_retry")
+            events.extend([
+                SlotSet("vcpsource_retry_count", retry_count + 1),
+                Form("vcpsource_collection_form")  # Reactivate form to retry
+            ])
         else:
             logger.info("User rejected match - max retries, aborting")
-            dispatcher.utter_message(response="utter_psource_abort")
+            dispatcher.utter_message(response="utter_vcpsource_abort")
             events.extend([
-                SlotSet("psource_retry_count", 0),
-                FollowupAction("action_reset_passage_selection")
+                SlotSet("vcpsource_retry_count", 0),
+                FollowupAction("action_reset_vcpassage_selection")
             ])
         
         return events
 
-class ActionResetPassageSelection(Action):
+class ActionResetVcpassageSelection(Action):
     """Reset all passage selection slots"""
     
     def name(self) -> Text:
-        return "action_reset_passage_selection"
+        return "action_reset_vcpassage_selection"
     
     def run(self, dispatcher: CollectingDispatcher,
             tracker: Tracker,
@@ -1457,11 +1443,97 @@ class ActionResetPassageSelection(Action):
         logger.info("Resetting passage selection workflow")
         
         return [
-            SlotSet("psource_lazystring", None),
-            SlotSet("psource_candidate", None),
-            SlotSet("psource_verified", None),
-            SlotSet("psource_confidence", None),
-            SlotSet("psource_retry_count", 0),
-            SlotSet("selected_quote", None),
-            # Don't reset available_passage_sources - may want to reuse
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("selected_vcquote", None),
+            # Don't reset available_vcpassage_sources - may want to reuse
         ]
+
+class ActionPerformVoiceClone(Action):
+    """Perform voice cloning with selected speaker and quote"""
+    
+    def name(self) -> Text:
+        return "action_perform_voice_clone"
+
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        speaker = tracker.get_slot("vcspeaker_usestring")
+        quote = tracker.get_slot("selected_vcquote")
+        
+        if not speaker or not quote:
+            logger.error(f"action_perform_voice_clone missing required data: speaker={speaker}, quote={quote is not None}")
+            dispatcher.utter_message(text="I'm missing some information. Let me reset and try again.")
+            return [FollowupAction("action_reset_voice_cloning")]
+        
+        logger.info(f"Performing voice clone: speaker={speaker}, quote_length={len(quote)}")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/voice_clone"
+                payload = {
+                    "speaker": speaker,
+                    "quote": quote
+                }
+                
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status == HTTPStatus.OK:
+                        data = await response.json()
+                        logger.info(f"Voice clone successful: {data}")
+                        
+                        # Ask if user wants another quote
+                        dispatcher.utter_message(response="utter_ask_another_quote")
+                        return []
+                    else:
+                        logger.error(f"Voice clone failed: {response.status}")
+                        dispatcher.utter_message(text="Voice cloning failed. Please try again.")
+                        return []
+        
+        except Exception as e:
+            logger.error(f"Error performing voice clone: {e}")
+            dispatcher.utter_message(text="I encountered an error during voice cloning.")
+            return []
+
+class ActionHandleAnotherQuoteAffirm(Action):
+    """Handle user wanting to hear another quote from a different source"""
+    
+    def name(self) -> Text:
+        return "action_handle_another_quote_affirm"
+
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        logger.info("User wants to hear another quote - restarting passage selection")
+        
+        # Reset passage-related slots (keep speaker!)
+        return [
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("selected_vcquote", None),
+            Form("vcpsource_collection_form")  # Restart passage selection
+        ]
+
+class ActionHandleAnotherQuoteDeny(Action):
+    """Handle user declining another quote - end voice cloning experiment"""
+    
+    def name(self) -> Text:
+        return "action_handle_another_quote_deny"
+
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        logger.info("User done with voice cloning - completing experiment")
+        
+        dispatcher.utter_message(response="utter_voice_cloning_complete")
+        
+        # Reset all voice cloning slots
+        return [FollowupAction("action_reset_voice_cloning")]
