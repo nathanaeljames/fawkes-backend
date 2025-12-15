@@ -688,86 +688,41 @@ class ActionQueryUserbase(Action):
         self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
     ) -> List[Dict[Text, Any]]:
         
-        # Determine context
-        enrollment_active = tracker.get_slot("enrollment_active")
         voiceclone_active = tracker.get_slot("voiceclone_active")
-        
-        # Build request payload based on context
-        if enrollment_active:
-            context = "enrollment"
-            imprint_firstname = tracker.get_slot("imprint_firstname")
-            imprint_surname = tracker.get_slot("imprint_surname")
-            
-            if not imprint_firstname and not imprint_surname:
-                logger.warning("action_query_userbase called with no firstname/surname in enrollment context!")
-                return []
-            
-            # Enrollment uses separate firstname/surname parameters
-            request_payload = {
-                "firstname": imprint_firstname,
-                "surname": imprint_surname or ""
-            }
-            logger.info(f"Querying database for: {imprint_firstname} {imprint_surname} (context: enrollment, exact match)")
-            
-        elif voiceclone_active:
-            context = "voiceclone"
+        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query"
+
+        # VOICECLONE FLOW - check this first
+        if voiceclone_active:
             vcspeaker_lazystring = tracker.get_slot("vcspeaker_lazystring")
             
             if not vcspeaker_lazystring:
                 logger.warning("action_query_userbase called with no vcspeaker_lazystring in voiceclone context!")
                 return []
             
-            # Voiceclone uses single full_name parameter with fuzzy matching
+            logger.info(f"Querying database for: {vcspeaker_lazystring} (context: voiceclone, fuzzy match)")
+            
             request_payload = {
                 "full_name": vcspeaker_lazystring
             }
-            logger.info(f"Querying database for: {vcspeaker_lazystring} (context: voiceclone, fuzzy match)")
             
-        else:
-            logger.warning("action_query_userbase called without enrollment or voiceclone context!")
-            return []
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query",
-                    json=request_payload,
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        if context == "enrollment":
-                            # Enrollment response: SpeakerQueryResponse with uid/firstname/surname/success
-                            if data.get("success") and data.get("uid"):
-                                uid = data["uid"]
-                                firstname = data.get("firstname", "")
-                                surname = data.get("surname", "")
-                                speaker_name = f"{firstname} {surname}".strip()
-                                
-                                logger.info(f"Enrollment match found: {speaker_name} (UID={uid})")
-                                
-                                return [
-                                    SlotSet("ecapa_name", speaker_name),
-                                    SlotSet("ecapa_uid", uid),
-                                    SlotSet("imprint_name", speaker_name)
-                                ]
-                            else:
-                                # No match found for enrollment
-                                logger.info("No match found in database for enrollment")
-                                return [
-                                    SlotSet("ecapa_name", None),
-                                    SlotSet("ecapa_uid", None)
-                                ]
-                        
-                        elif context == "voiceclone":
-                            # Voiceclone response: dict with status/confidence/speaker_name
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        fastapi_url,
+                        json=request_payload,
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
                             if data.get("status") == "success":
-                                speaker_name = data.get("speaker_name")  # Formatted as "firstname_surname"
+                                speaker_name = data.get("speaker_name")  # Backend format: "firstname_surname"
                                 firstname = data.get("firstname", "")
                                 surname = data.get("surname", "")
-                                candidate = f"{firstname} {surname}".strip()
                                 confidence = data.get("confidence", 0.0)
+                                
+                                # Use firstname/surname directly to preserve exact capitalization
+                                candidate = f"{firstname} {surname}".strip()
                                 
                                 logger.info(f"Voiceclone match: {candidate} (confidence: {confidence:.2f})")
                                 
@@ -776,46 +731,106 @@ class ActionQueryUserbase(Action):
                                     SlotSet("vcspeaker_usestring", speaker_name),
                                     SlotSet("vcspeaker_confidence", confidence)
                                 ]
-                            else:
-                                # No match found for voiceclone (status = "not_found")
-                                confidence = data.get("confidence", 0.0)
-                                logger.info(f"No match found in database for voiceclone (confidence: {confidence})")
-                                
+                            
+                            elif data.get("status") == "not_found":
+                                logger.info("No match found in database for voiceclone")
                                 return [
                                     SlotSet("vcspeaker_candidate", None),
                                     SlotSet("vcspeaker_usestring", None),
-                                    SlotSet("vcspeaker_confidence", confidence)
+                                    SlotSet("vcspeaker_confidence", 0.0)
                                 ]
-                    
-                    else:
-                        logger.error(f"Query failed with status {response.status}")
-                        if context == "enrollment":
-                            return [
-                                SlotSet("ecapa_name", None),
-                                SlotSet("ecapa_uid", None)
-                            ]
-                        elif context == "voiceclone":
+                        
+                        else:
+                            logger.error(f"Query failed with status {response.status}")
                             return [
                                 SlotSet("vcspeaker_candidate", None),
                                 SlotSet("vcspeaker_usestring", None),
                                 SlotSet("vcspeaker_confidence", 0.0)
                             ]
-        
-        except Exception as e:
-            logger.error(f"Error querying userbase: {e}")
-            if context == "enrollment":
-                return [
-                    SlotSet("ecapa_name", None),
-                    SlotSet("ecapa_uid", None)
-                ]
-            elif context == "voiceclone":
+            
+            except Exception as e:
+                logger.error(f"Error querying userbase: {e}")
                 return [
                     SlotSet("vcspeaker_candidate", None),
                     SlotSet("vcspeaker_usestring", None),
                     SlotSet("vcspeaker_confidence", 0.0)
                 ]
         
-        return []
+        # ENROLLMENT FLOW - if NOT voiceclone, assume enrollment
+        else:
+            query_firstname = tracker.get_slot("imprint_firstname")
+            query_surname = tracker.get_slot("imprint_surname")
+            
+            if not query_firstname or not query_surname:
+                logger.warning(f"Missing name information - firstname: {query_firstname}, surname: {query_surname}")
+                return [
+                    SlotSet("ecapa_name", None),
+                    SlotSet("ecapa_uid", None),
+                    FollowupAction("action_handle_enrollment_routing")
+                ]
+            
+            logger.info(f"Querying database for: {query_firstname} {query_surname} (context: enrollment, exact match)")
+            
+            request_payload = {
+                "firstname": query_firstname,
+                "surname": query_surname
+            }
+            
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        fastapi_url,
+                        json=request_payload,
+                        timeout=aiohttp.ClientTimeout(total=5)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            
+                            if data.get("success") and data.get("uid"):
+                                uid = data["uid"]
+                                firstname = data.get("firstname", "")
+                                surname = data.get("surname", "")
+                                speaker_name = f"{firstname} {surname}".strip()
+                                
+                                logger.info(f"Found speaker {speaker_name} with UID: {uid}")
+                                
+                                return [
+                                    SlotSet("ecapa_name", speaker_name),
+                                    SlotSet("ecapa_uid", str(uid)),
+                                    SlotSet("imprint_name", speaker_name),
+                                    FollowupAction("action_handle_enrollment_routing")
+                                ]
+                            else:
+                                logger.info(f"No record found for {query_firstname} {query_surname}")
+                                return [
+                                    SlotSet("ecapa_name", None),
+                                    SlotSet("ecapa_uid", None),
+                                    FollowupAction("action_handle_enrollment_routing")
+                                ]
+                        
+                        elif response.status == 404:
+                            logger.info(f"No record found for {query_firstname} {query_surname} (404)")
+                            return [
+                                SlotSet("ecapa_name", None),
+                                SlotSet("ecapa_uid", None),
+                                FollowupAction("action_handle_enrollment_routing")
+                            ]
+                        
+                        else:
+                            logger.error(f"Server returned status {response.status}")
+                            return [
+                                SlotSet("ecapa_name", None),
+                                SlotSet("ecapa_uid", None),
+                                FollowupAction("action_handle_enrollment_routing")
+                            ]
+            
+            except Exception as e:
+                logger.error(f"Error querying userbase: {e}")
+                return [
+                    SlotSet("ecapa_name", None),
+                    SlotSet("ecapa_uid", None),
+                    FollowupAction("action_handle_enrollment_routing")
+                ]
 
 class ActionTriggerEnrollment(Action):
     def name(self) -> Text:
