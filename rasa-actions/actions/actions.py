@@ -1554,10 +1554,6 @@ class ActionResetVoiceCloning(Action):
             SlotSet("vcpsource_retry_count", 0),
             SlotSet("available_vcpassage_sources", None),
             SlotSet("selected_vcquote", None),
-            # Return to listening
-            #FollowupAction("action_listen")
-            # TODO if we get here as result of abort (no follow up action) we need this line to prevent utter_default
-            # However if we get here as a result of rule 'User requests voice cloning' this interrupts follow up action_start_voice_cloning
         ]
 
         # If abort scenario, return to listening (prevents utter_default)
