@@ -1959,6 +1959,16 @@ class EnrollmentAPIModels:
         quote: Optional[str] = None # For select_quote
         success: bool = True
 
+class VoiceCloneAPIModels:
+    class VoiceCloneRequest(BaseModel):
+        sender_id: str
+        speaker: str
+        quote: str
+    
+    class VoiceCloneResponse(BaseModel):
+        success: bool
+        message: str = ""
+
 class EnrollmentAPIHandler:
     """Handles FastAPI endpoints for speaker enrollment workflows"""
     
