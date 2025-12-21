@@ -1,0 +1,98 @@
+flowchart TD
+    Start([name_collection_form<br/>activated]) --> CollectForm[Form prompts:<br/>utter_ask_imprint_firstname<br/>utter_ask_imprint_surname]
+    
+    CollectForm --> FormLoop{Both firstname<br/>& surname<br/>filled?}
+    FormLoop -->|No| CollectForm
+    FormLoop -->|Yes| DeactivateLoop[active_loop: null]
+    
+    DeactivateLoop --> ConfirmAction[action_confirm_full_name<br/>Creates simple spelled versions:<br/>firstname_spelled = F-I-R-S-T-N-A-M-E<br/>surname_spelled = S-U-R-N-A-M-E<br/>Sets spelling_stage = 'confirming_both']
+    
+    ConfirmAction --> UtterConfirmBoth["utter_ask_confirm_full_name<br/>First name {firstname},<br/>last name {surname}.<br/>Did I get that right?"]
+    
+    UtterConfirmBoth --> DecisionBoth{User Response}
+    
+    %% AFFIRM BOTH NAMES PATH
+    DecisionBoth -->|affirm| HandleBothAffirm[action_handle_spelling_confirmation<br/>Stage: confirming_both + affirm]
+    HandleBothAffirm --> UtterGreat1[utter_great<br/>Great!]
+    UtterGreat1 --> UtterAskSpelling[utter_ask_confirm_spelling<br/>Did I spell everything correctly?]
+    UtterAskSpelling --> SetStageSpelling[spelling_stage = 'confirming_spelling']
+    
+    SetStageSpelling --> DecisionSpelling{User Response}
+    
+    %% AFFIRM SPELLING PATH - COMPLETE
+    DecisionSpelling -->|affirm| HandleSpellingAffirm[action_handle_spelling_confirmation<br/>Stage: confirming_spelling + affirm]
+    HandleSpellingAffirm --> UtterGreat2[utter_great<br/>Great!]
+    UtterGreat2 --> SetComplete1[spelling_stage = 'complete'<br/>name_complete = True]
+    SetComplete1 --> QueryDB1[FollowupAction:<br/>action_query_userbase]
+    QueryDB1 --> ToEnrollment1([→ action_handle_enrollment_routing])
+    
+    %% DENY SPELLING PATH - START FIRSTNAME SPELLING
+    DecisionSpelling -->|deny| HandleSpellingDeny[action_handle_spelling_confirmation<br/>Stage: confirming_spelling + deny]
+    HandleSpellingDeny --> AskSpellFirst1["utter_ask_spell_firstname<br/>Can you spell your first name<br/>letter-by-letter?"]
+    AskSpellFirst1 --> SetStageFirst1[spelling_stage = 'spelling_first']
+    
+    %% DENY BOTH NAMES PATH - START FIRSTNAME SPELLING
+    DecisionBoth -->|deny| HandleBothDeny[action_handle_spelling_confirmation<br/>Stage: confirming_both + deny]
+    HandleBothDeny --> UtterApology1[utter_apology_retry<br/>My apologies.]
+    UtterApology1 --> AskSpellFirst2["utter_ask_spell_firstname<br/>Can you spell your first name<br/>letter-by-letter?"]
+    AskSpellFirst2 --> SetStageFirst2[spelling_stage = 'spelling_first']
+    
+    %% FIRSTNAME SPELLING LOOP
+    SetStageFirst1 --> SpellFirstLoop["User spells firstname<br/>intent: spell_name<br/>e.g. N-A-T-H-A-N-A-E-L"]
+    SetStageFirst2 --> SpellFirstLoop
+    
+    SpellFirstLoop --> ProcessFirst[action_process_spelling<br/>Stage: spelling_first<br/>Normalizes input to name<br/>Sets imprint_firstname<br/>Sets imprint_firstname_spelled<br/>Sets spelling_stage = 'confirming_first']
+    
+    ProcessFirst --> UtterConfirmFirst["Utters inline:<br/>{firstname}, spelled {firstname_spelled}.<br/>Did I get that right?"]
+    
+    UtterConfirmFirst --> DecisionFirst{User Response}
+    
+    %% AFFIRM FIRSTNAME - MOVE TO SURNAME
+    DecisionFirst -->|affirm| HandleFirstAffirm[action_handle_spelling_confirmation<br/>Stage: confirming_first + affirm]
+    HandleFirstAffirm --> UtterGreat3[utter_great<br/>Great!]
+    UtterGreat3 --> AskSpellLast1["utter_ask_spell_surname<br/>Can you spell your last name<br/>letter-by-letter?"]
+    AskSpellLast1 --> SetStageLast[spelling_stage = 'spelling_last']
+    
+    %% DENY FIRSTNAME - INFINITE LOOP
+    DecisionFirst -->|deny| HandleFirstDeny[action_handle_spelling_confirmation<br/>Stage: confirming_first + deny]
+    HandleFirstDeny --> UtterApology2[utter_apology_retry<br/>My apologies.]
+    UtterApology2 --> AskSpellFirst3["utter_ask_spell_firstname<br/>Can you spell your first name<br/>letter-by-letter?"]
+    AskSpellFirst3 --> SetStageFirstRetry[spelling_stage = 'spelling_first']
+    SetStageFirstRetry --> SpellFirstLoop
+    
+    %% SURNAME SPELLING LOOP
+    SetStageLast --> SpellLastLoop["User spells surname<br/>intent: spell_name<br/>e.g. W-A-R-R-E-N"]
+    
+    SpellLastLoop --> ProcessLast[action_process_spelling<br/>Stage: spelling_last<br/>Normalizes input to name<br/>Sets imprint_surname<br/>Sets imprint_surname_spelled<br/>Sets spelling_stage = 'confirming_last']
+    
+    ProcessLast --> UtterConfirmLast["Utters inline:<br/>{surname}, spelled {surname_spelled}.<br/>Did I get that right?"]
+    
+    UtterConfirmLast --> DecisionLast{User Response}
+    
+    %% AFFIRM SURNAME - COMPLETE
+    DecisionLast -->|affirm| HandleLastAffirm[action_handle_spelling_confirmation<br/>Stage: confirming_last + affirm]
+    HandleLastAffirm --> UtterGreat4[utter_great<br/>Great!]
+    UtterGreat4 --> SetComplete2[spelling_stage = 'complete'<br/>name_complete = True]
+    SetComplete2 --> QueryDB2[FollowupAction:<br/>action_query_userbase]
+    QueryDB2 --> ToEnrollment2([→ action_handle_enrollment_routing])
+    
+    %% DENY SURNAME - INFINITE LOOP
+    DecisionLast -->|deny| HandleLastDeny[action_handle_spelling_confirmation<br/>Stage: confirming_last + deny]
+    HandleLastDeny --> UtterApology3[utter_apology_retry<br/>My apologies.]
+    UtterApology3 --> AskSpellLast2["utter_ask_spell_surname<br/>Can you spell your last name<br/>letter-by-letter?"]
+    AskSpellLast2 --> SetStageLastRetry[spelling_stage = 'spelling_last']
+    SetStageLastRetry --> SpellLastLoop
+    
+    %% STYLING
+    classDef startEnd fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9,stroke-width:3px
+    classDef form fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd,stroke-width:2px
+    classDef action fill:#4a7c59,stroke:#6b9b7a,color:#e8f5e9,stroke-width:2px
+    classDef handler fill:#5c4a1a,stroke:#8b7520,color:#fff9c4,stroke-width:2px
+    classDef decision fill:#7c5a1a,stroke:#a8762b,color:#fff9c4,stroke-width:2px
+    classDef utterance fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd,stroke-width:2px
+    
+    class Start,ToEnrollment1,ToEnrollment2 startEnd
+    class CollectForm,UtterConfirmBoth,UtterGreat1,UtterAskSpelling,UtterGreat2,UtterApology1,AskSpellFirst1,AskSpellFirst2,AskSpellFirst3,UtterConfirmFirst,UtterGreat3,AskSpellLast1,UtterApology2,SpellFirstLoop,UtterConfirmLast,UtterGreat4,UtterApology3,AskSpellLast2,SpellLastLoop utterance
+    class ConfirmAction,ProcessFirst,ProcessLast,SetComplete1,SetComplete2,QueryDB1,QueryDB2,SetStageFirstRetry,SetStageLastRetry,SetStageSpelling,SetStageFirst1,SetStageFirst2,SetStageLast,DeactivateLoop action
+    class HandleBothAffirm,HandleBothDeny,HandleSpellingAffirm,HandleSpellingDeny,HandleFirstAffirm,HandleFirstDeny,HandleLastAffirm,HandleLastDeny handler
+    class DecisionBoth,DecisionSpelling,DecisionFirst,DecisionLast,FormLoop decision

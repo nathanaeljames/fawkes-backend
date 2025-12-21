@@ -35,7 +35,7 @@ curl -X POST http://localhost:9002/api/query \
   }'
 
 # Test querying for a user without surname (surname is NULL in database)
-curl -X POST http://localhost:9001/api/query \
+curl -X POST http://localhost:9002/api/query \
   -H "Content-Type: application/json" \
   -d '{
     "action": "query_database",
@@ -51,7 +51,7 @@ curl -X POST http://localhost:9001/api/query \
 
 
 # Test starting recording for existing user
-curl -X POST http://localhost:9001/api/record \
+curl -X POST http://localhost:9002/api/record \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "test-client-123",
@@ -59,7 +59,7 @@ curl -X POST http://localhost:9001/api/record \
   }'
 
 # Test starting recording for new user (no uid)
-curl -X POST http://localhost:9001/api/record \
+curl -X POST http://localhost:9002/api/record \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "test-client-123",
@@ -71,15 +71,6 @@ curl -X POST http://localhost:9001/api/record \
 # If client not connected: {"error": "Client not connected", "success": false}
 # If error: {"error": "error message", "success": false}
 
-
-# Set slots with curl
-curl -X POST http://crunchatizer:5007/conversations/d503e0a213bf4a8298628b86d8bbda45/tracker/events \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "slot",
-    "name": "ecapa_firstname",
-    "value": "Aaron"
-  }'
 
 # Trigger record pangram
 curl -X POST http://localhost:9002/api/record_pangram \
@@ -128,4 +119,23 @@ curl -X POST http://localhost:9002/api/passages/query \
   -d '{
     "action": "match_source",
     "fuzzy_source": "harry potter"
+  }'
+
+# Fetch a random quote
+
+# Do voice cloning
+curl -X POST http://localhost:9002/api/voice_clone \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender_id": "client_744f6bff-2855-4597-80c4-6ddc159be4c3",
+    "speaker": "Nathanael Warren",
+    "quote": "Hello, this is a test of the voice cloning system."
+  }'
+
+  curl -X POST http://localhost:9002/api/voice_clone \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender_id": "aae405c7-234b-49dd-8d44-bb63337a06e0",
+    "speaker": "Courtney Mosier Warren",
+    "quote": "Please call Stella. Ask her to bring these things with her from the store: Six spoons of fresh snow peas, five thick slabs of blue cheese, and maybe a snack for her brother Bob."
   }'

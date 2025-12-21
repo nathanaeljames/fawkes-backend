@@ -12,12 +12,12 @@ intents:
   - provide_full_name
   - spell_name
   - trigger_enrollment
-  - correct_spelling
-  - start_spelling
   - system_enrollment_complete_success
   - system_enrollment_complete_aborted
   - request_voice_cloning
-  - select_passage_source
+  - system_voice_clone_complete
+  - user_ask_thinking_about
+  - abort_enrollment
 
 
 entities:
@@ -384,8 +384,17 @@ responses:
   utter_ask_another_quote:
     - text: "Would you like to hear another quote?"
 
+  utter_ask_same_person:
+  - text: "Same person?"
+
+  utter_ask_same_source:
+    - text: "Same source?"
+
   utter_voice_cloning_complete:
     - text: "Voice cloning experiment complete."
+
+  utter_enrollment_cancelled:
+    - text: "Enrollment cancelled. Clearly tell me your first and last name if you'd like to try again later."
 
   utter_default:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
@@ -416,11 +425,12 @@ actions:
   - action_handle_vcpassage_match
   - action_confirm_vcpassage_match
   - action_reject_vcpassage_match
-  - action_reset_vcpassage_selection
   - action_handle_vcspeaker_match
   - action_perform_voice_clone
-  - action_handle_another_quote_affirm
   - action_handle_another_quote_deny
+  - action_same_person_deny
+  - action_same_source_affirm
+  - action_same_source_deny
 
 session_config:
   session_expiration_time: 60
