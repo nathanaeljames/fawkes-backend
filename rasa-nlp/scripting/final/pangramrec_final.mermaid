@@ -1,0 +1,55 @@
+flowchart TD
+    Start([action_handle_enrollment_routing]) --> CheckUID{imprint_uid exists?}
+    
+    %% EXISTING USER PATH
+    CheckUID -->|Yes - User Found| UtterPleasureMeetAgain["utter_pleasure_meet_again<br/>'It's a pleasure to meet<br/>you again, [name]'"]
+    UtterPleasureMeetAgain --> UtterWeakImprint["utter_weak_imprint<br/>'I don't seem to have enough<br/>voice data to easily<br/>recognize your voice'"]
+    UtterWeakImprint --> UtterAskReciteExisting["utter_ask_recite_prompt<br/>'Can I ask you to recite<br/>a prompt for me?'"]
+    
+    %% NEW USER PATH
+    CheckUID -->|No - New User| UtterPleasureMeet["utter_pleasure_meet<br/>'It's a pleasure to<br/>meet you [name]'"]
+    UtterPleasureMeet --> UtterNoRecord["utter_no_record<br/>'I don't seem to have<br/>a record for you'"]
+    UtterNoRecord --> UtterAskReciteNew["utter_ask_recite_prompt<br/>'Can I ask you to recite<br/>a prompt for me?'"]
+    
+    %% DECISION POINT
+    UtterAskReciteExisting --> UserDecision{User Response}
+    UtterAskReciteNew --> UserDecision
+    
+    %% AFFIRM PATH
+    UserDecision -->|affirm| UtterReadPrompt["utter_read_prompt<br/>'Excellent. Can you please<br/>read aloud the following<br/>prompt:'"]
+    UtterReadPrompt --> StartRecording["action_start_enrollment_recording<br/>Sends START_ENROLLMENT to server"]
+    StartRecording --> ServerProcessing["Server: ECAPA Processing<br/>User reads pangram aloud<br/>Server processes audio"]
+    
+    %% SUCCESS PATH
+    ServerProcessing -->|Success| ServerSuccessMsg["Server → Client:<br/>'Enrollment completed<br/>successfully!'"]
+    ServerSuccessMsg --> TriggerSuccess["Server → Rasa:<br/>SYSTEM_ENROLLMENT_SUCCESS"]
+    TriggerSuccess --> ResetEnrollmentSuccess["action_reset_enrollment<br/>Clears enrollment state"]
+    ResetEnrollmentSuccess --> UtterAskVoiceCloning["utter_ask_experiment_voice_cloning<br/>'Would you like to experiment<br/>with voice cloning?'"]
+    UtterAskVoiceCloning --> VCDecision{User Response}
+    VCDecision -->|affirm| ToVoiceClone(["Proceed to<br/>Voice Clone Workflow"])
+    VCDecision -->|deny| EndSuccess([End - User Enrolled])
+    
+    %% ABORT PATH
+    ServerProcessing -->|Error/Abort| ServerAbortMsg["Server → Client:<br/>'Enrollment failed.'"]
+    ServerAbortMsg --> TriggerAbort["Server → Rasa:<br/>SYSTEM_ENROLLMENT_ABORT"]
+    TriggerAbort --> ResetEnrollmentAbort["action_reset_enrollment<br/>Clears enrollment state"]
+    ResetEnrollmentAbort --> EndAbort([End - Enrollment Failed])
+    
+    %% DENY PATH
+    UserDecision -->|deny| UtterVeryWell["utter_very_well<br/>'Very well.'"]
+    UtterVeryWell --> ResetEnrollmentDeny["action_reset_enrollment<br/>Clears enrollment state"]
+    ResetEnrollmentDeny --> EndDeny([End - User Declined])
+    
+    %% STYLING
+    classDef startEnd fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9,stroke-width:3px
+    classDef form fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd,stroke-width:2px
+    classDef action fill:#4a7c59,stroke:#6b9b7a,color:#e8f5e9,stroke-width:2px
+    classDef handler fill:#5c4a1a,stroke:#8b7520,color:#fff9c4,stroke-width:2px
+    classDef decision fill:#7c5a1a,stroke:#a8762b,color:#fff9c4,stroke-width:2px
+    classDef server fill:#696969,stroke:#808080,color:#f5f5f5,stroke-width:2px
+    
+    class Start,EndSuccess,EndAbort,EndDeny,ToVoiceClone startEnd
+    class UtterPleasureMeetAgain,UtterWeakImprint,UtterAskReciteExisting,UtterPleasureMeet,UtterNoRecord,UtterAskReciteNew,UtterReadPrompt,UtterVeryWell,UtterAskVoiceCloning form
+    class StartRecording,ResetEnrollmentSuccess,ResetEnrollmentAbort,ResetEnrollmentDeny action
+    class CheckUID,UserDecision,VCDecision decision
+    class ServerProcessing,ServerSuccessMsg,ServerAbortMsg,TriggerSuccess,TriggerAbort server

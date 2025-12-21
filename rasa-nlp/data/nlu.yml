@@ -332,6 +332,15 @@ nlu:
     - SYSTEM_ENROLLMENT_ABORT
     - /enrollment_abort_exact
 
+# User-triggered abort pattern
+- regex: abort_enrollment_exact
+  examples: |
+    - ^[Aa]bort enrollment$
+    - ^[Cc]ancel enrollment$
+- intent: abort_enrollment
+  examples: |
+    - /abort_enrollment_exact
+
 # Trigger voice cloning experiment
 - intent: request_voice_cloning
   examples: |
@@ -344,6 +353,15 @@ nlu:
     - can we do voice cloning
     - experiment with voice cloning
     - voice clone
+
+# Voice clone completion
+- regex: voice_clone_complete_exact
+  examples: |
+    - ^SYSTEM_VOICE_CLONE_COMPLETE$
+- intent: system_voice_clone_complete
+  examples: |
+    - SYSTEM_VOICE_CLONE_COMPLETE
+    - /voice_clone_complete_exact
 
 #- intent: correct_spelling
 #  examples: |
@@ -503,13 +521,13 @@ nlu:
     - brown
 
 # User selects a passage source
-- intent: select_passage_source
-  examples: |
-    - fifty shades
-    - lightning thief
-    - the lightning thief
-    - fifty shades of grey
-    - pg 13 fifty shades
-    - PG-13 Fifty Shades of Grey
-    - percy jackson
-    - lightning thief book
+#- intent: select_passage_source
+#  examples: |
+#    - fifty shades
+#    - lightning thief
+#    - the lightning thief
+#    - fifty shades of grey
+#    - pg 13 fifty shades
+#    - PG-13 Fifty Shades of Grey
+#    - percy jackson
+#    - lightning thief book

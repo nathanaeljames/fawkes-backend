@@ -1,0 +1,177 @@
+flowchart TD
+    Start([Entry: Voice Cloning]):::startEnd
+    StartVC[action_start_voice_cloning<br/>Set voiceclone_active=true]:::actionHandler
+    
+    %% SPEAKER SELECTION FLOW
+    SpeakerForm[vcspeaker_collection_form<br/>Collect speaker name]:::form
+    QueryUser[action_query_userbase<br/>Fuzzy match speaker]:::actionHandler
+    HandleSpeaker[action_handle_vcspeaker_match<br/>Evaluate confidence]:::actionHandler
+    
+    SpeakerConfidence{Confidence Level}:::decision
+    
+    %% High Confidence Path
+    AutoConfirmSpeaker[Auto-confirm speaker<br/>confidence > 80%]:::action
+    ConfirmSpeakerMatch[action_confirm_vcspeaker_match<br/>Set vcspeaker_usestring]:::actionHandler
+    
+    %% Medium Confidence Path
+    AskConfirmSpeaker[utter_confirm_vcspeaker_candidate<br/>Did you mean X?]:::form
+    SpeakerConfirmDecision{User Response}:::decision
+    ConfirmSpeakerYes[action_confirm_vcspeaker_match]:::actionHandler
+    RejectSpeaker[action_reject_vcspeaker_match<br/>Increment retry count]:::actionHandler
+    
+    %% Low Confidence / Retry
+    SpeakerRetryCheck{Retry Count}:::decision
+    AskRetry[utter_ask_vcspeaker_retry<br/>Try again?]:::form
+    SpeakerAbort[utter_vcspeaker_abort<br/>Speaker not found]:::form
+    AbortVC[action_exit_voice_cloning<br/>Clear all flags]:::actionHandler
+    AbortEnd([Exit Voice Cloning]):::startEnd
+    
+    %% PASSAGE SOURCE SELECTION FLOW
+    PassageForm[vcpsource_collection_form<br/>Collect source name]:::form
+    QueryPassage[action_query_vcpassages<br/>action: match_source<br/>Fuzzy match source]:::actionHandler
+    HandlePassage[action_handle_vcpassage_match<br/>Evaluate confidence]:::actionHandler
+    
+    PassageConfidence{Confidence Level}:::decision
+    
+    %% High Confidence Path
+    AutoConfirmPassage[Auto-confirm source<br/>confidence > 95%]:::action
+    ConfirmPassageMatch[action_confirm_vcpassage_match<br/>Set vcpsource_usestring]:::actionHandler
+    
+    %% Medium Confidence Path
+    AskConfirmPassage[utter_confirm_vcpsource_candidate<br/>Did you mean X?]:::form
+    PassageConfirmDecision{User Response}:::decision
+    ConfirmPassageYes[action_confirm_vcpassage_match]:::actionHandler
+    RejectPassage[action_reject_vcpassage_match<br/>Increment retry count]:::actionHandler
+    
+    %% Low Confidence / Retry
+    PassageRetryCheck{Retry Count}:::decision
+    AskPassageRetry[utter_ask_vcpsource_retry<br/>Try again?]:::form
+    PassageAbort[utter_vcpsource_abort<br/>Source not found]:::form
+    
+    %% VOICE CLONE EXECUTION
+    SelectQuote[action_query_vcpassages<br/>action: select_quote<br/>Get random quote]:::actionHandler
+    PerformClone[action_perform_voice_clone<br/>Send to server with<br/>speaker + quote]:::actionHandler
+    
+    ServerClone[Server performs voice clone<br/>Piper + XTTS synthesis<br/>Stream audio to client]:::action
+    
+    CompleteIntent[SYSTEM_VOICE_CLONE_COMPLETE<br/>intent triggered]:::action
+    
+    %% LOOPBACK FLOW
+    AskAnother[utter_ask_another_quote<br/>Another quote?]:::form
+    AnotherDecision{User Response}:::decision
+    
+    %% Affirm - Same Person?
+    AskSamePerson[utter_ask_same_person<br/>Same person?]:::form
+    PersonDecision{User Response}:::decision
+    
+    %% Same Person - Same Source?
+    AskSameSource[utter_ask_same_source<br/>Same source?]:::form
+    SourceDecision{User Response}:::decision
+    
+    %% Same Source Path
+    SameSourceAffirm[action_same_source_affirm<br/>Select new quote from<br/>same source]:::actionHandler
+    
+    %% Different Source Path
+    SameSourceDeny[action_same_source_deny<br/>Clear passage slots]:::actionHandler
+    
+    %% Different Person Path
+    SamePersonDeny[action_same_person_deny<br/>Clear speaker + passage slots<br/>Set voiceclone_active=true]:::actionHandler
+    
+    %% Deny Another Quote
+    DenyAnother[action_handle_another_quote_deny<br/>Complete experiment]:::actionHandler
+    VCComplete[utter_voice_cloning_complete]:::form
+    ExitVC[action_exit_voice_cloning<br/>Clear all flags]:::actionHandler
+    CompleteEnd([Voice Cloning Complete]):::startEnd
+    
+    %% FLOW CONNECTIONS
+    Start --> StartVC
+    StartVC --> SpeakerForm
+    
+    %% Speaker Selection Loop
+    SpeakerForm --> QueryUser
+    QueryUser --> HandleSpeaker
+    HandleSpeaker --> SpeakerConfidence
+    
+    SpeakerConfidence -->|> 80%| AutoConfirmSpeaker
+    SpeakerConfidence -->|50-80%| AskConfirmSpeaker
+    SpeakerConfidence -->|< 50%| SpeakerRetryCheck
+    
+    AutoConfirmSpeaker --> ConfirmSpeakerMatch
+    
+    AskConfirmSpeaker --> SpeakerConfirmDecision
+    SpeakerConfirmDecision -->|affirm| ConfirmSpeakerYes
+    SpeakerConfirmDecision -->|deny| RejectSpeaker
+    
+    ConfirmSpeakerYes --> PassageForm
+    ConfirmSpeakerMatch --> PassageForm
+    
+    RejectSpeaker --> SpeakerRetryCheck
+    SpeakerRetryCheck -->|< 3 retries| AskRetry
+    SpeakerRetryCheck -->|>= 3 retries| SpeakerAbort
+    
+    AskRetry --> SpeakerForm
+    SpeakerAbort --> AbortVC
+    AbortVC --> AbortEnd
+    
+    %% Passage Selection Loop
+    PassageForm --> QueryPassage
+    QueryPassage --> HandlePassage
+    HandlePassage --> PassageConfidence
+    
+    PassageConfidence -->|> 95%| AutoConfirmPassage
+    PassageConfidence -->|70-95%| AskConfirmPassage
+    PassageConfidence -->|< 70%| PassageRetryCheck
+    
+    AutoConfirmPassage --> ConfirmPassageMatch
+    
+    AskConfirmPassage --> PassageConfirmDecision
+    PassageConfirmDecision -->|affirm| ConfirmPassageYes
+    PassageConfirmDecision -->|deny| RejectPassage
+    
+    ConfirmPassageYes --> SelectQuote
+    ConfirmPassageMatch --> SelectQuote
+    
+    RejectPassage --> PassageRetryCheck
+    PassageRetryCheck -->|< 3 retries| AskPassageRetry
+    PassageRetryCheck -->|>= 3 retries| PassageAbort
+    
+    AskPassageRetry --> PassageForm
+    PassageAbort --> AbortVC
+    
+    %% Voice Clone Execution
+    SelectQuote --> PerformClone
+    PerformClone --> ServerClone
+    ServerClone --> CompleteIntent
+    CompleteIntent --> AskAnother
+    
+    %% Loopback Decision Tree
+    AskAnother --> AnotherDecision
+    
+    AnotherDecision -->|affirm| AskSamePerson
+    AnotherDecision -->|deny| DenyAnother
+    
+    AskSamePerson --> PersonDecision
+    
+    PersonDecision -->|affirm| AskSameSource
+    PersonDecision -->|deny| SamePersonDeny
+    
+    AskSameSource --> SourceDecision
+    
+    SourceDecision -->|affirm| SameSourceAffirm
+    SourceDecision -->|deny| SameSourceDeny
+    
+    %% Loop Back Paths
+    SameSourceAffirm --> SelectQuote
+    SameSourceDeny --> PassageForm
+    SamePersonDeny --> SpeakerForm
+    
+    %% Exit Path
+    DenyAnother --> VCComplete
+    VCComplete --> ExitVC
+    ExitVC --> CompleteEnd
+    
+    classDef startEnd fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9
+    classDef form fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd
+    classDef actionHandler fill:#5c4a1a,stroke:#8b7520,color:#fff9c4
+    classDef action fill:#4a7c59,stroke:#6b9b7a,color:#e8f5e9
+    classDef decision fill:#7c5a1a,stroke:#a8762b,color:#fff9c4

@@ -1927,17 +1927,12 @@ class EnrollmentAPIModels:
     class EnrollmentStatusRequest(BaseModel):
         client_id: str
         status: str  # "completed" or "abandoned"
-
-    class PassagesQueryRequest(BaseModel):
-        action: str  # "unique_sources", "match_source", "select_quote"
-        fuzzy_source: Optional[str] = None  # For match_source
-        source_name: Optional[str] = None   # For select_quote
     
     class SpeakerQueryResponse(BaseModel):
         uid: Optional[int] = None
         firstname: Optional[str] = None
         surname: Optional[str] = None
-        speaker_name: Optional[str] = None
+        #speaker_name: Optional[str] = None
         confidence: Optional[float] = None
         status: Optional[str] = None
         success: bool = True
@@ -1950,7 +1945,12 @@ class EnrollmentAPIModels:
         success: bool
         message: str = ""
 
-    # TODO move this to VoicecloneAPIModels for proper SOC
+class VoiceCloneAPIModels:
+    class PassagesQueryRequest(BaseModel):
+        action: str  # "unique_sources", "match_source", "select_quote"
+        fuzzy_source: Optional[str] = None  # For match_source
+        source_name: Optional[str] = None   # For select_quote
+
     class PassagesQueryResponse(BaseModel):
         action: str
         sources: Optional[List[str]] = None # For unique_sources
@@ -1959,7 +1959,6 @@ class EnrollmentAPIModels:
         quote: Optional[str] = None # For select_quote
         success: bool = True
 
-class VoiceCloneAPIModels:
     class VoiceCloneRequest(BaseModel):
         sender_id: str
         speaker: str
@@ -2073,7 +2072,7 @@ class EnrollmentAPIHandler:
                 
                 if best_match and best_score > 0:
                     fname, lname = best_match.split(' ', 1) if ' ' in best_match else (best_match, '')
-                    speaker_name_formatted = f"{fname}_{lname}".lower() if lname else fname.lower()
+                    #speaker_name_formatted = f"{fname}_{lname}".lower() if lname else fname.lower()
                     
                     print(f"[Enrollment API] Fuzzy match for '{request.full_name}': '{best_match}' (UID={best_uid}, confidence={best_score:.2f})")
                     
@@ -2083,7 +2082,7 @@ class EnrollmentAPIHandler:
                         'firstname': fname,
                         'surname': lname,
                         'uid': best_uid,
-                        'speaker_name': speaker_name_formatted,
+                        #'speaker_name': speaker_name_formatted,
                         'confidence': round(best_score, 2)
                     }
                 
@@ -2105,139 +2104,6 @@ class EnrollmentAPIHandler:
             print(f"[Enrollment API] Request data: firstname={request.firstname}, surname={request.surname}, full_name={request.full_name}")
             return EnrollmentAPIModels.SpeakerQueryResponse(
                 uid=None,
-                success=False
-            )
-    
-    async def query_passages(self, request: EnrollmentAPIModels.PassagesQueryRequest) -> EnrollmentAPIModels.PassagesQueryResponse:
-        """
-        Unified function to handle all passage queries.
-        Handles: unique_sources, match_source, select_quote
-        """
-        try:
-            # Action 1: Get unique sources
-            if request.action == "unique_sources":
-                sources = self.con.execute("""
-                    SELECT DISTINCT source 
-                    FROM passages 
-                    ORDER BY source
-                """).fetchall()
-                
-                source_list = [row[0] for row in sources]
-                print(f"[Passages] Found {len(source_list)} unique sources")
-                
-                return EnrollmentAPIModels.PassagesQueryResponse(
-                    action="unique_sources",
-                    success=True,
-                    sources=source_list
-                )
-            
-            # Action 2: Match source (fuzzy matching)
-            elif request.action == "match_source":
-                if not request.fuzzy_source:
-                    print(f"[Passages] Invalid query - no fuzzy_source provided")
-                    return EnrollmentAPIModels.PassagesQueryResponse(
-                        action="match_source",
-                        success=False,
-                        source_name=None,
-                        confidence=0.0
-                    )
-                
-                # Get all available sources
-                sources = self.con.execute("""
-                    SELECT DISTINCT source 
-                    FROM passages
-                """).fetchall()
-                
-                available_sources = [row[0] for row in sources]
-                
-                if not available_sources:
-                    print(f"[Passages] No sources in database")
-                    return EnrollmentAPIModels.PassagesQueryResponse(
-                        action="match_source",
-                        success=True,
-                        source_name=None,
-                        confidence=0.0
-                    )
-                
-                # Fuzzy matching logic (inline, like query_speaker)
-                # Normalize: case-insensitive, treat hyphens and spaces equivalently
-                normalized_query = request.fuzzy_source.lower().replace('-', ' ')
-                
-                best_match = None
-                best_score = 0.0
-                
-                for source in available_sources:
-                    normalized_source = source.lower().replace('-', ' ')
-                    
-                    # Use SequenceMatcher for fuzzy matching
-                    score = SequenceMatcher(None, normalized_query, normalized_source).ratio()
-                    
-                    # Also check for substring matches (boost confidence)
-                    if normalized_query in normalized_source or normalized_source in normalized_query:
-                        score = max(score, 0.90)  # Substring match gets high confidence
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_match = source
-                
-                print(f"[Passages] Match: '{request.fuzzy_source}' → '{best_match}' ({best_score:.2%})")
-                
-                return EnrollmentAPIModels.PassagesQueryResponse(
-                    action="match_source",
-                    success=True,
-                    source_name=best_match,
-                    confidence=round(best_score, 2)
-                )
-            
-            # Action 3: Select random quote from verified source
-            elif request.action == "select_quote":
-                if not request.source_name:
-                    print(f"[Passages] Invalid query - no source_name provided")
-                    return EnrollmentAPIModels.PassagesQueryResponse(
-                        action="select_quote",
-                        success=False,
-                        quote=None
-                    )
-                
-                # Get random quote from source
-                quotes = self.con.execute("""
-                    SELECT quote 
-                    FROM passages 
-                    WHERE source = ?
-                    ORDER BY RANDOM()
-                    LIMIT 1
-                """, (request.source_name,)).fetchall()
-                
-                if not quotes:
-                    print(f"[Passages] No quotes found for '{request.source_name}'")
-                    return EnrollmentAPIModels.PassagesQueryResponse(
-                        action="select_quote",
-                        success=True,
-                        quote=None
-                    )
-                
-                selected_quote = quotes[0][0]
-                print(f"[Passages] Selected quote from '{request.source_name}': {selected_quote[:60]}...")
-                
-                return EnrollmentAPIModels.PassagesQueryResponse(
-                    action="select_quote",
-                    success=True,
-                    quote=selected_quote
-                )
-            
-            else:
-                print(f"[Passages] Invalid action: {request.action}")
-                return EnrollmentAPIModels.PassagesQueryResponse(
-                    action=request.action,
-                    success=False
-                )
-            
-        except Exception as e:
-            print(f"[Passages] Error in query_passages: {e}")
-            import traceback
-            traceback.print_exc()
-            return EnrollmentAPIModels.PassagesQueryResponse(
-                action=request.action,
                 success=False
             )
 
@@ -3014,8 +2880,267 @@ class EnrollmentRecordingManager:
             print(f"[Enrollment] Error selecting pangram: {e}")
             return None, None
 
+class VoicecloneAPIHandler:
+    """Handles FastAPI endpoints for voice cloning workflows"""
+    
+    def __init__(self, db_connection):
+        """
+        Initialize the voice clone API handler.
+        
+        Args:
+            db_connection: Database connection
+            config: Configuration dictionary
+        """
+        self.con = db_connection
+    
+    async def query_passages(self, request: VoiceCloneAPIModels.PassagesQueryRequest) -> VoiceCloneAPIModels.PassagesQueryResponse:
+        """
+        Unified function to handle all passage queries.
+        Handles: unique_sources, match_source, select_quote
+        """
+        try:
+            # Action 1: Get unique sources
+            if request.action == "unique_sources":
+                sources = self.con.execute("""
+                    SELECT DISTINCT source 
+                    FROM passages 
+                    ORDER BY source
+                """).fetchall()
+                
+                source_list = [row[0] for row in sources]
+                print(f"[Passages] Found {len(source_list)} unique sources")
+                
+                return VoiceCloneAPIModels.PassagesQueryResponse(
+                    action="unique_sources",
+                    success=True,
+                    sources=source_list
+                )
+            
+            # Action 2: Match source (fuzzy matching)
+            elif request.action == "match_source":
+                if not request.fuzzy_source:
+                    print(f"[Passages] Invalid query - no fuzzy_source provided")
+                    return VoiceCloneAPIModels.PassagesQueryResponse(
+                        action="match_source",
+                        success=False,
+                        source_name=None,
+                        confidence=0.0
+                    )
+                
+                # Get all available sources
+                sources = self.con.execute("""
+                    SELECT DISTINCT source 
+                    FROM passages
+                """).fetchall()
+                
+                available_sources = [row[0] for row in sources]
+                
+                if not available_sources:
+                    print(f"[Passages] No sources in database")
+                    return VoiceCloneAPIModels.PassagesQueryResponse(
+                        action="match_source",
+                        success=True,
+                        source_name=None,
+                        confidence=0.0
+                    )
+                
+                # Fuzzy matching logic
+                normalized_query = request.fuzzy_source.lower().replace('-', ' ')
+                
+                best_match = None
+                best_score = 0.0
+                
+                for source in available_sources:
+                    normalized_source = source.lower().replace('-', ' ')
+                    
+                    # Use SequenceMatcher for fuzzy matching
+                    score = SequenceMatcher(None, normalized_query, normalized_source).ratio()
+                    
+                    # Also check for substring matches (boost confidence)
+                    if normalized_query in normalized_source or normalized_source in normalized_query:
+                        score = max(score, 0.90)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = source
+                
+                print(f"[Passages] Match: '{request.fuzzy_source}' → '{best_match}' ({best_score:.2%})")
+                
+                return VoiceCloneAPIModels.PassagesQueryResponse(
+                    action="match_source",
+                    success=True,
+                    source_name=best_match,
+                    confidence=round(best_score, 2)
+                )
+            
+            # Action 3: Select random quote from verified source
+            elif request.action == "select_quote":
+                if not request.source_name:
+                    print(f"[Passages] Invalid query - no source_name provided")
+                    return VoiceCloneAPIModels.PassagesQueryResponse(
+                        action="select_quote",
+                        success=False,
+                        quote=None
+                    )
+                
+                # Get random quote from source
+                quotes = self.con.execute("""
+                    SELECT quote 
+                    FROM passages 
+                    WHERE source = ?
+                    ORDER BY RANDOM()
+                    LIMIT 1
+                """, (request.source_name,)).fetchall()
+                
+                if not quotes:
+                    print(f"[Passages] No quotes found for '{request.source_name}'")
+                    return VoiceCloneAPIModels.PassagesQueryResponse(
+                        action="select_quote",
+                        success=True,
+                        quote=None
+                    )
+                
+                selected_quote = quotes[0][0]
+                print(f"[Passages] Selected quote from '{request.source_name}': {selected_quote[:60]}...")
+                
+                return VoiceCloneAPIModels.PassagesQueryResponse(
+                    action="select_quote",
+                    success=True,
+                    quote=selected_quote
+                )
+            
+            else:
+                print(f"[Passages] Invalid action: {request.action}")
+                return VoiceCloneAPIModels.PassagesQueryResponse(
+                    action=request.action,
+                    success=False
+                )
+            
+        except Exception as e:
+            print(f"[Passages] Error in query_passages: {e}")
+            import traceback
+            traceback.print_exc()
+            return VoiceCloneAPIModels.PassagesQueryResponse(
+                action=request.action,
+                success=False
+            )
+    
+    async def perform_voice_clone(self, request: VoiceCloneAPIModels.VoiceCloneRequest) -> VoiceCloneAPIModels.VoiceCloneResponse:
+        """
+        Perform voice cloning using the parallel TTS pipeline.
+        
+        Args:
+            request: Contains sender_id, speaker, and quote
+            
+        Returns:
+            Response indicating success/failure
+        """
+        try:
+            # Strip "client_" prefix if present to match client_queues key format
+            client_id = request.sender_id.replace("client_", "") if request.sender_id.startswith("client_") else request.sender_id
+            speaker = request.speaker
+            quote = request.quote
+            
+            if client_id not in client_queues:
+                print(f"[Voice Clone] Client {client_id} not found in active sessions")
+                return VoiceCloneAPIModels.VoiceCloneResponse(
+                    success=False,
+                    message=f"Client {client_id} not found in active sessions"
+                )
+            
+            if not active_websockets:
+                print(f"[Voice Clone] No active websockets")
+                return VoiceCloneAPIModels.VoiceCloneResponse(
+                    success=False,
+                    message="No active websocket connections"
+                )
+            
+            print(f"[Voice Clone] Starting voice clone for speaker '{speaker}' with quote length {len(quote)}")
+            #server_name = self.config.get("server_name", "Fawkes")
+            server_name = CONFIG['server_name']
+            
+            # Send transcript message to client
+            data_to_send = {
+                "speaker": speaker,
+                "speaker_confidence": "certain",
+                "final": "True",
+                "transcript": quote,
+                "asr_confidence": "certain"
+            }
+            json_string = json.dumps(data_to_send)
+            await send_message_to_client(client_id, json_string)
+            
+            # Execute parallel TTS pipeline if not using client-side TTS
+            if not clientSideTTS and active_websockets:
+                async def parallel_tts_pipeline():
+                    try:
+                        buffer = asyncio.Queue()
+                        coqui_task = asyncio.create_task(synthesize_xtts_audio(speaker, quote, buffer))
+                        await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
+                        await stream_xtts_audio(client_id, buffer)
+                        await coqui_task
+                        
+                        # After completion, notify Rasa
+                        print(f"[Voice Clone] Completed successfully, notifying Rasa")
+                        await self.notify_rasa_voice_clone_complete(client_id)
+                        
+                    except Exception as e:
+                        print(f"[Voice Clone] Error in parallel TTS pipeline: {e}")
+                        # Still notify Rasa even on error
+                        await self.notify_rasa_voice_clone_complete(client_id)
+                
+                asyncio.create_task(parallel_tts_pipeline())
+            else:
+                # If using client-side TTS, notify immediately
+                await self.notify_rasa_voice_clone_complete(client_id)
+            
+            return VoiceCloneAPIModels.VoiceCloneResponse(
+                success=True,
+                message=f"Voice clone started for speaker '{speaker}'"
+            )
+            
+        except Exception as e:
+            print(f"[Voice Clone] Error in perform_voice_clone: {e}")
+            import traceback
+            traceback.print_exc()
+            return VoiceCloneAPIModels.VoiceCloneResponse(
+                success=False,
+                message=str(e)
+            )
+    
+    async def notify_rasa_voice_clone_complete(self, client_id: str):
+        """Notify Rasa that voice cloning is complete via webhook message."""
+        try:
+            system_message = "SYSTEM_VOICE_CLONE_COMPLETE"
+            
+            # Send message via webhook endpoint (same pattern as enrollment completion)
+            payload = {
+                "sender": f"client_{client_id}",
+                "message": system_message
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{CONFIG['rasa_url']}/webhooks/rest/webhook",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        rasa_response = await response.json()
+                        print(f"[Voice Clone] Triggered completion intent: {system_message}")
+                        print(f"[Voice Clone] Rasa response: {rasa_response}")
+                        return await process_rasa_response(client_id, rasa_response)
+                    else:
+                        print(f"[Voice Clone] Failed to trigger intent: {response.status}")
+                        return False
+                        
+        except Exception as e:
+            print(f"[Voice Clone] Error notifying Rasa: {e}")
+            return False
+
 # Initialize handler
 enrollment_api_handler = None
+voiceclone_api_handler = None
 # Register endpoints
 # TODO change /api/query to api/speakers/query for clarity/ uniformity
 @app.post("/api/query", response_model=EnrollmentAPIModels.SpeakerQueryResponse)
@@ -3023,10 +3148,10 @@ async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryReques
     """Endpoint for Rasa to query speaker existence in database"""
     return await enrollment_api_handler.query_speaker(request)
 
-@app.post("/api/passages/query", response_model=EnrollmentAPIModels.PassagesQueryResponse)
-async def query_passages_endpoint(request: EnrollmentAPIModels.PassagesQueryRequest):
+@app.post("/api/passages/query", response_model=VoiceCloneAPIModels.PassagesQueryResponse)
+async def query_passages_endpoint(request: VoiceCloneAPIModels.PassagesQueryRequest):
     """Endpoint for Rasa to query passages (sources, matching, quotes)"""
-    return await enrollment_api_handler.query_passages(request)
+    return await voiceclone_api_handler.query_passages(request)
 
 @app.post("/api/record_pangram", response_model=EnrollmentAPIModels.RecordPangramResponse)
 async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequest):
@@ -3037,6 +3162,11 @@ async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequ
 async def update_enrollment_status_endpoint(request: EnrollmentAPIModels.EnrollmentStatusRequest):
     """Endpoint for Rasa to update enrollment flow status"""
     return await enrollment_api_handler.update_enrollment_status(request)
+
+@app.post("/api/voice_clone", response_model=VoiceCloneAPIModels.VoiceCloneResponse)
+async def voice_clone_endpoint(request: VoiceCloneAPIModels.VoiceCloneRequest):
+    """Endpoint for Rasa to trigger voice cloning with speaker and quote"""
+    return await voiceclone_api_handler.perform_voice_clone(request)
 
 async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
     """
@@ -3885,7 +4015,7 @@ async def main():
     global main_loop, pipertts_wrapper, xtts_wrapper, nemo_vad
     global nemo_transcriber, canary_qwen_transcriber
     global ecapa_matcher, ecapa_processor
-    global rasa_client, enrollment_recording_manager, enrollment_api_handler
+    global rasa_client, enrollment_recording_manager, enrollment_api_handler, voiceclone_api_handler
 
     xtts_wrapper = canary_qwen_transcriber = None # These are often turned off
     main_loop = asyncio.get_event_loop()  # Store the event loop
@@ -3941,6 +4071,9 @@ async def main():
         db_connection=con,
         recording_manager=enrollment_recording_manager,
         ecapa_matcher=ecapa_matcher
+    )
+    voiceclone_api_handler = VoicecloneAPIHandler(
+        db_connection=con
     )
 
     # Initialize persistent Rasa client if enabled

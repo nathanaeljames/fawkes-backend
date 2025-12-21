@@ -29,7 +29,8 @@ FASTAPI_PORT = 9002
 SYSTEM_TRIGGERS = [
     "SYSTEM_TRIGGER_ENROLLMENT",
     "SYSTEM_ENROLLMENT_SUCCESS",
-    "SYSTEM_ENROLLMENT_ABORT"
+    "SYSTEM_ENROLLMENT_ABORT",
+    "SYSTEM_VOICE_CLONE_COMPLETE"
 ]
 # ==========================================================
 
@@ -716,7 +717,7 @@ class ActionQueryUserbase(Action):
                             data = await response.json()
                             
                             if data.get("status") == "success":
-                                speaker_name = data.get("speaker_name")  # Backend format: "firstname_surname"
+                                #speaker_name = data.get("speaker_name")  # Backend format: "firstname_surname"
                                 firstname = data.get("firstname", "")
                                 surname = data.get("surname", "")
                                 confidence = data.get("confidence", 0.0)
@@ -728,7 +729,8 @@ class ActionQueryUserbase(Action):
                                 
                                 return [
                                     SlotSet("vcspeaker_candidate", candidate),
-                                    SlotSet("vcspeaker_usestring", speaker_name),
+                                    #SlotSet("vcspeaker_usestring", speaker_name),
+                                    SlotSet("vcspeaker_usestring", candidate),
                                     SlotSet("vcspeaker_confidence", confidence)
                                 ]
                             
@@ -1017,7 +1019,7 @@ class ActionHandleVcspeakerMatch(Action):
             else:
                 dispatcher.utter_message(response="utter_vcspeaker_abort")
                 return [
-                    FollowupAction("action_reset_voice_cloning")
+                    FollowupAction("action_exit_voice_cloning")
                 ]
         
         # High confidence: Auto-verify (>= 95%)
@@ -1050,7 +1052,7 @@ class ActionHandleVcspeakerMatch(Action):
             else:
                 dispatcher.utter_message(response="utter_vcspeaker_abort")
                 return [
-                    FollowupAction("action_reset_voice_cloning")
+                    FollowupAction("action_exit_voice_cloning")
                 ]
 
 class ActionConfirmVcspeakerMatch(Action):
@@ -1108,7 +1110,7 @@ class ActionConfirmVcspeakerMatch(Action):
                                 Form("vcpsource_collection_form")  # Activate form for passage source collection
                             ])
                         else:
-                            dispatcher.utter_message(text="I don't seem to have any recorded passages for that speaker.")
+                            dispatcher.utter_message(text="I don't seem to have any sources on file.")
                             events.append(FollowupAction("action_reset_voice_cloning"))
                     else:
                         logger.error(f"Failed to query passages: {response.status}")
@@ -1151,7 +1153,7 @@ class ActionRejectVcspeakerMatch(Action):
             dispatcher.utter_message(response="utter_vcspeaker_abort")
             events.extend([
                 SlotSet("vcspeaker_retry_count", 0),
-                FollowupAction("action_reset_voice_cloning")
+                FollowupAction("action_exit_voice_cloning")
             ])
         
         return events
@@ -1303,7 +1305,8 @@ class ActionHandleVcpassageMatch(Action):
                 logger.info("Passage match abort - max retries reached")
                 dispatcher.utter_message(response="utter_vcpsource_abort")
                 return [
-                    FollowupAction("action_reset_vcpassage_selection")
+                    #FollowupAction("action_reset_vcpassage_selection")
+                    FollowupAction("action_exit_voice_cloning")
                 ]
             else:
                 # Retry
@@ -1338,7 +1341,8 @@ class ActionHandleVcpassageMatch(Action):
                 logger.info(f"Low confidence ({confidence:.2%}) and max retries - aborting")
                 dispatcher.utter_message(response="utter_vcpsource_abort")
                 return [
-                    FollowupAction("action_reset_vcpassage_selection")
+                    #FollowupAction("action_reset_vcpassage_selection")
+                    FollowupAction("action_exit_voice_cloning")
                 ]
             else:
                 # Retry
@@ -1369,6 +1373,7 @@ class ActionConfirmVcpassageMatch(Action):
         return [
             SlotSet("vcpsource_usestring", candidate),
             SlotSet("vcpsource_candidate", None),
+            #SlotSet("vcpsource_candidate", candidate),
             SlotSet("vcpsource_confidence", None),
             SlotSet("vcpsource_lazystring", None),
             SlotSet("vcpsource_retry_count", 0),
@@ -1407,32 +1412,11 @@ class ActionRejectVcpassageMatch(Action):
             dispatcher.utter_message(response="utter_vcpsource_abort")
             events.extend([
                 SlotSet("vcpsource_retry_count", 0),
-                FollowupAction("action_reset_vcpassage_selection")
+                #FollowupAction("action_reset_vcpassage_selection")
+                FollowupAction("action_exit_voice_cloning")
             ])
         
         return events
-
-class ActionResetVcpassageSelection(Action):
-    """Reset all passage selection slots"""
-    
-    def name(self) -> Text:
-        return "action_reset_vcpassage_selection"
-    
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        logger.info("Resetting passage selection workflow")
-        
-        return [
-            SlotSet("vcpsource_lazystring", None),
-            SlotSet("vcpsource_candidate", None),
-            SlotSet("vcpsource_usestring", None),
-            SlotSet("vcpsource_confidence", None),
-            SlotSet("vcpsource_retry_count", 0),
-            SlotSet("selected_vcquote", None),
-            # Don't reset available_vcpassage_sources - may want to reuse
-        ]
 
 class ActionPerformVoiceClone(Action):
     """Perform voice cloning with selected speaker and quote"""
@@ -1446,6 +1430,7 @@ class ActionPerformVoiceClone(Action):
         
         speaker = tracker.get_slot("vcspeaker_usestring")
         quote = tracker.get_slot("selected_vcquote")
+        sender_id = tracker.sender_id
         
         if not speaker or not quote:
             logger.error(f"action_perform_voice_clone missing required data: speaker={speaker}, quote={quote is not None}")
@@ -1458,6 +1443,7 @@ class ActionPerformVoiceClone(Action):
             async with aiohttp.ClientSession() as session:
                 url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/voice_clone"
                 payload = {
+                    "sender_id": sender_id,
                     "speaker": speaker,
                     "quote": quote
                 }
@@ -1466,9 +1452,12 @@ class ActionPerformVoiceClone(Action):
                     if response.status == HTTPStatus.OK:
                         data = await response.json()
                         logger.info(f"Voice clone successful: {data}")
+
+                        if not data.get("success"):
+                            logger.warning("Voice clone API failed - in shell mode, manually trigger: /system_voice_clone_complete")
                         
-                        # Ask if user wants another quote
-                        dispatcher.utter_message(response="utter_ask_another_quote")
+                        # Don't ask if user wants another quote here - 
+                        # that will be handled by system_voice_clone_complete signal from server
                         return []
                     else:
                         logger.error(f"Voice clone failed: {response.status}")
@@ -1480,19 +1469,196 @@ class ActionPerformVoiceClone(Action):
             dispatcher.utter_message(text="I encountered an error during voice cloning.")
             return []
 
-class ActionHandleAnotherQuoteAffirm(Action):
-    """Handle user wanting to hear another quote from a different source"""
+class ActionResetVoiceCloning(Action):
+    """Reset voice cloning slots and state"""
     
     def name(self) -> Text:
-        return "action_handle_another_quote_affirm"
+        return "action_reset_voice_cloning"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        logger.info("Resetting voice cloning workflow")
 
+        # Check if this is an abort scenario (high retry count)
+        #speaker_retry = tracker.get_slot("vcspeaker_retry_count") or 0
+        #passage_retry = tracker.get_slot("vcpsource_retry_count") or 0
+        #is_abort = (speaker_retry >= 2) or (passage_retry >= 2)
+        
+        events = [
+            # Main workflow flag
+            SlotSet("voiceclone_active", False),
+            # Speaker selection slots
+            SlotSet("vcspeaker_lazystring", None),
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_usestring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_retry_count", 0),
+            # Passage selection slots
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("available_vcpassage_sources", None),
+            SlotSet("selected_vcquote", None),
+        ]
+
+        # If abort scenario, return to listening (prevents utter_default)
+        # If user-initiated reset, let rule continue (allows action_start_voice_cloning)
+        #if is_abort:
+        #    events.append(FollowupAction("action_listen"))
+        
+        return events
+
+class ActionExitVoiceCloning(Action):
+    """Reset voice cloning slots and state"""
+    
+    def name(self) -> Text:
+        return "action_exit_voice_cloning"
+    
+    def run(self, dispatcher: CollectingDispatcher,
+            tracker: Tracker,
+            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
+        
+        logger.info("Exiting voice cloning workflow")
+        
+        events = [
+            # Main workflow flag
+            SlotSet("voiceclone_active", False),
+            # Speaker selection slots
+            SlotSet("vcspeaker_lazystring", None),
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_usestring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_retry_count", 0),
+            # Passage selection slots
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("available_vcpassage_sources", None),
+            SlotSet("selected_vcquote", None),
+            FollowupAction("action_listen")
+        ]
+        # Exit event enforces follow up action to prevent utter_default
+        
+        return events
+
+# Voice clone loop back
+class ActionSamePersonDeny(Action):
+    """Handle user denying same person - restart speaker selection"""
+    
+    def name(self) -> Text:
+        return "action_same_person_deny"
+    
     async def run(
         self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
     ) -> List[Dict[Text, Any]]:
         
-        logger.info("User wants to hear another quote - restarting passage selection")
+        logger.info("User wants different person - restarting speaker selection")
         
-        # Reset passage-related slots (keep speaker!)
+        # Reset both speaker and passage slots
+        return [
+            SlotSet("voiceclone_active", True), # This SHOULD already be true except in testing
+            SlotSet("vcspeaker_lazystring", None),
+            SlotSet("vcspeaker_candidate", None),
+            SlotSet("vcspeaker_usestring", None),
+            SlotSet("vcspeaker_confidence", None),
+            SlotSet("vcspeaker_retry_count", 0),
+            SlotSet("vcpsource_lazystring", None),
+            SlotSet("vcpsource_candidate", None),
+            SlotSet("vcpsource_usestring", None),
+            SlotSet("vcpsource_confidence", None),
+            SlotSet("vcpsource_retry_count", 0),
+            SlotSet("selected_vcquote", None),
+            Form("vcspeaker_collection_form")  # Restart speaker selection
+        ]
+
+class ActionSameSourceAffirm(Action):
+    """Handle user affirming to use the same source - select new quote and perform voice clone"""
+    
+    def name(self) -> Text:
+        return "action_same_source_affirm"
+    
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        logger.info("User wants same source - selecting new quote")
+        
+        # Get the current source
+        source = tracker.get_slot("vcpsource_usestring")
+        if not source:
+            source = tracker.get_slot("vcpsource_candidate")
+            logger.warning(f"vcpsource_usestring was None, using vcpsource_candidate: {source}")
+
+        if not source:
+            logger.error(f"No source found - current slots: vcpsource_usestring={source}, vcpsource_candidate={tracker.get_slot('vcpsource_candidate')}, vcspeaker_usestring={tracker.get_slot('vcspeaker_usestring')}")
+            #logger.error("No source found in vcpsource_usestring slot")
+            dispatcher.utter_message(text="I'm missing the source information. Let me reset and try again.")
+            return [FollowupAction("action_reset_voice_cloning")]
+        
+        # Query for a new quote from the same source
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/passages/query"
+                payload = {
+                    "action": "select_quote",
+                    "source_name": source
+                }
+                
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == HTTPStatus.OK:
+                        data = await response.json()
+                        
+                        if data.get("success") and data.get("quote"):
+                            new_quote = data["quote"]
+                            logger.info(f"Selected new quote from '{source}': {new_quote[:60]}...")
+                            
+                            # Update the quote slot and trigger voice clone
+                            return [
+                                SlotSet("selected_vcquote", new_quote),
+                                FollowupAction("action_perform_voice_clone")
+                            ]
+                        else:
+                            logger.error(f"No quote found for source '{source}'")
+                            dispatcher.utter_message(text=f"I couldn't find another quote from {source}.")
+                            #return [FollowupAction("action_reset_voice_cloning")]
+                            return [
+                                SlotSet("vcpsource_lazystring", None),
+                                SlotSet("vcpsource_candidate", None),
+                                SlotSet("vcpsource_usestring", None),
+                                SlotSet("vcpsource_confidence", None),
+                                SlotSet("vcpsource_retry_count", 0),
+                                SlotSet("selected_vcquote", None),
+                                Form("vcpsource_collection_form")  # Restart passage selection
+                            ]
+                    else:
+                        logger.error(f"Failed to query passages: {response.status}")
+                        dispatcher.utter_message(text="I encountered an error selecting a quote.")
+                        return [FollowupAction("action_exit_voice_cloning")]
+        
+        except Exception as e:
+            logger.error(f"Error in action_same_source_affirm: {e}")
+            dispatcher.utter_message(text="I encountered an error. Let me try again.")
+            return [FollowupAction("action_exit_voice_cloning")]
+
+class ActionSameSourceDeny(Action):
+    """Handle user denying same source - restart passage selection"""
+    
+    def name(self) -> Text:
+        return "action_same_source_deny"
+    
+    async def run(
+        self, dispatcher: CollectingDispatcher, tracker: Tracker, domain: Dict[Text, Any]
+    ) -> List[Dict[Text, Any]]:
+        
+        logger.info("User wants different source - restarting passage selection")
+        
+        # Reset passage selection slots (keep speaker!)
         return [
             SlotSet("vcpsource_lazystring", None),
             SlotSet("vcpsource_candidate", None),
@@ -1518,47 +1684,5 @@ class ActionHandleAnotherQuoteDeny(Action):
         dispatcher.utter_message(response="utter_voice_cloning_complete")
         
         # Reset all voice cloning slots
-        return [FollowupAction("action_reset_voice_cloning")]
-    
-class ActionResetVoiceCloning(Action):
-    """Reset voice cloning slots and state"""
-    
-    def name(self) -> Text:
-        return "action_reset_voice_cloning"
-    
-    def run(self, dispatcher: CollectingDispatcher,
-            tracker: Tracker,
-            domain: Dict[Text, Any]) -> List[Dict[Text, Any]]:
-        
-        logger.info("Resetting voice cloning workflow")
-
-        # Check if this is an abort scenario (high retry count)
-        speaker_retry = tracker.get_slot("vcspeaker_retry_count") or 0
-        passage_retry = tracker.get_slot("vcpsource_retry_count") or 0
-        is_abort = (speaker_retry >= 2) or (passage_retry >= 2)
-        
-        events = [
-            # Main workflow flag
-            SlotSet("voiceclone_active", False),
-            # Speaker selection slots
-            SlotSet("vcspeaker_lazystring", None),
-            SlotSet("vcspeaker_candidate", None),
-            SlotSet("vcspeaker_usestring", None),
-            SlotSet("vcspeaker_confidence", None),
-            SlotSet("vcspeaker_retry_count", 0),
-            # Passage selection slots
-            SlotSet("vcpsource_lazystring", None),
-            SlotSet("vcpsource_candidate", None),
-            SlotSet("vcpsource_usestring", None),
-            SlotSet("vcpsource_confidence", None),
-            SlotSet("vcpsource_retry_count", 0),
-            SlotSet("available_vcpassage_sources", None),
-            SlotSet("selected_vcquote", None),
-        ]
-
-        # If abort scenario, return to listening (prevents utter_default)
-        # If user-initiated reset, let rule continue (allows action_start_voice_cloning)
-        if is_abort:
-            events.append(FollowupAction("action_listen"))
-        
-        return events
+        return [FollowupAction("action_exit_voice_cloning")]
+  

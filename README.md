@@ -1,4 +1,4 @@
-Basic Python backend for Fawkes chatbot
+## Basic Python backend for Fawkes chatbot
 
 - [X] Set up dockerfile for fast environment build
 - [X] Figure out remote git issues
@@ -21,19 +21,23 @@ Basic Python backend for Fawkes chatbot
 - [X] Implement own local STT model
 - [X] Fine-tune basline STT model
 - [X] Robust VAD for finality determination
-- [ ] Speaker diarization & segmentation
+- [ ] ~~Speaker diarization & segmentation~~
 - [X] Speaker recognition
 - [X] Multiple speaker memory using duckdb for embeddings
 - [X] Incremental ECAPA embeddings using high-scoring utterances
-- [ ] Speaker embeddings/ adapter layer to improve ASR accuracy
-- [ ] Live model retraining against prompts and pangrams/ unsupervised model(?)
+- [ ] ~~Speaker embeddings/ adapter layer to improve ASR accuracy~~
+- [ ] ~~Live model retraining against prompts and pangrams/ unsupervised model(?)~~
 - [ ] ~~Add a context-aware language model rescoring step (e.g., GPT, BERT) during final result compilation~~
 - [X] "Skills framework" (Rasa?)
-- [ ] Prompting and phonetic pangram collection
+- [X] Prompting and phonetic pangram collection
 - [ ] ~~ChatGPT/ Deepseek integration~~
 - [ ] Langchain routing and LLM referal
-- [ ] RAG use case
-- [ ] Interruptability
+- [ ] ~~RAG use case~~
+- [ ] ~~Interruptability~~
+
+### Future Improvements
+- [ ] TODO abort routine for enrollment name collection/ spelling confirmation
+- [ ] Highlight pangram words AS they are recited (backend routine already in place)
 - [ ] Model serving framework for multiclient support using stateful models
 
 * ISSUE 1: If docker is shut down improperly it may be necessary to run `rm .git/index.lock` to restore git functionality.

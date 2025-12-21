@@ -393,22 +393,51 @@ rules:
 #  - action: action_log_slots
 #  - action: action_do_nothing
 
-- rule: User wants another quote
-  condition:
-    - active_loop: null
-    - slot_was_set:
-      - selected_vcquote
+- rule: Handle voice clone completion
+  steps:
+    - intent: system_voice_clone_complete
+    - action: utter_ask_another_quote
+
+- rule: User wants another quote - ask same person
   steps:
     - action: utter_ask_another_quote
     - intent: affirm
-    - action: action_handle_another_quote_affirm
+    #- action: action_handle_another_quote_affirm
+    - action: utter_ask_same_person
 
-- rule: User declines another quote
-  condition:
-    - active_loop: null
-    - slot_was_set:
-      - selected_vcquote
+- rule: User declines another quote - complete voice cloning
   steps:
     - action: utter_ask_another_quote
     - intent: deny
     - action: action_handle_another_quote_deny
+
+- rule: User wants same person - ask same source
+  steps:
+    - action: utter_ask_same_person
+    - intent: affirm
+    #- action: action_same_person_affirm
+    - action: utter_ask_same_source
+
+- rule: User wants different person - restart speaker selection
+  steps:
+    - action: utter_ask_same_person
+    - intent: deny
+    - action: action_same_person_deny
+
+- rule: User wants same source - select new quote and perform voice clone
+  steps:
+    - action: utter_ask_same_source
+    - intent: affirm
+    - action: action_same_source_affirm
+
+- rule: User wants different source - restart passage selection
+  steps:
+    - action: utter_ask_same_source
+    - intent: deny
+    - action: action_same_source_deny
+
+- rule: Abort enrollment at any time
+  steps:
+    - intent: abort_enrollment
+    - action: action_reset_enrollment
+    - action: utter_enrollment_cancelled
