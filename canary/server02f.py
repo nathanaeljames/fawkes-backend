@@ -1998,6 +1998,15 @@ class EnrollmentAPIHandler:
             Case-insensitive, bidirectional hyphen/space agnostic
         """
         try:
+            # DEBUG logging
+            '''
+            print(f"[DEBUG] Received query_speaker request:")
+            print(f"[DEBUG]   firstname: {repr(request.firstname)}")
+            print(f"[DEBUG]   surname: {repr(request.surname)}")
+            print(f"[DEBUG]   full_name: {repr(request.full_name)}")
+            print(f"[DEBUG]   full_name type: {type(request.full_name)}")
+            print(f"[DEBUG]   full_name is truthy: {bool(request.full_name)}")
+            '''
             EXACT_MATCH_THRESHOLD = 0.95  # Adjust to 1.0 for 100% exact matches only
             
             # Mode 1: firstname + surname (exact matching for enrollment)
@@ -2053,44 +2062,118 @@ class EnrollmentAPIHandler:
                         'confidence': 0.0
                     }
                 
-                # Normalize: case-insensitive, bidirectional hyphen/space
-                normalized_query = request.full_name.lower().replace('-', ' ')
+                # Detect if query is single word FIRST (before normalizing hyphens)
+                # This preserves compound names like "Jean-Claude" as firstname-only
+                is_firstname_only = ' ' not in request.full_name.strip()
+                # THEN normalize for matching: case-insensitive, bidirectional hyphen/space
+                normalized_query = request.full_name.lower().replace('-', ' ').strip()
                 
-                best_match = None
-                best_score = 0
-                best_uid = None
-                
-                for speaker_name, uid in zip(self.ecapa_matcher.speaker_names, 
-                                            self.ecapa_matcher.speaker_uids):
-                    normalized_name = speaker_name.lower().replace('-', ' ')
-                    score = SequenceMatcher(None, normalized_query, normalized_name).ratio()
+                if is_firstname_only:
+                    # Match against firstnames only
+                    print(f"[Enrollment API] Detected firstname-only query: '{normalized_query}'")
                     
-                    if score > best_score:
-                        best_score = score
-                        best_match = speaker_name
-                        best_uid = uid
-                
-                if best_match and best_score > 0:
-                    fname, lname = best_match.split(' ', 1) if ' ' in best_match else (best_match, '')
-                    #speaker_name_formatted = f"{fname}_{lname}".lower() if lname else fname.lower()
+                    firstname_matches = []
+                    for speaker_name, uid in zip(self.ecapa_matcher.speaker_names, 
+                                                self.ecapa_matcher.speaker_uids):
+                        # Extract firstname from full name
+                        fname = speaker_name.split(' ', 1)[0] if ' ' in speaker_name else speaker_name
+                        normalized_fname = fname.lower().replace('-', ' ')
+                        
+                        # Calculate firstname match score
+                        score = SequenceMatcher(None, normalized_query, normalized_fname).ratio()
+                        firstname_matches.append({
+                            'score': score,
+                            'firstname': fname,
+                            'full_name': speaker_name,
+                            'uid': uid
+                        })
                     
-                    print(f"[Enrollment API] Fuzzy match for '{request.full_name}': '{best_match}' (UID={best_uid}, confidence={best_score:.2f})")
+                    # Sort by score (best first)
+                    firstname_matches.sort(key=lambda x: x['score'], reverse=True)
+                    best_match = firstname_matches[0]
                     
-                    # Return dict for fuzzy matches (includes confidence)
+                    # Check for exact matches
+                    exact_matches = [m for m in firstname_matches 
+                                    if m['firstname'].lower() == normalized_query]
+                    
+                    # Determine confidence based on match quality and uniqueness
+                    if exact_matches:
+                        if len(exact_matches) == 1:
+                            # Exact match, unique person -> 100% confidence
+                            confidence = 1.0
+                            best_match = exact_matches[0]
+                            print(f"[Enrollment API] Exact unique firstname match: '{best_match['firstname']}' -> confidence=1.0")
+                        else:
+                            # Multiple exact matches -> probability = 1 / number of options
+                            num_matches = len(exact_matches)
+                            confidence = 1.0 / num_matches
+                            print(f"[Enrollment API] Exact firstname match for {num_matches} people -> confidence={confidence:.2f} (rejection expected, will ask for full name)")
+                    else:
+                        # Fuzzy match
+                        if best_match['score'] >= 0.9:
+                            # Very close match
+                            # Check if it's the only close match
+                            close_matches = [m for m in firstname_matches if m['score'] >= 0.9]
+                            if len(close_matches) == 1:
+                                # Only one close match -> boost confidence
+                                confidence = min(best_match['score'] * 1.1, 0.95)
+                                print(f"[Enrollment API] Unique close firstname match: '{best_match['firstname']}' -> confidence={confidence:.2f}")
+                            else:
+                                # Multiple close matches
+                                confidence = best_match['score']
+                                print(f"[Enrollment API] Multiple close matches -> confidence={confidence:.2f}")
+                        else:
+                            # Lower quality match
+                            confidence = best_match['score']
+                            print(f"[Enrollment API] Fuzzy firstname match: '{best_match['firstname']}' -> confidence={confidence:.2f}")
+                    
+                    # Extract firstname and surname from best match
+                    fname, lname = best_match['full_name'].split(' ', 1) if ' ' in best_match['full_name'] else (best_match['full_name'], '')
+                    
+                    print(f"[Enrollment API] Firstname-only match result: '{fname} {lname}' (UID={best_match['uid']}, confidence={confidence:.2f})")
+                    
                     return {
                         'status': 'success',
                         'firstname': fname,
                         'surname': lname,
-                        'uid': best_uid,
-                        #'speaker_name': speaker_name_formatted,
-                        'confidence': round(best_score, 2)
+                        'uid': best_match['uid'],
+                        'confidence': round(confidence, 2)
                     }
                 
-                print(f"[Enrollment API] No speakers in database")
-                return {
-                    'status': 'not_found',
-                    'confidence': 0.0
-                }
+                else:
+                    # Multi-word query - use existing full name matching
+                    best_match = None
+                    best_score = 0
+                    best_uid = None
+                    
+                    for speaker_name, uid in zip(self.ecapa_matcher.speaker_names, 
+                                                self.ecapa_matcher.speaker_uids):
+                        normalized_name = speaker_name.lower().replace('-', ' ')
+                        score = SequenceMatcher(None, normalized_query, normalized_name).ratio()
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_match = speaker_name
+                            best_uid = uid
+                    
+                    if best_match and best_score > 0:
+                        fname, lname = best_match.split(' ', 1) if ' ' in best_match else (best_match, '')
+                        
+                        print(f"[Enrollment API] Full name fuzzy match for '{request.full_name}': '{best_match}' (UID={best_uid}, confidence={best_score:.2f})")
+                        
+                        return {
+                            'status': 'success',
+                            'firstname': fname,
+                            'surname': lname,
+                            'uid': best_uid,
+                            'confidence': round(best_score, 2)
+                        }
+                    
+                    print(f"[Enrollment API] No speakers in database")
+                    return {
+                        'status': 'not_found',
+                        'confidence': 0.0
+                    }
             
             # Neither firstname nor full_name provided
             print(f"[Enrollment API] Invalid query - no firstname or full_name provided")
