@@ -2734,7 +2734,8 @@ class EnrollmentRecordingManager:
             await send_message_to_client(client_id, json_string)
             # Handle TTS if not using client-side TTS
             if not clientSideTTS and active_websockets:
-                asyncio.create_task(stream_tts_audio(client_id, message))
+                #asyncio.create_task(stream_tts_audio(client_id, message))
+                await client_queues[client_id]["tts_request_queue"].put(message)
 
             await self._notify_rasa(client_id, 'success')
             
@@ -2779,8 +2780,10 @@ class EnrollmentRecordingManager:
             await send_message_to_client(client_id, json_string)
             # Handle TTS if not using client-side TTS
             if not clientSideTTS and active_websockets:
-                asyncio.create_task(stream_tts_audio(client_id, message))
-                print("called steam_tts_audio")
+                #asyncio.create_task(stream_tts_audio(client_id, message))
+                #print("called steam_tts_audio")
+                await client_queues[client_id]["tts_request_queue"].put(message)
+                print("Enqueued TTS message")
             
             # Notify Rasa
             await self._notify_rasa(client_id, 'aborted')
@@ -3289,7 +3292,8 @@ async def process_rasa_response(client_id: str, rasa_response: list) -> bool:
             # Handle TTS if not using client-side TTS
             if not clientSideTTS and active_websockets:
                 #print(f"[Rasa] Using Piper TTS")
-                asyncio.create_task(stream_tts_audio(client_id, response_text))
+                #asyncio.create_task(stream_tts_audio(client_id, response_text))
+                await client_queues[client_id]["tts_request_queue"].put(response_text)
             
             processed_any = True
         
@@ -3344,18 +3348,51 @@ async def handle_final_utterance_with_rasa(client_id, final_transcription_text, 
     except Exception as e:
         print(f"[Rasa] Error in handle_final_utterance_with_rasa: {e}")
 
+async def process_tts_queue(client_id):
+    """
+    Sequential TTS processor - ensures TTS messages play in order.
+    Runs as a background task for each client.
+    """
+    print(f"[TTS Queue] Started processor for client {client_id}")
+    
+    try:
+        while True:
+            if client_id not in client_queues:
+                print(f"[TTS Queue] Client {client_id} disconnected, stopping processor")
+                break
+            
+            # Wait for next TTS request (this blocks until message arrives)
+            text = await client_queues[client_id]["tts_request_queue"].get()
+            
+            # Process the TTS synchronously (wait for completion before next message)
+            try:
+                await stream_tts_audio(client_id, text)
+                print(f"[TTS Queue] Completed: '{text[:50]}...' for {client_id}")
+            except Exception as e:
+                print(f"[TTS Queue] Error processing '{text[:50]}...': {e}")
+            
+            # Mark task as done
+            client_queues[client_id]["tts_request_queue"].task_done()
+            
+    except Exception as e:
+        print(f"[TTS Queue] Processor error for {client_id}: {e}")
+    finally:
+        print(f"[TTS Queue] Processor stopped for client {client_id}")
+
 async def websocket_server(websocket, client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber):
     active_websockets[client_id] = websocket
     client_queues[client_id] = {
         "incoming_audio": asyncio.Queue(),
         "outgoing_audio": asyncio.Queue(),
         "outgoing_text": asyncio.Queue(),
+        "tts_request_queue": asyncio.Queue(),
     }
     try:
         incoming_task = asyncio.create_task(handle_incoming(websocket, client_id))
         outgoing_task = asyncio.create_task(handle_outgoing(websocket, client_id))
         asr_task = asyncio.create_task(process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary_qwen_transcriber))
-        await asyncio.gather(incoming_task, outgoing_task, asr_task)
+        tts_task = asyncio.create_task(process_tts_queue(client_id))
+        await asyncio.gather(incoming_task, outgoing_task, asr_task, tts_task)
     except asyncio.CancelledError:
         print(f"WebSocket task for {client_id} cancelled.")
     except Exception as e:
