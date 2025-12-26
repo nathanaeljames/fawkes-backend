@@ -766,8 +766,9 @@ class ActionQueryUserbase(Action):
             if not query_firstname or not query_surname:
                 logger.warning(f"Missing name information - firstname: {query_firstname}, surname: {query_surname}")
                 return [
-                    SlotSet("ecapa_name", None),
-                    SlotSet("ecapa_uid", None),
+                    #SlotSet("ecapa_name", None),
+                    #SlotSet("ecapa_uid", None),
+                    SlotSet("imprint_uid", None),
                     FollowupAction("action_handle_enrollment_routing")
                 ]
             
@@ -797,40 +798,45 @@ class ActionQueryUserbase(Action):
                                 logger.info(f"Found speaker {speaker_name} with UID: {uid}")
                                 
                                 return [
-                                    SlotSet("ecapa_name", speaker_name),
-                                    SlotSet("ecapa_uid", str(uid)),
+                                    #SlotSet("ecapa_name", speaker_name),
+                                    #SlotSet("ecapa_uid", str(uid)),
+                                    SlotSet("imprint_uid", str(uid)),
                                     SlotSet("imprint_name", speaker_name),
                                     FollowupAction("action_handle_enrollment_routing")
                                 ]
                             else:
                                 logger.info(f"No record found for {query_firstname} {query_surname}")
                                 return [
-                                    SlotSet("ecapa_name", None),
-                                    SlotSet("ecapa_uid", None),
+                                    #SlotSet("ecapa_name", None),
+                                    #SlotSet("ecapa_uid", None),
+                                    SlotSet("imprint_uid", None),
                                     FollowupAction("action_handle_enrollment_routing")
                                 ]
                         
                         elif response.status == 404:
                             logger.info(f"No record found for {query_firstname} {query_surname} (404)")
                             return [
-                                SlotSet("ecapa_name", None),
-                                SlotSet("ecapa_uid", None),
+                                #SlotSet("ecapa_name", None),
+                                #SlotSet("ecapa_uid", None),
+                                SlotSet("imprint_uid", None),
                                 FollowupAction("action_handle_enrollment_routing")
                             ]
                         
                         else:
                             logger.error(f"Server returned status {response.status}")
                             return [
-                                SlotSet("ecapa_name", None),
-                                SlotSet("ecapa_uid", None),
+                                #SlotSet("ecapa_name", None),
+                                #SlotSet("ecapa_uid", None),
+                                SlotSet("imprint_uid", None),
                                 FollowupAction("action_handle_enrollment_routing")
                             ]
             
             except Exception as e:
                 logger.error(f"Error querying userbase: {e}")
                 return [
-                    SlotSet("ecapa_name", None),
-                    SlotSet("ecapa_uid", None),
+                    #SlotSet("ecapa_name", None),
+                    #SlotSet("ecapa_uid", None),
+                    SlotSet("imprint_uid", None),
                     FollowupAction("action_handle_enrollment_routing")
                 ]
 
