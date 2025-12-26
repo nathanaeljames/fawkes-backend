@@ -341,6 +341,16 @@ nlu:
   examples: |
     - /abort_enrollment_exact
 
+# User-triggered abort pattern
+- regex: begin_enrollment_exact
+  examples: |
+    - ^[Bb]egin enrollment$
+    - ^[Ss]tart enrollment$
+    - ^[Ii]nitiate enrollment$
+- intent: begin_enrollment
+  examples: |
+    - /begin_enrollment_exact
+
 # Trigger voice cloning experiment
 - intent: request_voice_cloning
   examples: |

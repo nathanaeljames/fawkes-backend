@@ -441,3 +441,9 @@ rules:
     - intent: abort_enrollment
     - action: action_reset_enrollment
     - action: utter_enrollment_cancelled
+
+- rule: Begin enrollment at any time
+  steps:
+    - intent: begin_enrollment
+    - action: action_reset_enrollment
+    - action: utter_enrollment_start
