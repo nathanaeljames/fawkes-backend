@@ -1437,6 +1437,7 @@ class ActionPerformVoiceClone(Action):
         speaker = tracker.get_slot("vcspeaker_usestring")
         quote = tracker.get_slot("selected_vcquote")
         sender_id = tracker.sender_id
+        source = tracker.get_slot("vcpsource_usestring")
         
         if not speaker or not quote:
             logger.error(f"action_perform_voice_clone missing required data: speaker={speaker}, quote={quote is not None}")
@@ -1464,7 +1465,12 @@ class ActionPerformVoiceClone(Action):
                         
                         # Don't ask if user wants another quote here - 
                         # that will be handled by system_voice_clone_complete signal from server
-                        return []
+                        #return []
+                        return [
+                            SlotSet("vcspeaker_usestring", speaker),
+                            SlotSet("vcpsource_usestring", source)
+                        ]
+
                     else:
                         logger.error(f"Voice clone failed: {response.status}")
                         dispatcher.utter_message(text="Voice cloning failed. Please try again.")
