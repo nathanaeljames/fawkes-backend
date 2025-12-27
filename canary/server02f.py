@@ -2007,7 +2007,7 @@ class EnrollmentAPIHandler:
             print(f"[DEBUG]   full_name type: {type(request.full_name)}")
             print(f"[DEBUG]   full_name is truthy: {bool(request.full_name)}")
             '''
-            EXACT_MATCH_THRESHOLD = 0.95  # Adjust to 1.0 for 100% exact matches only
+            EXACT_MATCH_THRESHOLD = 0.90  # Adjust to 1.0 for 100% exact matches only
             
             # Mode 1: firstname + surname (exact matching for enrollment)
             if request.firstname:
@@ -3386,6 +3386,7 @@ async def websocket_server(websocket, client_id, nemo_transcriber, nemo_vad, can
         "outgoing_audio": asyncio.Queue(),
         "outgoing_text": asyncio.Queue(),
         "tts_request_queue": asyncio.Queue(),
+        "tts_active": False,
     }
     try:
         incoming_task = asyncio.create_task(handle_incoming(websocket, client_id))

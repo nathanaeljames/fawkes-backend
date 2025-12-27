@@ -149,7 +149,7 @@ slots:
   vcspeaker_usestring:
     type: text
     initial_value: null
-    influence_conversation: false
+    influence_conversation: true
     mappings:
       - type: custom
   vcspeaker_confidence:
@@ -191,7 +191,7 @@ slots:
   vcpsource_usestring:
     type: text
     initial_value: null
-    influence_conversation: false
+    influence_conversation: true
     mappings:
       - type: custom
   vcpsource_confidence:
