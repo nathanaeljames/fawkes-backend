@@ -446,4 +446,5 @@ rules:
   steps:
     - intent: begin_enrollment
     - action: action_reset_enrollment
-    - action: utter_enrollment_start
+    - action: action_trigger_enrollment
+    - action: utter_ask_full_name
