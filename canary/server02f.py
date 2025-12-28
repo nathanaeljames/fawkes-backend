@@ -3160,6 +3160,10 @@ class VoicecloneAPIHandler:
             if not clientSideTTS and active_websockets:
                 async def parallel_tts_pipeline():
                     try:
+                        # Set TTS active flag to prevent audio feedback
+                        if client_id in client_queues:
+                            client_queues[client_id]["tts_active"] = True
+                        
                         buffer = asyncio.Queue()
                         coqui_task = asyncio.create_task(synthesize_xtts_audio(speaker, quote, buffer))
                         await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
@@ -3174,6 +3178,10 @@ class VoicecloneAPIHandler:
                         print(f"[Voice Clone] Error in parallel TTS pipeline: {e}")
                         # Still notify Rasa even on error
                         await self.notify_rasa_voice_clone_complete(client_id)
+                    finally:
+                        # Clear TTS active flag to resume audio processing
+                        if client_id in client_queues:
+                            client_queues[client_id]["tts_active"] = False
                 
                 asyncio.create_task(parallel_tts_pipeline())
             else:
@@ -3366,10 +3374,18 @@ async def process_tts_queue(client_id):
             
             # Process the TTS synchronously (wait for completion before next message)
             try:
+                # Set TTS active flag to prevent audio feedback
+                if client_id in client_queues:
+                    client_queues[client_id]["tts_active"] = True
+                
                 await stream_tts_audio(client_id, text)
                 print(f"[TTS Queue] Completed: '{text[:50]}...' for {client_id}")
             except Exception as e:
                 print(f"[TTS Queue] Error processing '{text[:50]}...': {e}")
+            finally:
+                # Clear TTS active flag to resume audio processing
+                if client_id in client_queues:
+                    client_queues[client_id]["tts_active"] = False
             
             # Mark task as done
             client_queues[client_id]["tts_request_queue"].task_done()
@@ -3873,6 +3889,9 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                 if audio_data is None or len(audio_data) == 0:
                     await asyncio.sleep(0.001)  # Or handle empty chunk as appropriate
                     continue  # Skip processing empty chunk
+                # Discard audio chunks if TTS is playing (prevents feedback loop)
+                if client_id in client_queues and client_queues[client_id].get("tts_active", False):
+                    continue  # Consume and discard this chunk, don't process it
                 audio_buffer += audio_data
                 while len(audio_buffer) >= bytes_per_chunk:
                     chunk_bytes = audio_buffer[:bytes_per_chunk]

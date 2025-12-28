@@ -396,9 +396,6 @@ responses:
   utter_enrollment_cancelled:
     - text: "Enrollment cancelled. Clearly tell me your first and last name if you'd like to try again later."
 
-  utter_enrollment_start:
-   - text: "Good {part_of_day}! What is your name?"
-
   utter_default:
   - text: "I'm sorry, I didn't understand that. Could you please rephrase?"
   - text: "I don't understand. Can you try saying that differently?"
