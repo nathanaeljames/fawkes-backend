@@ -340,6 +340,10 @@ nlu:
 - intent: abort_enrollment
   examples: |
     - /abort_enrollment_exact
+    - abort enrollment
+    - cancel enrollment
+    - end enrollment
+    - stop enrollment
 
 # User-triggered abort pattern
 - regex: begin_enrollment_exact
@@ -350,6 +354,12 @@ nlu:
 - intent: begin_enrollment
   examples: |
     - /begin_enrollment_exact
+    - begin enrollment
+    - start enrollment
+    - initiate enrollment
+    - enroll me
+    - I want to enroll
+    - start the enrollment
 
 # Trigger voice cloning experiment
 - intent: request_voice_cloning

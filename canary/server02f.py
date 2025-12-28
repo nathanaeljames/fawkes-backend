@@ -3160,15 +3160,31 @@ class VoicecloneAPIHandler:
             if not clientSideTTS and active_websockets:
                 async def parallel_tts_pipeline():
                     try:
-                        # Set TTS active flag to prevent audio feedback
+                        # Set TTS active flag and flush audio buffer to prevent feedback
                         if client_id in client_queues:
                             client_queues[client_id]["tts_active"] = True
+                            # Flush incoming audio queue to discard any buffered chunks
+                            # that were recorded before TTS started
+                            while not client_queues[client_id]["incoming_audio"].empty():
+                                try:
+                                    client_queues[client_id]["incoming_audio"].get_nowait()
+                                except:
+                                    break
+                            print(f"[Voice Clone] Flushed audio buffer for {client_id}")
                         
                         buffer = asyncio.Queue()
                         coqui_task = asyncio.create_task(synthesize_xtts_audio(speaker, quote, buffer))
                         await stream_tts_audio(client_id, "Compiling response, please wait a moment...")
                         await stream_xtts_audio(client_id, buffer)
                         await coqui_task
+                        
+                        # Wait for outgoing audio queue to drain (all chunks sent to client)
+                        if client_id in client_queues:
+                            while not client_queues[client_id]["outgoing_audio"].empty():
+                                await asyncio.sleep(0.05)  # Check every 50ms
+                            # Small buffer to ensure last chunk is fully transmitted
+                            await asyncio.sleep(0.2)
+                            print(f"[Voice Clone] All audio chunks sent to client")
                         
                         # After completion, notify Rasa
                         print(f"[Voice Clone] Completed successfully, notifying Rasa")
@@ -3183,7 +3199,10 @@ class VoicecloneAPIHandler:
                         if client_id in client_queues:
                             client_queues[client_id]["tts_active"] = False
                 
-                asyncio.create_task(parallel_tts_pipeline())
+                # CRITICAL: Use await (not create_task) to wait for XTTS completion
+                # before returning to Rasa. This prevents race condition where Rasa 
+                # sends next message while XTTS is still playing, causing audio feedback.
+                await parallel_tts_pipeline()
             else:
                 # If using client-side TTS, notify immediately
                 await self.notify_rasa_voice_clone_complete(client_id)
@@ -3374,11 +3393,25 @@ async def process_tts_queue(client_id):
             
             # Process the TTS synchronously (wait for completion before next message)
             try:
-                # Set TTS active flag to prevent audio feedback
+                # Set TTS active flag and flush audio buffer to prevent feedback
                 if client_id in client_queues:
                     client_queues[client_id]["tts_active"] = True
+                    # Flush incoming audio queue to discard buffered chunks
+                    while not client_queues[client_id]["incoming_audio"].empty():
+                        try:
+                            client_queues[client_id]["incoming_audio"].get_nowait()
+                        except:
+                            break
                 
                 await stream_tts_audio(client_id, text)
+                
+                # Wait for outgoing audio queue to drain (all chunks sent to client)
+                if client_id in client_queues:
+                    while not client_queues[client_id]["outgoing_audio"].empty():
+                        await asyncio.sleep(0.05)  # Check every 50ms
+                    # Small buffer to ensure last chunk is fully transmitted
+                    await asyncio.sleep(0.2)
+                
                 print(f"[TTS Queue] Completed: '{text[:50]}...' for {client_id}")
             except Exception as e:
                 print(f"[TTS Queue] Error processing '{text[:50]}...': {e}")
