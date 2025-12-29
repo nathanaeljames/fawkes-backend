@@ -431,6 +431,8 @@ actions:
   - action_same_person_deny
   - action_same_source_affirm
   - action_same_source_deny
+  - validate_vcspeaker_collection_form
+  - validate_vcpsource_collection_form
 
 session_config:
   session_expiration_time: 60

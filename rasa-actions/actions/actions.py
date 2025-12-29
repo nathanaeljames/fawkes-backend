@@ -995,6 +995,31 @@ class ActionStartVoiceCloning(Action):
             Form("vcspeaker_collection_form")  # Activate form for speaker name collection
         ]
 
+class VcspeakerCollectionFormValidation(FormValidationAction):
+    """Custom validation for speaker collection form"""
+    
+    def name(self) -> Text:
+        return "validate_vcspeaker_collection_form"
+    
+    def validate_vcspeaker_lazystring(
+        self,
+        slot_value: Any,
+        dispatcher: CollectingDispatcher,
+        tracker: Tracker,
+        domain: DomainDict,
+    ) -> Dict[Text, Any]:
+        """Validate speaker input and reject system triggers"""
+        
+        # Reject system trigger patterns
+        if slot_value:
+            is_trigger, trigger_name = is_system_trigger(slot_value)
+            if is_trigger:
+                logger.warning(f"Ignoring system trigger '{trigger_name}' in vcspeaker validation")
+                return {"vcspeaker_lazystring": None}
+        
+        # Accept any other input
+        return {"vcspeaker_lazystring": slot_value}
+
 class ActionHandleVcspeakerMatch(Action):
     """Route based on speaker match confidence threshold"""
     
@@ -1163,6 +1188,31 @@ class ActionRejectVcspeakerMatch(Action):
             ])
         
         return events
+
+class VcpsourceCollectionFormValidation(FormValidationAction):
+    """Custom validation for passage source collection form"""
+    
+    def name(self) -> Text:
+        return "validate_vcpsource_collection_form"
+    
+    def validate_vcpsource_lazystring(
+        self,
+        slot_value: Any,
+        dispatcher: CollectingDispatcher,
+        tracker: Tracker,
+        domain: DomainDict,
+    ) -> Dict[Text, Any]:
+        """Validate passage source input and reject system triggers"""
+        
+        # Reject system trigger patterns
+        if slot_value:
+            is_trigger, trigger_name = is_system_trigger(slot_value)
+            if is_trigger:
+                logger.warning(f"Ignoring system trigger '{trigger_name}' in vcpsource validation")
+                return {"vcpsource_lazystring": None}
+        
+        # Accept any other input
+        return {"vcpsource_lazystring": slot_value}
 
 class ActionQueryVcpassages(Action):
     """
@@ -1466,10 +1516,7 @@ class ActionPerformVoiceClone(Action):
                         # Don't ask if user wants another quote here - 
                         # that will be handled by system_voice_clone_complete signal from server
                         #return []
-                        return [
-                            SlotSet("vcspeaker_usestring", speaker),
-                            SlotSet("vcpsource_usestring", source)
-                        ]
+                        return []
 
                     else:
                         logger.error(f"Voice clone failed: {response.status}")
