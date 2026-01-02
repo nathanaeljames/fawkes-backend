@@ -166,6 +166,7 @@ atexit.register(con.close)
 
 active_websockets = {}  # client_id -> websocket
 client_queues = {}
+audio_playback_complete = {}
 clientSideTTS = False
 
 class NemoStreamingTranscriber:
@@ -3185,6 +3186,19 @@ class VoicecloneAPIHandler:
                             # Small buffer to ensure last chunk is fully transmitted
                             await asyncio.sleep(0.2)
                             print(f"[Voice Clone] All audio chunks sent to client")
+                            
+                            # Wait for client-side playback complete signal
+                            audio_playback_complete[client_id] = False
+                            max_wait = 15  # Max 60 seconds timeout
+                            elapsed = 0
+                            while not audio_playback_complete.get(client_id, False) and elapsed < max_wait:
+                                await asyncio.sleep(0.1)
+                                elapsed += 0.1
+                            
+                            if audio_playback_complete.get(client_id, False):
+                                print(f"[Voice Clone] Client confirmed playback complete after {elapsed:.1f}s")
+                            else:
+                                print(f"[Voice Clone] Timeout waiting for playback complete after {max_wait}s, proceeding anyway")
                         
                         # After completion, notify Rasa
                         print(f"[Voice Clone] Completed successfully, notifying Rasa")
@@ -3466,6 +3480,9 @@ async def handle_incoming(websocket, client_id):
                     global clientSideTTS
                     clientSideTTS = True
                     print(f"Client has specified using client-side TTS.")
+                elif message == 'AUDIO_PLAYBACK_COMPLETE':
+                    audio_playback_complete[client_id] = True
+                    print(f"[Audio] Client {client_id} confirmed playback complete")
     except websockets.exceptions.ConnectionClosed:
         print(f"Client {client_id} disconnected.")
     finally:
