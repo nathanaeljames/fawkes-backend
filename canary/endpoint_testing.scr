@@ -1,7 +1,7 @@
-# Test enrollment_status endpoint
+# Test enrollment/status endpoint
 
 # Test with successful completion
-curl -X POST http://localhost:9002/api/enrollment_status \
+curl -X POST http://localhost:9002/api/enrollment/status \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "6b8446f0-2919-4239-8ded-9ca3276f7759",
@@ -9,7 +9,7 @@ curl -X POST http://localhost:9002/api/enrollment_status \
   }'
 
 # Test with abandoned flow
-curl -X POST http://localhost:9002/api/enrollment_status \
+curl -X POST http://localhost:9002/api/enrollment/status \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "6b8446f0-2919-4239-8ded-9ca3276f7759",
@@ -17,7 +17,7 @@ curl -X POST http://localhost:9002/api/enrollment_status \
   }'
 
 # Test with non-existent client (should fail gracefully)
-curl -X POST http://localhost:9002/api/enrollment_status \
+curl -X POST http://localhost:9002/api/enrollment/status \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "568",
@@ -73,7 +73,7 @@ curl -X POST http://localhost:9002/api/record \
 
 
 # Trigger record pangram
-curl -X POST http://localhost:9002/api/record_pangram \
+curl -X POST http://localhost:9002/api/enrollment/record \
   -H "Content-Type: application/json" \
   -d '{
     "sender_id": "fd44157e-409e-48f4-bbe3-3d4790683a37",
@@ -124,7 +124,7 @@ curl -X POST http://localhost:9002/api/passages/query \
 # Fetch a random quote
 
 # Do voice cloning
-curl -X POST http://localhost:9002/api/voice_clone \
+curl -X POST http://localhost:9002/api/voice-clone \
   -H "Content-Type: application/json" \
   -d '{
     "sender_id": "client_744f6bff-2855-4597-80c4-6ddc159be4c3",
@@ -132,7 +132,7 @@ curl -X POST http://localhost:9002/api/voice_clone \
     "quote": "Hello, this is a test of the voice cloning system."
   }'
 
-  curl -X POST http://localhost:9002/api/voice_clone \
+  curl -X POST http://localhost:9002/api/voice-clone \
   -H "Content-Type: application/json" \
   -d '{
     "sender_id": "aae405c7-234b-49dd-8d44-bb63337a06e0",

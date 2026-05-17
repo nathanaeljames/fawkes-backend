@@ -895,7 +895,7 @@ class ActionStartEnrollmentRecording(Action):
         imprint_surname = tracker.get_slot("imprint_surname")
         
         # Trigger recording on server
-        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/record_pangram"
+        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/enrollment/record"
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -939,7 +939,7 @@ class ActionResetEnrollment(Action):
     
     async def run(self, dispatcher, tracker, domain):
         sender_id = tracker.sender_id
-        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/enrollment_status"
+        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/enrollment/status"
 
         # Determine status based on the triggering intent
         latest_intent = tracker.latest_message.get('intent', {}).get('name', '')
@@ -1498,7 +1498,7 @@ class ActionPerformVoiceClone(Action):
         
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/voice_clone"
+                url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/voice-clone"
                 payload = {
                     "sender_id": sender_id,
                     "speaker": speaker,
