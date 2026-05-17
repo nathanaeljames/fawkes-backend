@@ -690,7 +690,7 @@ class ActionQueryUserbase(Action):
     ) -> List[Dict[Text, Any]]:
         
         voiceclone_active = tracker.get_slot("voiceclone_active")
-        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/query"
+        fastapi_url = f"http://{FASTAPI_HOST}:{FASTAPI_PORT}/api/speakers/query"
 
         # VOICECLONE FLOW - check this first
         if voiceclone_active:
