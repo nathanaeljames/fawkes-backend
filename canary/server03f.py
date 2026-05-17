@@ -17,13 +17,16 @@
 # May also experiment queueing multiple utterances in a floating frame to increase context available to Canary-Qwen/Samba
 # Samba-ASR adoption may require language model fusion/contextual rescoring/full LLM integration/P&C
 
+from __future__ import annotations
+
 import asyncio
 from asyncio import Queue
+import datetime
+import logging
 import websockets
 import io
 import wave
 from pydub import AudioSegment
-import datetime
 import json
 from piper.voice import PiperVoice
 import torch
@@ -35,18 +38,13 @@ import uuid
 import audioop
 import nemo.collections.asr as nemo_asr
 from nemo.collections.asr.models.ctc_bpe_models import EncDecCTCModelBPE
-from nemo.collections.asr.models import EncDecRNNTBPEModel
 from nemo.collections.asr.models import EncDecHybridRNNTCTCBPEModel
-from nemo.collections.asr.parts.utils.streaming_utils import FrameBatchASR
 from omegaconf import OmegaConf, open_dict
-from nemo.collections.asr.parts.utils.streaming_utils import CacheAwareStreamingAudioBuffer
 from nemo.collections.asr.parts.utils.rnnt_utils import Hypothesis
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer
 from nemo.collections.speechlm2.models import SALM
 import copy
 import time
 import atexit
-import struct
 import librosa
 from scipy.io.wavfile import write as wav_write
 import duckdb
@@ -69,44 +67,94 @@ import traceback
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 if DEVICE != "cuda":
-    print('Warning! GPU not detected!')
+    logging.warning('GPU not detected!')
 
 CONFIG = {
+    # --- Server ---
     "websocket_host": "0.0.0.0",
     "websocket_port": 9001,
     "fastapi_host": "0.0.0.0",
     "fastapi_port": 9002,
+
+    # --- Model paths ---
     "inference_device": DEVICE,
     "piper_model_path": "/root/fawkes/models/piper_tts/en_GB-northern_english_male-medium.onnx",
     "xtts_model_dir": "/root/fawkes/models/coqui_xtts/XTTS-v2/",
-    "speakers_dir": "speakers",
     "nemo_model_path": "/root/fawkes/models/fc-hybrid-lg-multi/stt_en_fastconformer_hybrid_large_streaming_multi.nemo",
     "nemo_vad_model_path": "/root/fawkes/models/marblenet_vad_multi/frame_vad_multilingual_marblenet_v2.0.nemo",
+    "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/",
+    "ecapa_tdnn_model_path": "/root/fawkes/models/ecapa_tdnn_embed/ecapa_tdnn.nemo",
+    "duckdb_path": "./speakers/database.duckdb",
+
+    # --- ASR settings ---
     "nemo_encoder_step_length": 80,
     "nemo_lookahead_size": 480,
     "nemo_decoder_type": 'rnnt',
+    "canary_max_new_tokens": 128,          # max output tokens for Canary-Qwen transcription
+
+    # --- Audio ---
     "audio_sample_rate": 16000,
     "vad_sample_rate": 16000,
     "vad_threshold": 0.3,
     "silence_duration_for_finality_ms": 500,
-    "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/",
-    "ecapa_tdnn_model_path": "/root/fawkes/models/ecapa_tdnn_embed/ecapa_tdnn.nemo",
-    "duckdb_path": "./speakers/database.duckdb",
-    "server_name": "Fawkes",
-    "default_speaker": "unknown speaker",
-    "default_speaker_confidence": "uncertain",
-    "default_asr_confidence": "certain",
+    "silence_chunks_threshold": 2,         # consecutive silent chunks before finality
+
+    # --- ECAPA speaker recognition ---
+    "ecapa_uncertain_threshold": 0.70,     # below this, speaker is "unknown"
+    "ecapa_certain_threshold": 0.85,       # above this, speaker is confidently identified
+    "ecapa_nomatch_lower_threshold": 0.70, # below upper but above lower = "unregistered(?)"
+    "ecapa_nomatch_upper_threshold": 0.85, # above this = confidently "unregistered"
+    "ecapa_max_extractions": 7,            # max ECAPA extractions per utterance
+
+    # --- TTS ---
+    "xtts_language": "en",                 # XTTS inference language
+    "xtts_stream_chunk_size": 512,         # XTTS streaming chunk size
+
+    # --- Rasa ---
     "rasa_url": "http://rasa-nlp:5005",
     "rasa_timeout": 10,
     "enable_rasa": True,
-    "samples_path": "/root/fawkes/audio_samples",
+
+    # --- Enrollment ---
     "enrollment_off_topic_threshold": 0.5,
     "enrollment_reminder_interval": 3,
     "enrollment_timeout": 18,
     "enrollment_max_decreases": 3,
     "enrollment_fuzzy_word_threshold": 0.85,
-    "enrollment_success_threshold": 0.70
+    "enrollment_success_threshold": 0.70,
+    "enrollment_exact_match_threshold": 0.90,  # minimum score for exact speaker name match
+
+    # --- Voice cloning ---
+    "voice_clone_playback_timeout": 15,    # seconds to wait for client playback confirmation
+    "passages_substring_boost": 0.90,      # minimum score when fuzzy source is a substring match
+
+    # --- Misc ---
+    "server_name": "Fawkes",
+    "default_speaker": "unknown speaker",
+    "default_speaker_confidence": "uncertain",
+    "default_asr_confidence": "certain",
+    "samples_path": "/root/fawkes/audio_samples",
+    "speakers_dir": "speakers",
+    "log_file": None,   # explicit path, or None to auto-generate logs/fawkes_YYYYMMDD_HHMMSS.log
 }
+
+
+# =============================================================================
+# LOGGING
+# =============================================================================
+
+_log_path = CONFIG["log_file"] or f"logs/fawkes_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+Path(_log_path).parent.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(_log_path),
+    ]
+)
+logger = logging.getLogger("fawkes")
 
 
 # =============================================================================
@@ -131,25 +179,25 @@ class ServerContext:
         self.client_side_tts: bool = False
 
         # Database
-        self.db = None
+        self.db: Optional[DatabaseManager] = None
 
         # Model references (populated during startup)
-        self.piper_tts = None           # PiperTTS
-        self.xtts = None                # XTTSWrapper
-        self.nemo_transcriber = None    # NemoStreamingTranscriber
-        self.nemo_vad = None            # NeMoVAD
-        self.canary_qwen = None         # CanaryQwenTranscriber
-        self.ecapa_matcher = None       # FastECAPASpeakerMatcher
-        self.ecapa_processor = None     # ECAPASpeakerProcessor
+        self.piper_tts: Optional[PiperTTS] = None
+        self.xtts: Optional[XTTSWrapper] = None
+        self.nemo_transcriber: Optional[NemoStreamingTranscriber] = None
+        self.nemo_vad: Optional[NemoVAD] = None
+        self.canary_qwen: Optional[CanaryQwenTranscriber] = None
+        self.ecapa_matcher: Optional[FastECAPASpeakerMatcher] = None
+        self.ecapa_processor: Optional[ECAPASpeakerProcessor] = None
 
         # Handler references (populated during startup)
-        self.rasa_handler = None        # RasaHandler
-        self.enrollment_manager = None  # EnrollmentRecordingManager
-        self.enrollment_api = None      # EnrollmentAPIHandler
-        self.voiceclone_api = None      # VoicecloneAPIHandler
-        self.tts_manager = None         # TTSStreamManager
-        self.ws_manager = None          # WebSocketManager
-        self.msg = None                 # MessageRouter
+        self.rasa_handler: Optional[RasaHandler] = None
+        self.enrollment_manager: Optional[EnrollmentRecordingManager] = None
+        self.enrollment_api: Optional[EnrollmentAPIHandler] = None
+        self.voiceclone_api: Optional[VoiceCloneAPIHandler] = None
+        self.tts_manager: Optional[TTSStreamManager] = None
+        self.ws_manager: Optional[WebSocketManager] = None
+        self.msg: Optional[MessageRouter] = None
 
 
 # =============================================================================
@@ -183,7 +231,7 @@ class DatabaseManager:
                 pangrams INTEGER[] DEFAULT []
             );
         """)
-        print("DuckDB table 'speakers' is ready.")
+        logger.info("DuckDB table 'speakers' is ready.")
 
         self.con.execute("""
             CREATE SEQUENCE IF NOT EXISTS seq_pangram_id START 1;
@@ -193,7 +241,7 @@ class DatabaseManager:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        print("DuckDB table 'pangrams' is ready.")
+        logger.info("DuckDB table 'pangrams' is ready.")
 
         self.con.execute("""
             CREATE SEQUENCE IF NOT EXISTS seq_passage_id START 1;
@@ -204,7 +252,7 @@ class DatabaseManager:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        print("DuckDB table 'passages' is ready.")
+        logger.info("DuckDB table 'passages' is ready.")
 
     def execute(self, *args, **kwargs):
         """Proxy to underlying connection.execute()."""
@@ -264,7 +312,7 @@ class AudioUtils:
             else:
                 raise ValueError(f"Unsupported audio type: {audio_type}")
         except Exception as e:
-            print(f"Error in prepare_for_streaming for type '{audio_type}': {e}. Returning empty bytes.")
+            logger.error(f"Error in prepare_for_streaming for type '{audio_type}': {e}. Returning empty bytes.")
             return b''
 
 
@@ -325,7 +373,7 @@ class NemoStreamingTranscriber:
                                            device=self.device)
 
     def _load_streaming_model(self):
-        print("Pre-loading NVIDIA NeMo Streaming Conformer-Hybrid Large...")
+        logger.info("Pre-loading NVIDIA NeMo Streaming Conformer-Hybrid Large...")
         asr_model = EncDecHybridRNNTCTCBPEModel.restore_from(self.model_path, map_location=torch.device(self.device))
         asr_model.eval()
         decoding_cfg = asr_model.cfg.decoding
@@ -340,7 +388,7 @@ class NemoStreamingTranscriber:
             left_context_size = asr_model.encoder.att_context_size[0]
             asr_model.encoder.set_default_att_context_size(
                 [left_context_size, int(self.lookahead_size / self.encoder_step_length)])
-        print("NVIDIA NeMo Streaming Conformer-Hybrid Large loaded successfully")
+        logger.info("NVIDIA NeMo Streaming Conformer-Hybrid Large loaded successfully")
         return asr_model
 
     def _init_preprocessor(self):
@@ -400,19 +448,20 @@ class NemoStreamingTranscriber:
 
 
 class CanaryQwenTranscriber:
-    def __init__(self, model_path, device):
-        print("Pre-loading Canary-Qwen-2.5b model...")
+    def __init__(self, model_path, device, max_new_tokens=128):
+        logger.info("Pre-loading Canary-Qwen-2.5b model...")
         self.device = device
+        self.max_new_tokens = max_new_tokens
         self.model_path = Path(model_path)
         self.model = SALM.from_pretrained(str(self.model_path))
         self.model = self.model.to(self.device)
         self.model.eval()
-        print("Canary-Qwen-2.5b model loaded successfully")
+        logger.info("Canary-Qwen-2.5b model loaded successfully")
 
     def transcribe_final(self, audio_int16, sample_rate=16000):
         """Perform final transcription with ITN and P&C using Canary-Qwen-2.5b."""
         try:
-            print(f"[Canary-Qwen] Processing audio: shape={audio_int16.shape}, sample_rate={sample_rate}")
+            logger.debug(f"[Canary-Qwen] Processing audio: shape={audio_int16.shape}, sample_rate={sample_rate}")
             audio_float32 = AudioUtils.int16_to_float32(audio_int16)
             audio_tensor = torch.from_numpy(audio_float32).to(self.device)
             audios = audio_tensor.unsqueeze(0)
@@ -420,19 +469,19 @@ class CanaryQwenTranscriber:
             prompts = [
                 [{"role": "user", "content": f"Transcribe the following: {self.model.audio_locator_tag}"}]
             ]
-            print("[Canary-Qwen] Running model.generate() with tensor input...")
+            logger.debug("[Canary-Qwen] Running model.generate() with tensor input...")
             with torch.no_grad():
                 raw_output_ids = self.model.generate(
                     prompts=prompts,
                     audios=audios,
                     audio_lens=audio_lens,
-                    max_new_tokens=128,
+                    max_new_tokens=self.max_new_tokens,
                     do_sample=False,
                     num_beams=1,
                     temperature=1.0
                 )
             raw_result = self.model.tokenizer.ids_to_text(raw_output_ids[0].cpu())
-            print(f"[Canary-Qwen] Raw model output: '{raw_result}'")
+            logger.debug(f"[Canary-Qwen] Raw model output: '{raw_result}'")
             result = raw_result.strip()
             if '<|im_start|>' in result:
                 parts = result.split('<|im_start|>assistant\n')
@@ -440,18 +489,18 @@ class CanaryQwenTranscriber:
                     result = parts[1].split('<|im_end|>')[0].strip()
             result = result.replace('<|im_start|>', '').replace('<|im_end|>', '').strip()
             if not result or result.lower() in ['transcript', 'transcription', 'audio transcript']:
-                print(f"[Canary-Qwen] Got generic/empty response: '{result}'")
+                logger.warning(f"[Canary-Qwen] Got generic/empty response: '{result}'")
                 return ""
-            print(f"[Canary-Qwen] Final transcription: '{result}'")
+            logger.info(f"[Canary-Qwen] Final transcription: '{result}'")
             return result
         except Exception as e:
-            print(f"[Canary-Qwen] Error in transcription: {e}")
+            logger.error(f"[Canary-Qwen] Error in transcription: {e}")
             return ""
 
     def transcribe_with_beam_search(self, audio_int16, sample_rate=16000, num_beams=3):
         """Alternative method with beam search for potentially better quality."""
         try:
-            print(f"[Canary-Qwen] Running beam search transcription with {num_beams} beams")
+            logger.debug(f"[Canary-Qwen] Running beam search transcription with {num_beams} beams")
             audio_float32 = AudioUtils.int16_to_float32(audio_int16)
             audio_tensor = torch.from_numpy(audio_float32).to(self.device)
             audios = audio_tensor.unsqueeze(0)
@@ -464,13 +513,13 @@ class CanaryQwenTranscriber:
                     prompts=prompts,
                     audios=audios,
                     audio_lens=audio_lens,
-                    max_new_tokens=128,
+                    max_new_tokens=self.max_new_tokens,
                     do_sample=False,
                     num_beams=num_beams,
                     temperature=1.0
                 )
             raw_result = self.model.tokenizer.ids_to_text(raw_output_ids[0].cpu())
-            print(f"[Canary-Qwen] Raw beam search output: '{raw_result}'")
+            logger.debug(f"[Canary-Qwen] Raw beam search output: '{raw_result}'")
             result = raw_result.strip()
             if '<|im_start|>' in result:
                 parts = result.split('<|im_start|>assistant\n')
@@ -478,12 +527,12 @@ class CanaryQwenTranscriber:
                     result = parts[1].split('<|im_end|>')[0].strip()
             result = result.replace('<|im_start|>', '').replace('<|im_end|>', '').strip()
             if not result or result.lower() in ['transcript', 'transcription', 'audio transcript']:
-                print(f"[Canary-Qwen] Beam search got generic/empty response: '{result}'")
+                logger.warning(f"[Canary-Qwen] Beam search got generic/empty response: '{result}'")
                 return ""
-            print(f"[Canary-Qwen] Beam search transcription: '{result}'")
+            logger.info(f"[Canary-Qwen] Beam search transcription: '{result}'")
             return result
         except Exception as e:
-            print(f"[Canary-Qwen] Error in beam search transcription: {e}")
+            logger.error(f"[Canary-Qwen] Error in beam search transcription: {e}")
             return ""
 
 
@@ -491,16 +540,16 @@ class CanaryQwenTranscriber:
 # VAD MODEL
 # =============================================================================
 
-class NeMoVAD:
+class NemoVAD:
     def __init__(self, model_path, device, sample_rate=16000):
-        print("Pre-loading NeMo VAD model...")
+        logger.info("Pre-loading NeMo VAD model...")
         self.device = device
         self.sample_rate = sample_rate
         self.model = nemo_asr.models.EncDecClassificationModel.restore_from(
             model_path, map_location=torch.device(self.device), strict=False)
         self.model.eval()
         self.model.to(self.device)
-        print("NeMo VAD model loaded successfully")
+        logger.info("NeMo VAD model loaded successfully")
 
     def detect_voice(self, audio_chunk_int16: np.ndarray):
         if audio_chunk_int16.ndim > 1:
@@ -526,9 +575,9 @@ class NeMoVAD:
 
 class PiperTTS:
     def __init__(self, model_path):
-        print("Pre-loading Piper TTS model...")
+        logger.info("Pre-loading Piper TTS model...")
         self.voice = PiperVoice.load(model_path)
-        print("Piper TTS model loaded successfully")
+        logger.info("Piper TTS model loaded successfully")
 
     def synthesize_stream_raw(self, text):
         for chunk in self.voice.synthesize_stream_raw(text):
@@ -545,7 +594,7 @@ class XTTSWrapper:
     and raw audio stream inference."""
 
     def __init__(self, ctx: ServerContext, model_dir, device, speakers_dir):
-        print("Pre-loading Coqui XTTS model...")
+        logger.info("Pre-loading Coqui XTTS model...")
         self.ctx = ctx
         self.device = device
         self.model_dir = Path(model_dir)
@@ -557,7 +606,7 @@ class XTTSWrapper:
         self.xtts_model.load_checkpoint(config=self.config, checkpoint_dir=self.model_dir, eval=True)
         self.xtts_model.to(self.device)
         self._load_speakers_from_db()
-        print(f"Coqui XTTS Model loaded on device: {self.device}")
+        logger.info(f"Coqui XTTS Model loaded on device: {self.device}")
 
     @property
     def sample_rate(self) -> int:
@@ -566,10 +615,10 @@ class XTTSWrapper:
     async def extract_xtts_embed(self, wav_path, firstname, surname=None):
         """Extracts XTTS embeddings from a WAV file and stores them in the DuckDB database."""
         wav_path = Path(wav_path)
-        print(f"Extracting XTTS embeddings for {firstname} {surname if surname else ''} from {wav_path}...")
+        logger.info(f"Extracting XTTS embeddings for {firstname} {surname if surname else ''} from {wav_path}...")
         with torch.no_grad():
             gpt_cond_latent, speaker_embedding = self.xtts_model.get_conditioning_latents(str(wav_path), 16000)
-        print(f"Extracted shapes - GPT: {gpt_cond_latent.shape}, Speaker: {speaker_embedding.shape}")
+        logger.debug(f"Extracted shapes - GPT: {gpt_cond_latent.shape}, Speaker: {speaker_embedding.shape}")
         gpt_latent_flat = gpt_cond_latent.cpu().numpy().flatten().tolist()
         xtts_embedding_flat = speaker_embedding.cpu().numpy().flatten().tolist()
         gpt_shape_json = json.dumps(list(gpt_cond_latent.shape))
@@ -584,11 +633,11 @@ class XTTSWrapper:
             """, (firstname, surname, gpt_latent_flat, gpt_shape_json, xtts_embedding_flat, xtts_shape_json))
 
         await asyncio.to_thread(insert_data)
-        print(f"Successfully stored XTTS embeddings for {firstname} in DuckDB using native arrays.")
+        logger.info(f"Successfully stored XTTS embeddings for {firstname} in DuckDB using native arrays.")
 
     def _load_speakers_from_db(self):
         """Loads XTTS speaker embeddings from the DuckDB database."""
-        print("Loading XTTS speakers from DuckDB native arrays...")
+        logger.info("Loading XTTS speakers from DuckDB native arrays...")
         db = self.ctx.db
         speakers_query = db.execute("""
             SELECT firstname, surname, gpt_cond_latent, gpt_shape, xtts_embedding, xtts_shape 
@@ -612,11 +661,11 @@ class XTTSWrapper:
                     "gpt_cond_latent": gpt_latent,
                     "speaker_embedding": xtts_embedding
                 }
-                print(f"Loaded {speaker_name} with shapes - GPT: {gpt_latent.shape}, Speaker: {xtts_embedding.shape}")
+                logger.debug(f"Loaded {speaker_name} with shapes - GPT: {gpt_latent.shape}, Speaker: {xtts_embedding.shape}")
             except Exception as e:
-                print(f"Error loading speaker {speaker_name}: {e}")
+                logger.error(f"Error loading speaker {speaker_name}: {e}")
                 continue
-        print(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} XTTS speakers from DuckDB native arrays.")
+        logger.info(f"Loaded {len(self.xtts_model.speaker_manager.speakers)} XTTS speakers from DuckDB native arrays.")
 
     def synthesize_stream_raw(self, text: str, speaker_name: str):
         """Performs raw XTTS inference and yields audio chunks as NumPy arrays."""
@@ -627,10 +676,10 @@ class XTTSWrapper:
         speaker_embedding = speaker_data["speaker_embedding"].to(self.device)
         for chunk in self.xtts_model.inference_stream(
             text=text,
-            language="en",
+            language=self.ctx.config["xtts_language"],
             gpt_cond_latent=gpt_cond_latent,
             speaker_embedding=speaker_embedding,
-            stream_chunk_size=512,
+            stream_chunk_size=self.ctx.config["xtts_stream_chunk_size"],
         ):
             yield chunk.cpu().numpy()
 
@@ -652,7 +701,7 @@ class FastECAPASpeakerMatcher:
 
     def load_embeddings_to_memory(self):
         """Load all ECAPA embeddings from database into memory for fast comparison."""
-        print("Loading ECAPA embeddings into memory...")
+        logger.info("Loading ECAPA embeddings into memory...")
         try:
             speakers_query = self.ctx.db.execute("""
                 SELECT uid, firstname, surname, ecapa_embedding 
@@ -660,7 +709,7 @@ class FastECAPASpeakerMatcher:
                 WHERE ecapa_embedding IS NOT NULL
             """).fetchall()
             if not speakers_query:
-                print("No ECAPA embeddings found in database.")
+                logger.warning("No ECAPA embeddings found in database.")
                 return
             embeddings_list = []
             for row in speakers_query:
@@ -673,18 +722,18 @@ class FastECAPASpeakerMatcher:
                     embeddings_list.append(embedding_normalized)
                     self.speaker_names.append(speaker_name)
                     self.speaker_uids.append(uid)
-                    print(f"Loaded ECAPA embedding for {speaker_name} (shape: {embedding_array.shape})")
+                    logger.debug(f"Loaded ECAPA embedding for {speaker_name} (shape: {embedding_array.shape})")
                 except Exception as e:
-                    print(f"Error loading ECAPA embedding for {speaker_name}: {e}")
+                    logger.error(f"Error loading ECAPA embedding for {speaker_name}: {e}")
                     continue
             if embeddings_list:
                 self.embedding_matrix = np.vstack(embeddings_list)
-                print(f"Created embedding matrix: {self.embedding_matrix.shape}")
-                print(f"Loaded {len(self.speaker_embeddings)} ECAPA embeddings into memory.")
+                logger.debug(f"Created embedding matrix: {self.embedding_matrix.shape}")
+                logger.info(f"Loaded {len(self.speaker_embeddings)} ECAPA embeddings into memory.")
             else:
-                print("No valid ECAPA embeddings loaded.")
+                logger.warning("No valid ECAPA embeddings loaded.")
         except Exception as e:
-            print(f"Error loading ECAPA embeddings: {e}")
+            logger.error(f"Error loading ECAPA embeddings: {e}")
 
     def calculate_adaptive_confidence(self, best_score: float, second_score: float, domain_size: int) -> float:
         """Calculate confidence score that adapts based on domain size."""
@@ -731,7 +780,7 @@ class FastECAPASpeakerMatcher:
             }
             return best_speaker, best_uid, confidence, nomatch_data
         except Exception as e:
-            print(f"Error in speaker matching: {e}")
+            logger.error(f"Error in speaker matching: {e}")
             return None, None, 0.0, {"error": str(e)}
 
     def find_best_match(self, query_embedding, domain_size: Optional[int] = None) -> Tuple[Optional[str], Optional[int], float]:
@@ -756,7 +805,7 @@ class FastECAPASpeakerMatcher:
             confidence = self.calculate_adaptive_confidence(best_score, second_score, domain_size)
             return best_speaker, best_uid, confidence
         except Exception as e:
-            print(f"Error in speaker matching: {e}")
+            logger.error(f"Error in speaker matching: {e}")
             return None, None, 0.0
 
     def find_best_match_with_details(self, query_embedding, domain_size: Optional[int] = None) -> Dict:
@@ -802,7 +851,7 @@ class FastECAPASpeakerMatcher:
 
     def rebuild_embedding_matrix(self):
         """Rebuild embedding matrix from database."""
-        print("Rebuilding ECAPA embedding matrix from database...")
+        logger.info("Rebuilding ECAPA embedding matrix from database...")
         self.speaker_embeddings.clear()
         self.speaker_names.clear()
         self.speaker_uids.clear()
@@ -813,22 +862,22 @@ class FastECAPASpeakerMatcher:
         """Update a specific speaker's embedding in the matrix without full rebuild."""
         try:
             if self.embedding_matrix is None or len(self.speaker_embeddings) == 0:
-                print(f"[ECAPA Matcher] No embeddings loaded for {speaker_name}, performing full rebuild...")
+                logger.warning(f"[ECAPA Matcher] No embeddings loaded for {speaker_name}, performing full rebuild...")
                 self.rebuild_embedding_matrix()
                 return True
             try:
                 speaker_idx = self.speaker_uids.index(uid)
                 actual_speaker_name = self.speaker_names[speaker_idx]
             except ValueError:
-                print(f"[ECAPA Matcher] Speaker {speaker_name} (UID: {uid}) not found in matrix, adding new speaker...")
+                logger.info(f"[ECAPA Matcher] Speaker {speaker_name} (UID: {uid}) not found in matrix, adding new speaker...")
                 return self.add_new_speaker_to_matrix(uid, speaker_name, new_embedding)
             embedding_normalized = new_embedding / np.linalg.norm(new_embedding)
             self.speaker_embeddings[actual_speaker_name] = embedding_normalized
             self.embedding_matrix[speaker_idx] = embedding_normalized
-            print(f"[ECAPA Matcher] Updated embedding for {speaker_name} (UID: {uid}) in-place")
+            logger.debug(f"[ECAPA Matcher] Updated embedding for {speaker_name} (UID: {uid}) in-place")
             return True
         except Exception as e:
-            print(f"[ECAPA Matcher] Error updating speaker embedding for {speaker_name} (UID: {uid}): {e}")
+            logger.error(f"[ECAPA Matcher] Error updating speaker embedding for {speaker_name} (UID: {uid}): {e}")
             return False
 
     def add_new_speaker_to_matrix(self, uid: int, speaker_name: str, new_embedding: np.ndarray) -> bool:
@@ -837,7 +886,7 @@ class FastECAPASpeakerMatcher:
             if uid in self.speaker_uids:
                 existing_idx = self.speaker_uids.index(uid)
                 existing_name = self.speaker_names[existing_idx]
-                print(f"[ECAPA Matcher] Warning: UID {uid} already exists for {existing_name}, updating instead...")
+                logger.warning(f"[ECAPA Matcher] Warning: UID {uid} already exists for {existing_name}, updating instead...")
                 return self.update_embedding_in_matrix(uid, speaker_name, new_embedding)
             embedding_normalized = new_embedding / np.linalg.norm(new_embedding)
             self.speaker_embeddings[speaker_name] = embedding_normalized
@@ -848,10 +897,10 @@ class FastECAPASpeakerMatcher:
             else:
                 new_row = embedding_normalized.reshape(1, -1)
                 self.embedding_matrix = np.vstack([self.embedding_matrix, new_row])
-            print(f"[ECAPA Matcher] Added new speaker {speaker_name} (UID: {uid}) to matrix (new size: {self.embedding_matrix.shape})")
+            logger.info(f"[ECAPA Matcher] Added new speaker {speaker_name} (UID: {uid}) to matrix (new size: {self.embedding_matrix.shape})")
             return True
         except Exception as e:
-            print(f"[ECAPA Matcher] Error adding new speaker {speaker_name} (UID: {uid}): {e}")
+            logger.error(f"[ECAPA Matcher] Error adding new speaker {speaker_name} (UID: {uid}): {e}")
             return False
 
     def remove_speaker_from_matrix(self, uid: int, speaker_name: str = None) -> bool:
@@ -862,7 +911,7 @@ class FastECAPASpeakerMatcher:
                 actual_speaker_name = self.speaker_names[speaker_idx]
             except ValueError:
                 log_name = speaker_name if speaker_name else f"UID {uid}"
-                print(f"[ECAPA Matcher] Speaker {log_name} not found for removal")
+                logger.warning(f"[ECAPA Matcher] Speaker {log_name} not found for removal")
                 return False
             del self.speaker_embeddings[actual_speaker_name]
             self.speaker_names.pop(speaker_idx)
@@ -872,11 +921,11 @@ class FastECAPASpeakerMatcher:
             else:
                 self.embedding_matrix = np.delete(self.embedding_matrix, speaker_idx, axis=0)
             log_name = speaker_name if speaker_name else actual_speaker_name
-            print(f"[ECAPA Matcher] Removed speaker {log_name} (UID: {uid}) from matrix")
+            logger.info(f"[ECAPA Matcher] Removed speaker {log_name} (UID: {uid}) from matrix")
             return True
         except Exception as e:
             log_name = speaker_name if speaker_name else f"UID {uid}"
-            print(f"[ECAPA Matcher] Error removing speaker {log_name}: {e}")
+            logger.error(f"[ECAPA Matcher] Error removing speaker {log_name}: {e}")
             return False
 
 
@@ -885,7 +934,7 @@ class ECAPASpeakerProcessor:
     for initial speaker imprints and live audio buffer processing for real-time identification."""
 
     def __init__(self, ctx: ServerContext, model_path, device, ecapa_matcher, sample_rate=16000):
-        print("Pre-loading ECAPA-TDNN speaker processor...")
+        logger.info("Pre-loading ECAPA-TDNN speaker processor...")
         self.ctx = ctx
         self.device = device
         self.model_path = model_path
@@ -899,29 +948,29 @@ class ECAPASpeakerProcessor:
         self.bytes_per_second = sample_rate * 2
         self.last_extraction_bytes = 0
         self.extraction_interval_bytes = self.bytes_per_second
-        self.max_extractions = 7
+        self.max_extractions = ctx.config["ecapa_max_extractions"]
         self.extraction_count = 0
         self.subsequent_nomatch = 0
         self.total_nomatch = 0
-        self.nomatch_lower_threshold = 0.70
-        self.nomatch_upper_threshold = 0.85
-        self.UNCERTAIN_THRESHOLD = 0.70
-        self.CERTAIN_THRESHOLD = 0.85
-        print("ECAPA-TDNN speaker processor loaded successfully")
+        self.nomatch_lower_threshold = ctx.config["ecapa_nomatch_lower_threshold"]
+        self.nomatch_upper_threshold = ctx.config["ecapa_nomatch_upper_threshold"]
+        self.UNCERTAIN_THRESHOLD = ctx.config["ecapa_uncertain_threshold"]
+        self.CERTAIN_THRESHOLD = ctx.config["ecapa_certain_threshold"]
+        logger.info("ECAPA-TDNN speaker processor loaded successfully")
 
     def extract_embedding_from_file(self, wav_path, sample_rate=None):
         """Extract ECAPA embedding from a WAV file."""
         if sample_rate is None:
             sample_rate = self.sample_rate
         try:
-            print(f"[ECAPA] Extracting embedding from file: {wav_path}")
+            logger.debug(f"[ECAPA] Extracting embedding from file: {wav_path}")
             with torch.no_grad():
                 embeddings = self.model.get_embedding(wav_path)
             embedding_np = embeddings.cpu().numpy().squeeze()
-            print(f"[ECAPA] Extracted embedding shape: {embedding_np.shape}")
+            logger.debug(f"[ECAPA] Extracted embedding shape: {embedding_np.shape}")
             return embedding_np
         except Exception as e:
-            print(f"[ECAPA] Error extracting embedding from file {wav_path}: {e}")
+            logger.error(f"[ECAPA] Error extracting embedding from file {wav_path}: {e}")
             return None
 
     def extract_embedding_from_buffer(self, audio_int16, sample_rate=None):
@@ -947,40 +996,40 @@ class ECAPASpeakerProcessor:
             embedding_np = embedding.cpu().numpy().squeeze()
             return embedding_np
         except Exception as e:
-            print(f"[ECAPA] Error extracting embedding from buffer: {e}")
+            logger.error(f"[ECAPA] Error extracting embedding from buffer: {e}")
             return None
 
     async def create_initial_speaker_imprint(self, wav_path, firstname, surname=None):
         """Extract both XTTS and ECAPA embeddings from a WAV file and store them."""
         wav_path = Path(wav_path)
-        print(f"[ECAPA] Creating initial speaker imprint for {firstname} {surname if surname else ''} from {wav_path}...")
+        logger.info(f"[ECAPA] Creating initial speaker imprint for {firstname} {surname if surname else ''} from {wav_path}...")
         try:
             try:
                 audio_duration = librosa.get_duration(path=str(wav_path))
-                print(f"[ECAPA] Audio duration: {audio_duration:.2f} seconds")
+                logger.debug(f"[ECAPA] Audio duration: {audio_duration:.2f} seconds")
             except Exception as e:
-                print(f"[ECAPA] Error getting audio duration: {e}")
+                logger.error(f"[ECAPA] Error getting audio duration: {e}")
                 audio_duration = 0.0
 
             # Extract XTTS embeddings
-            print(f"[ECAPA] Extracting XTTS embeddings...")
+            logger.debug("[ECAPA] Extracting XTTS embeddings...")
             with torch.no_grad():
                 gpt_cond_latent, speaker_embedding = self.ctx.xtts.xtts_model.get_conditioning_latents(str(wav_path), 16000)
-            print(f"[ECAPA] XTTS shapes - GPT: {gpt_cond_latent.shape}, Speaker: {speaker_embedding.shape}")
+            logger.debug(f"[ECAPA] XTTS shapes - GPT: {gpt_cond_latent.shape}, Speaker: {speaker_embedding.shape}")
             gpt_latent_flat = gpt_cond_latent.cpu().numpy().flatten().tolist()
             xtts_embedding_flat = speaker_embedding.cpu().numpy().flatten().tolist()
             gpt_shape_json = json.dumps(list(gpt_cond_latent.shape))
             xtts_shape_json = json.dumps(list(speaker_embedding.shape))
 
             # Extract ECAPA embedding
-            print(f"[ECAPA] Extracting ECAPA embedding...")
+            logger.debug("[ECAPA] Extracting ECAPA embedding...")
             ecapa_embedding = await asyncio.to_thread(self.extract_embedding_from_file, wav_path, self.sample_rate)
             if ecapa_embedding is None:
-                print(f"[ECAPA] Failed to extract ECAPA embedding, storing XTTS data only")
+                logger.warning("[ECAPA] Failed to extract ECAPA embedding, storing XTTS data only")
                 ecapa_embedding_flat = None
             else:
                 ecapa_embedding_flat = ecapa_embedding.flatten().tolist()
-                print(f"[ECAPA] ECAPA embedding shape: {ecapa_embedding.shape}")
+                logger.debug(f"[ECAPA] ECAPA embedding shape: {ecapa_embedding.shape}")
 
             db = self.ctx.db
             def insert_speaker_data():
@@ -993,56 +1042,56 @@ class ECAPASpeakerProcessor:
                       xtts_shape_json, ecapa_embedding_flat, audio_duration, 1))
 
             await asyncio.to_thread(insert_speaker_data)
-            print(f"[ECAPA] Successfully stored complete speaker imprint for {firstname} in DuckDB")
-            print(f"[ECAPA] Initial metadata - Duration: {audio_duration:.2f}s, Sample count: 1")
+            logger.info(f"[ECAPA] Successfully stored complete speaker imprint for {firstname} in DuckDB")
+            logger.debug(f"[ECAPA] Initial metadata - Duration: {audio_duration:.2f}s, Sample count: 1")
 
             # Reload speakers
             self.ctx.xtts._load_speakers_from_db()
             self.ecapa_matcher.rebuild_embedding_matrix()
             return True
         except Exception as e:
-            print(f"[ECAPA] Error creating speaker imprint for {firstname}: {e}")
+            logger.error(f"[ECAPA] Error creating speaker imprint for {firstname}: {e}")
             return False
 
     async def update_speaker_imprint_from_file(self, wav_path, uid):
         """Perform a cumulative update to an existing speaker's ECAPA embedding from file."""
         wav_path = Path(wav_path)
-        print(f"[ECAPA] Updating speaker imprint for UID {uid} with {wav_path}...")
+        logger.info(f"[ECAPA] Updating speaker imprint for UID {uid} with {wav_path}...")
         try:
             db = self.ctx.db
             def check_speaker_exists():
                 return db.execute("""
-                    SELECT uid, firstname, surname, ecapa_embedding, total_duration_sec, sample_count 
+                    SELECT uid, firstname, surname, ecapa_embedding, total_duration_sec, sample_count
                     FROM speakers WHERE uid = ?
                 """, (uid,)).fetchone()
 
             existing_speaker = await asyncio.to_thread(check_speaker_exists)
             if existing_speaker is None:
-                print(f"[ECAPA] Error: Speaker with UID {uid} does not exist in database")
+                logger.error(f"[ECAPA] Speaker with UID {uid} does not exist in database")
                 return False
             uid_db, firstname, surname, existing_embedding_list, total_duration, sample_count = existing_speaker
             speaker_name = f"{firstname} {surname}" if surname else firstname
-            print(f"[ECAPA] Found existing speaker: {speaker_name}")
+            logger.debug(f"[ECAPA] Found existing speaker: {speaker_name}")
             try:
                 new_audio_duration = librosa.get_duration(path=str(wav_path))
-                print(f"[ECAPA] New audio duration: {new_audio_duration:.2f} seconds")
+                logger.debug(f"[ECAPA] New audio duration: {new_audio_duration:.2f} seconds")
             except Exception as e:
-                print(f"[ECAPA] Error getting audio duration: {e}")
+                logger.error(f"[ECAPA] Error getting audio duration: {e}")
                 return False
             new_embedding = await asyncio.to_thread(self.extract_embedding_from_file, wav_path, self.sample_rate)
             if new_embedding is None:
-                print(f"[ECAPA] Failed to extract ECAPA embedding from {wav_path}")
+                logger.error(f"[ECAPA] Failed to extract ECAPA embedding from {wav_path}")
                 return False
-            print(f"[ECAPA] Successfully extracted new embedding shape: {new_embedding.shape}")
+            logger.debug(f"[ECAPA] Successfully extracted new embedding shape: {new_embedding.shape}")
             if existing_embedding_list is not None and total_duration > 0:
                 existing_embedding = np.array(existing_embedding_list, dtype=np.float32)
                 existing_weight = total_duration / (total_duration + new_audio_duration)
                 new_weight = new_audio_duration / (total_duration + new_audio_duration)
                 combined_embedding = (existing_weight * existing_embedding + new_weight * new_embedding)
-                print(f"[ECAPA] Combined embeddings - existing weight: {existing_weight:.3f}, new weight: {new_weight:.3f}")
+                logger.debug(f"[ECAPA] Combined embeddings - existing weight: {existing_weight:.3f}, new weight: {new_weight:.3f}")
             else:
                 combined_embedding = new_embedding
-                print(f"[ECAPA] No existing embedding data, using new embedding as baseline")
+                logger.debug("[ECAPA] No existing embedding data, using new embedding as baseline")
 
             def update_speaker_data():
                 combined_embedding_list = combined_embedding.flatten().tolist()
@@ -1055,58 +1104,58 @@ class ECAPASpeakerProcessor:
                 return new_total_duration, new_sample_count
 
             new_total_duration, new_sample_count = await asyncio.to_thread(update_speaker_data)
-            print(f"[ECAPA] Successfully updated speaker {speaker_name} (UID: {uid})")
-            print(f"[ECAPA] New totals - Duration: {new_total_duration:.2f}s, Samples: {new_sample_count}")
-            print(f"[ECAPA] Rebuilding embedding matrix with updated data...")
+            logger.info(f"[ECAPA] Successfully updated speaker {speaker_name} (UID: {uid})")
+            logger.debug(f"[ECAPA] New totals - Duration: {new_total_duration:.2f}s, Samples: {new_sample_count}")
+            logger.debug("[ECAPA] Rebuilding embedding matrix with updated data...")
             self.ecapa_matcher.rebuild_embedding_matrix()
             return True
         except Exception as e:
-            print(f"[ECAPA] Error updating speaker imprint for UID {uid}: {e}")
+            logger.error(f"[ECAPA] Error updating speaker imprint for UID {uid}: {e}")
             return False
 
     async def update_speaker_imprint_from_buffer(self, uid, ecapa_embedding, audio_int16, sample_rate=None):
         """Perform a cumulative update to an existing speaker's ECAPA embedding using audio buffer data."""
         if sample_rate is None:
             sample_rate = self.sample_rate
-        print(f"[ECAPA] Updating speaker imprint for UID {uid} from audio buffer...")
+        logger.info(f"[ECAPA] Updating speaker imprint for UID {uid} from audio buffer...")
         try:
             db = self.ctx.db
             def check_speaker_exists():
                 return db.execute("""
-                    SELECT uid, firstname, surname, ecapa_embedding, total_duration_sec, sample_count 
+                    SELECT uid, firstname, surname, ecapa_embedding, total_duration_sec, sample_count
                     FROM speakers WHERE uid = ?
                 """, (uid,)).fetchone()
 
             existing_speaker = await asyncio.to_thread(check_speaker_exists)
             if existing_speaker is None:
-                print(f"[ECAPA] Error: Speaker with UID {uid} does not exist in database")
+                logger.error(f"[ECAPA] Speaker with UID {uid} does not exist in database")
                 return False
             uid_db, firstname, surname, existing_embedding_list, total_duration, sample_count = existing_speaker
             speaker_name = f"{firstname} {surname}" if surname else firstname
-            print(f"[ECAPA] Found existing speaker: {speaker_name}")
+            logger.debug(f"[ECAPA] Found existing speaker: {speaker_name}")
             try:
                 audio_duration_samples = len(audio_int16)
                 new_audio_duration = audio_duration_samples / sample_rate
-                print(f"[ECAPA] Audio buffer duration: {new_audio_duration:.2f} seconds ({audio_duration_samples} samples at {sample_rate}Hz)")
+                logger.debug(f"[ECAPA] Audio buffer duration: {new_audio_duration:.2f} seconds ({audio_duration_samples} samples at {sample_rate}Hz)")
             except Exception as e:
-                print(f"[ECAPA] Error calculating audio duration: {e}")
+                logger.error(f"[ECAPA] Error calculating audio duration: {e}")
                 return False
             if ecapa_embedding is None:
-                print(f"[ECAPA] Error: Pre-computed ECAPA embedding is None")
+                logger.error("[ECAPA] Pre-computed ECAPA embedding is None")
                 return False
             if not isinstance(ecapa_embedding, np.ndarray):
-                print(f"[ECAPA] Error: ECAPA embedding must be a numpy array, got {type(ecapa_embedding)}")
+                logger.error(f"[ECAPA] ECAPA embedding must be a numpy array, got {type(ecapa_embedding)}")
                 return False
-            print(f"[ECAPA] Using pre-computed embedding shape: {ecapa_embedding.shape}")
+            logger.debug(f"[ECAPA] Using pre-computed embedding shape: {ecapa_embedding.shape}")
             if existing_embedding_list is not None and total_duration > 0:
                 existing_embedding = np.array(existing_embedding_list, dtype=np.float32)
                 existing_weight = total_duration / (total_duration + new_audio_duration)
                 new_weight = new_audio_duration / (total_duration + new_audio_duration)
                 combined_embedding = (existing_weight * existing_embedding + new_weight * ecapa_embedding)
-                print(f"[ECAPA] Combined embeddings - existing weight: {existing_weight:.3f}, new weight: {new_weight:.3f}")
+                logger.debug(f"[ECAPA] Combined embeddings - existing weight: {existing_weight:.3f}, new weight: {new_weight:.3f}")
             else:
                 combined_embedding = ecapa_embedding
-                print(f"[ECAPA] No existing embedding data, using new embedding as baseline")
+                logger.debug("[ECAPA] No existing embedding data, using new embedding as baseline")
 
             def update_speaker_data():
                 combined_embedding_list = combined_embedding.flatten().tolist()
@@ -1119,15 +1168,15 @@ class ECAPASpeakerProcessor:
                 return new_total_duration, new_sample_count
 
             new_total_duration, new_sample_count = await asyncio.to_thread(update_speaker_data)
-            print(f"[ECAPA] Successfully updated speaker {speaker_name} (UID: {uid}) from buffer")
-            print(f"[ECAPA] New totals - Duration: {new_total_duration:.2f}s, Samples: {new_sample_count}")
+            logger.info(f"[ECAPA] Successfully updated speaker {speaker_name} (UID: {uid}) from buffer")
+            logger.debug(f"[ECAPA] New totals - Duration: {new_total_duration:.2f}s, Samples: {new_sample_count}")
             update_success = self.ecapa_matcher.update_embedding_in_matrix(uid, speaker_name, combined_embedding)
             if not update_success:
-                print(f"[ECAPA] Warning: Failed to update embedding matrix, falling back to full rebuild...")
+                logger.warning("[ECAPA] Failed to update embedding matrix, falling back to full rebuild...")
                 self.ecapa_matcher.rebuild_embedding_matrix()
             return True
         except Exception as e:
-            print(f"[ECAPA] Error updating speaker imprint for UID {uid} from buffer: {e}")
+            logger.error(f"[ECAPA] Error updating speaker imprint for UID {uid} from buffer: {e}")
             return False
 
     def reset_for_new_utterance(self):
@@ -1209,40 +1258,40 @@ class ECAPASpeakerProcessor:
                     try:
                         success = await self.update_speaker_imprint_from_buffer(uid, ecapa_embedding, audio_int16)
                         if success:
-                            print(f"[ECAPA] Successfully updated imprint for {speaker_name}")
+                            logger.debug(f"[ECAPA] Successfully updated imprint for {speaker_name}")
                         else:
-                            print(f"[ECAPA] Failed to update imprint for {speaker_name}")
+                            logger.warning(f"[ECAPA] Failed to update imprint for {speaker_name}")
                     except Exception as e:
-                        print(f"[ECAPA] Error updating imprint: {e}")
+                        logger.error(f"[ECAPA] Error updating imprint: {e}")
 
             if speaker_confidence == "certain":
-                print(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
+                logger.debug(f"[ECAPA] Speaker match result: {speaker_result} (confidence: {confidence:.3f}, {speaker_confidence})")
 
             if reason == "scheduled":
                 self.extraction_count += 1
                 self.last_extraction_bytes = len(audio_buffer)
-                print(f"[ECAPA] nomatch score: {nomatch_score}")
+                logger.debug(f"[ECAPA] nomatch score: {nomatch_score}")
 
             if reason == "silence" and nomatch_score >= self.nomatch_lower_threshold:
                 self.subsequent_nomatch += 1
                 self.total_nomatch += 1
-                print(f"[ECAPA] Subsequent reliable nomatch count: {self.subsequent_nomatch}")
-                print(f"[ECAPA] Total reliable nomatch count: {self.total_nomatch}")
+                logger.debug(f"[ECAPA] Subsequent reliable nomatch count: {self.subsequent_nomatch}")
+                logger.debug(f"[ECAPA] Total reliable nomatch count: {self.total_nomatch}")
 
             # Enrollment suggestion logic
             suggest_enrollment = False
             if reason == "silence" and nomatch_score >= self.nomatch_upper_threshold:
-                print(f"[ECAPA] High nomatch confidence detected - consider triggering enrollment flow")
+                logger.debug("[ECAPA] High nomatch confidence detected - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
                 self.total_nomatch = 0
                 suggest_enrollment = True
             elif self.subsequent_nomatch >= 2:
-                print(f"[ECAPA] 2 subsequent reasonable nomatch utterances - consider triggering enrollment flow")
+                logger.debug("[ECAPA] 2 subsequent reasonable nomatch utterances - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
                 self.total_nomatch = 0
                 suggest_enrollment = True
             elif self.total_nomatch >= 3:
-                print(f"[ECAPA] 3 total reasonable nomatch utterances - consider triggering enrollment flow")
+                logger.debug("[ECAPA] 3 total reasonable nomatch utterances - consider triggering enrollment flow")
                 self.subsequent_nomatch = 0
                 self.total_nomatch = 0
                 suggest_enrollment = True
@@ -1261,7 +1310,7 @@ class ECAPASpeakerProcessor:
             }
             return result
         except Exception as e:
-            print(f"[ECAPA] Error in extract_and_match_from_buffer: {e}")
+            logger.error(f"[ECAPA] Error in extract_and_match_from_buffer: {e}")
             return {"error": str(e)}
 
 
@@ -1289,7 +1338,7 @@ class RasaHandler:
     async def send_message(self, message, client_id, speaker_name=None, speaker_uid=None):
         """Send a message to Rasa and get the response."""
         if not self.session:
-            print("[Rasa] Error: Session not initialized. Use async context manager.")
+            logger.error("[Rasa] Session not initialized. Use async context manager.")
             return None
         try:
             payload = {"sender": client_id, "message": message}
@@ -1299,53 +1348,53 @@ class RasaHandler:
                     payload["metadata"]["speaker_name"] = speaker_name
                 if speaker_uid:
                     payload["metadata"]["speaker_uid"] = speaker_uid
-            print(f"[Rasa] Sending message: '{message}'")
+            logger.debug(f"[Rasa] Sending message: '{message}'")
             async with self.session.post(f"{self.rasa_url}/webhooks/rest/webhook", json=payload) as response:
                 if response.status == 200:
                     rasa_response = await response.json()
-                    print(f"[Rasa] Received response: {rasa_response}")
+                    logger.debug(f"[Rasa] Received response: {rasa_response}")
                     return rasa_response
                 else:
-                    print(f"[Rasa] HTTP Error {response.status}: {await response.text()}")
+                    logger.error(f"[Rasa] HTTP Error {response.status}: {await response.text()}")
                     return None
         except asyncio.TimeoutError:
-            print(f"[Rasa] Timeout after {self.timeout} seconds")
+            logger.warning(f"[Rasa] Timeout after {self.timeout} seconds")
             return None
         except aiohttp.ClientError as e:
-            print(f"[Rasa] Client error: {e}")
+            logger.error(f"[Rasa] Client error: {e}")
             return None
         except Exception as e:
-            print(f"[Rasa] Unexpected error: {e}")
+            logger.error(f"[Rasa] Unexpected error: {e}")
             return None
 
     async def trigger_enrollment(self, client_id: str) -> bool:
         """Trigger enrollment flow by sending a system message."""
         if not self.session:
-            print("[Rasa] Error: Session not initialized.")
+            logger.error("[Rasa] Session not initialized.")
             return False
         try:
             payload = {"sender": f"client_{client_id}", "message": "SYSTEM_TRIGGER_ENROLLMENT"}
             async with self.session.post(f"{self.rasa_url}/webhooks/rest/webhook", json=payload) as response:
                 if response.status == 200:
                     rasa_response = await response.json()
-                    print(f"[Rasa] Enrollment trigger response: {rasa_response}")
+                    logger.debug(f"[Rasa] Enrollment trigger response: {rasa_response}")
                     return await self.process_response(client_id, rasa_response)
                 return False
         except Exception as e:
-            print(f"[Rasa] Error triggering enrollment: {e}")
+            logger.error(f"[Rasa] Error triggering enrollment: {e}")
             return False
 
     async def process_response(self, client_id: str, rasa_response: list) -> bool:
         """Process Rasa response and send appropriate messages/audio to client."""
         if not rasa_response:
-            print("[Rasa] No response from Rasa")
+            logger.warning("[Rasa] No response from Rasa")
             return False
         processed_any = False
         server_name = self.ctx.config.get("server_name", "Fawkes")
         for response_item in rasa_response:
             if "text" in response_item:
                 response_text = response_item["text"]
-                print(f"[Rasa] Processing text response: '{response_text}'")
+                logger.debug(f"[Rasa] Processing text response: '{response_text}'")
                 await self.ctx.msg.send_transcript(
                     client_id, server_name, "certain", "True", response_text, "certain")
                 if not self.ctx.client_side_tts and self.ctx.active_websockets:
@@ -1353,7 +1402,7 @@ class RasaHandler:
                 processed_any = True
             elif "custom" in response_item:
                 custom_data = response_item["custom"]
-                print(f"[Rasa] Processing custom response: {custom_data}")
+                logger.debug(f"[Rasa] Processing custom response: {custom_data}")
                 processed_any = True
         return processed_any
 
@@ -1366,7 +1415,7 @@ class RasaHandler:
         is_not_likely_nomatch = nomatch_score < ecapa.nomatch_upper_threshold
         is_reliable_utterance = (is_speaker_reliable and is_not_likely_nomatch)
         if is_reliable_utterance:
-            print(f"[Rasa] Reliable utterance detected, speaker name is: '{speaker_name}'")
+            logger.info(f"[Rasa] Reliable utterance detected, speaker name is: '{speaker_name}'")
         try:
             rasa_response = await self.send_message(
                 final_transcription_text,
@@ -1377,11 +1426,11 @@ class RasaHandler:
             if rasa_response:
                 success = await self.process_response(client_id, rasa_response)
                 if not success:
-                    print("[Rasa] No valid responses to process")
+                    logger.warning("[Rasa] No valid responses to process")
             else:
-                print("[Rasa] Failed to get response from Rasa")
+                logger.warning("[Rasa] Failed to get response from Rasa")
         except Exception as e:
-            print(f"[Rasa] Error in handle_final_utterance: {e}")
+            logger.error(f"[Rasa] Error in handle_final_utterance: {e}")
 
 
 # =============================================================================
@@ -1495,7 +1544,7 @@ class EnrollmentTextUtils:
 
     @staticmethod
     def calculate_word_coverage(spoken_text: str, target_text: str,
-                                fuzzy_threshold: float = CONFIG['enrollment_fuzzy_word_threshold']) -> tuple:
+                                fuzzy_threshold: float) -> tuple:
         spoken_normalized = EnrollmentTextUtils.normalize_text(spoken_text)
         target_normalized = EnrollmentTextUtils.normalize_text(target_text)
         spoken_words = spoken_normalized.split()
@@ -1534,12 +1583,12 @@ class EnrollmentAPIHandler:
     async def query_speaker(self, request: EnrollmentAPIModels.SpeakerQueryRequest) -> EnrollmentAPIModels.SpeakerQueryResponse:
         """Query speaker information using in-memory speaker matrix."""
         try:
-            EXACT_MATCH_THRESHOLD = 0.90
+            EXACT_MATCH_THRESHOLD = self.ctx.config["enrollment_exact_match_threshold"]
             if request.firstname:
                 surname = request.surname or ""
                 query_name = f"{request.firstname} {surname}".strip()
                 if not self.ecapa_matcher.speaker_names:
-                    print(f"[Enrollment API] No speakers in database")
+                    logger.warning("[Enrollment API] No speakers in database")
                     return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=True)
                 best_match = None
                 best_score = 0
@@ -1552,20 +1601,20 @@ class EnrollmentAPIHandler:
                         best_uid = uid
                 if best_score >= EXACT_MATCH_THRESHOLD:
                     fname, lname = best_match.split(' ', 1) if ' ' in best_match else (best_match, '')
-                    print(f"[Enrollment API] Exact match found: '{best_match}' (UID={best_uid}, score={best_score:.2f})")
+                    logger.info(f"[Enrollment API] Exact match found: '{best_match}' (UID={best_uid}, score={best_score:.2f})")
                     return EnrollmentAPIModels.SpeakerQueryResponse(uid=best_uid, firstname=fname, surname=lname, success=True)
                 else:
-                    print(f"[Enrollment API] No speakers matching '{query_name}' above {EXACT_MATCH_THRESHOLD*100}% threshold (best: {best_score:.2f})")
+                    logger.info(f"[Enrollment API] No speakers matching '{query_name}' above {EXACT_MATCH_THRESHOLD*100}% threshold (best: {best_score:.2f})")
                     return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=True)
 
             if request.full_name:
                 if not self.ecapa_matcher.speaker_names:
-                    print(f"[Enrollment API] No speakers in database")
+                    logger.warning("[Enrollment API] No speakers in database")
                     return {'status': 'not_found', 'confidence': 0.0}
                 is_firstname_only = ' ' not in request.full_name.strip()
                 normalized_query = request.full_name.lower().replace('-', ' ').strip()
                 if is_firstname_only:
-                    print(f"[Enrollment API] Detected firstname-only query: '{normalized_query}'")
+                    logger.info(f"[Enrollment API] Detected firstname-only query: '{normalized_query}'")
                     firstname_matches = []
                     for speaker_name, uid in zip(self.ecapa_matcher.speaker_names, self.ecapa_matcher.speaker_uids):
                         fname = speaker_name.split(' ', 1)[0] if ' ' in speaker_name else speaker_name
@@ -1579,25 +1628,25 @@ class EnrollmentAPIHandler:
                         if len(exact_matches) == 1:
                             confidence = 1.0
                             best_match = exact_matches[0]
-                            print(f"[Enrollment API] Exact unique firstname match: '{best_match['firstname']}' -> confidence=1.0")
+                            logger.info(f"[Enrollment API] Exact unique firstname match: '{best_match['firstname']}' -> confidence=1.0")
                         else:
                             num_matches = len(exact_matches)
                             confidence = 1.0 / num_matches
-                            print(f"[Enrollment API] Exact firstname match for {num_matches} people -> confidence={confidence:.2f}")
+                            logger.info(f"[Enrollment API] Exact firstname match for {num_matches} people -> confidence={confidence:.2f}")
                     else:
                         if best_match['score'] >= 0.9:
                             close_matches = [m for m in firstname_matches if m['score'] >= 0.9]
                             if len(close_matches) == 1:
                                 confidence = min(best_match['score'] * 1.1, 0.95)
-                                print(f"[Enrollment API] Unique close firstname match: '{best_match['firstname']}' -> confidence={confidence:.2f}")
+                                logger.info(f"[Enrollment API] Unique close firstname match: '{best_match['firstname']}' -> confidence={confidence:.2f}")
                             else:
                                 confidence = best_match['score']
-                                print(f"[Enrollment API] Multiple close matches -> confidence={confidence:.2f}")
+                                logger.info(f"[Enrollment API] Multiple close matches -> confidence={confidence:.2f}")
                         else:
                             confidence = best_match['score']
-                            print(f"[Enrollment API] Fuzzy firstname match: '{best_match['firstname']}' -> confidence={confidence:.2f}")
+                            logger.info(f"[Enrollment API] Fuzzy firstname match: '{best_match['firstname']}' -> confidence={confidence:.2f}")
                     fname, lname = best_match['full_name'].split(' ', 1) if ' ' in best_match['full_name'] else (best_match['full_name'], '')
-                    print(f"[Enrollment API] Firstname-only match result: '{fname} {lname}' (UID={best_match['uid']}, confidence={confidence:.2f})")
+                    logger.info(f"[Enrollment API] Firstname-only match result: '{fname} {lname}' (UID={best_match['uid']}, confidence={confidence:.2f})")
                     return {'status': 'success', 'firstname': fname, 'surname': lname, 'uid': best_match['uid'], 'confidence': round(confidence, 2)}
                 else:
                     best_match = None
@@ -1612,16 +1661,16 @@ class EnrollmentAPIHandler:
                             best_uid = uid
                     if best_match and best_score > 0:
                         fname, lname = best_match.split(' ', 1) if ' ' in best_match else (best_match, '')
-                        print(f"[Enrollment API] Full name fuzzy match for '{request.full_name}': '{best_match}' (UID={best_uid}, confidence={best_score:.2f})")
+                        logger.info(f"[Enrollment API] Full name fuzzy match for '{request.full_name}': '{best_match}' (UID={best_uid}, confidence={best_score:.2f})")
                         return {'status': 'success', 'firstname': fname, 'surname': lname, 'uid': best_uid, 'confidence': round(best_score, 2)}
-                    print(f"[Enrollment API] No speakers in database")
+                    logger.warning("[Enrollment API] No speakers in database")
                     return {'status': 'not_found', 'confidence': 0.0}
 
-            print(f"[Enrollment API] Invalid query - no firstname or full_name provided")
+            logger.warning("[Enrollment API] Invalid query - no firstname or full_name provided")
             return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=False)
         except Exception as e:
-            print(f"[Enrollment API] Error in query_speaker: {e}")
-            print(f"[Enrollment API] Request data: firstname={request.firstname}, surname={request.surname}, full_name={request.full_name}")
+            logger.error(f"[Enrollment API] Error in query_speaker: {e}")
+            logger.error(f"[Enrollment API] Request data: firstname={request.firstname}, surname={request.surname}, full_name={request.full_name}")
             return EnrollmentAPIModels.SpeakerQueryResponse(uid=None, success=False)
 
     async def record_pangram(self, request: EnrollmentAPIModels.RecordPangramRequest) -> EnrollmentAPIModels.RecordPangramResponse:
@@ -1631,11 +1680,11 @@ class EnrollmentAPIHandler:
             uid = int(request.imprint_uid) if request.imprint_uid else None
             firstname = request.imprint_firstname
             surname = request.imprint_surname
-            print(f"[Enrollment] Starting pangram recording for {firstname} {surname}, uid: {uid}")
+            logger.info(f"[Enrollment] Starting pangram recording for {firstname} {surname}, uid: {uid}")
             result = await self.recording_manager.start_recording(client_id=client_id, uid=uid, firstname=firstname, surname=surname)
             return EnrollmentAPIModels.RecordPangramResponse(success=True, message=f"Recording started: {result.get('pangram_text', '')}")
         except Exception as e:
-            print(f"[Enrollment] Error in record_pangram: {e}")
+            logger.error(f"[Enrollment] Error in record_pangram: {e}")
             return EnrollmentAPIModels.RecordPangramResponse(success=False, message=str(e))
 
     async def update_enrollment_status(self, request: EnrollmentAPIModels.EnrollmentStatusRequest) -> EnrollmentAPIModels.EnrollmentStatusResponse:
@@ -1648,10 +1697,10 @@ class EnrollmentAPIHandler:
             if client_id not in self.ctx.client_queues:
                 return EnrollmentAPIModels.EnrollmentStatusResponse(success=False, message=f"Client {client_id} not found in active sessions")
             self.ctx.client_queues[client_id]["enrollment_active"] = False
-            print(f"[Enrollment API] Status updated for {client_id}: {status}")
+            logger.info(f"[Enrollment API] Status updated for {client_id}: {status}")
             return EnrollmentAPIModels.EnrollmentStatusResponse(success=True, message=f"Enrollment status updated to {status}")
         except Exception as e:
-            print(f"[Enrollment API] Error updating enrollment status: {e}")
+            logger.error(f"[Enrollment API] Error updating enrollment status: {e}")
             return EnrollmentAPIModels.EnrollmentStatusResponse(success=False, message=str(e))
 
 
@@ -1690,8 +1739,8 @@ class EnrollmentRecordingManager:
         }
         self.previous_score[client_id] = 0.0
         self.decrease_count[client_id] = 0
-        print(f"[Enrollment] Recording started for {client_id}")
-        print(f"[Enrollment] Pangram: {pangram_text}")
+        logger.info(f"[Enrollment] Recording started for {client_id}")
+        logger.info(f"[Enrollment] Pangram: {pangram_text}")
         await self.ctx.msg.send_transcript(client_id, self.server_name, "certain", "True", pangram_text, "certain")
         return {"status": "started", "pangram_id": pangram_id, "pangram_text": pangram_text}
 
@@ -1721,11 +1770,11 @@ class EnrollmentRecordingManager:
         enrollment_state = cq[client_id]["enrollment_state"]
         if not enrollment_state["recording_active"]:
             return None
-        print(f"[Enrollment] Processing utterance: '{utterance_transcript}'")
+        logger.info(f"[Enrollment] Processing utterance: '{utterance_transcript}'")
         audio_int16 = np.frombuffer(utterance_audio, dtype=np.int16)
         enrollment_state["audio_buffer"].append(audio_int16)
         if EnrollmentTextUtils.is_cancel_command(utterance_transcript):
-            print(f"[Enrollment] Cancel keyword detected")
+            logger.info("[Enrollment] Cancel keyword detected")
             return await self.abort_recording(client_id, reason="cancel")
         pangram_text = enrollment_state["pangram_text"]
         if enrollment_state['accumulated_transcript']:
@@ -1733,35 +1782,36 @@ class EnrollmentRecordingManager:
         else:
             enrollment_state['accumulated_transcript'] = utterance_transcript
         coverage_score, matched_positions = EnrollmentTextUtils.calculate_word_coverage(
-            enrollment_state['accumulated_transcript'], pangram_text)
+            enrollment_state['accumulated_transcript'], pangram_text,
+            self.ctx.config['enrollment_fuzzy_word_threshold'])
         enrollment_state['matched_positions'] = matched_positions
-        print(f"[Enrollment] Coverage score: {coverage_score:.1%}")
+        logger.info(f"[Enrollment] Coverage score: {coverage_score:.1%}")
         prev_score = self.previous_score.get(client_id, 0.0)
         if coverage_score <= prev_score:
             enrollment_state["no_progress_count"] = enrollment_state.get("no_progress_count", 0) + 1
-            print(f"[Enrollment] No progress (count: {enrollment_state['no_progress_count']})")
+            logger.info(f"[Enrollment] No progress (count: {enrollment_state['no_progress_count']})")
             if enrollment_state["no_progress_count"] >= self.ctx.config['enrollment_max_decreases']:
-                print(f"[Enrollment] Too many utterances without progress")
+                logger.warning("[Enrollment] Too many utterances without progress")
                 return await self.abort_recording(client_id, "no_progress")
         else:
             enrollment_state["no_progress_count"] = 0
         if not EnrollmentTextUtils.is_utterance_on_topic(utterance_transcript, pangram_text, self.ctx.config['enrollment_off_topic_threshold']):
             enrollment_state["off_topic_count"] = enrollment_state.get("off_topic_count", 0) + 1
-            print(f"[Enrollment] Off-topic utterance (count: {enrollment_state['off_topic_count']})")
+            logger.info(f"[Enrollment] Off-topic utterance (count: {enrollment_state['off_topic_count']})")
             if enrollment_state["off_topic_count"] >= self.ctx.config['enrollment_max_decreases']:
-                print(f"[Enrollment] Too many off-topic utterances")
+                logger.warning("[Enrollment] Too many off-topic utterances")
                 return await self.abort_recording(client_id, "off_topic")
         self.previous_score[client_id] = coverage_score
         highlight_data = self.get_frontend_highlight_data(client_id)
-        print(f"[Enrollment] Highlight data: {len(highlight_data.get('matched_positions', []))} words matched")
+        logger.debug(f"[Enrollment] Highlight data: {len(highlight_data.get('matched_positions', []))} words matched")
         if coverage_score >= self.ctx.config['enrollment_success_threshold']:
-            print(f"[Enrollment] Success threshold reached: {coverage_score:.1%}")
+            logger.info(f"[Enrollment] Success threshold reached: {coverage_score:.1%}")
             return await self._complete_recording(client_id)
         return None
 
     async def abort_recording(self, client_id: str, reason: str = "other_speaker") -> str:
         """Abort recording (can be called publicly)."""
-        print(f"[Enrollment] ABORT called - client: {client_id}, reason: {reason}")
+        logger.info(f"[Enrollment] ABORT called - client: {client_id}, reason: {reason}")
         messages = {
             "other_speaker": "Aborting imprint, please try again later with no other speakers present.",
             "timeout": "Aborting imprint, please try again later.",
@@ -1778,7 +1828,7 @@ class EnrollmentRecordingManager:
         enrollment_state = cq[client_id]["enrollment_state"]
         try:
             wav_path = await self._save_audio_to_wav(client_id, enrollment_state)
-            print(f"[Enrollment] Saved: {wav_path}")
+            logger.info(f"[Enrollment] Saved: {wav_path}")
             uid = enrollment_state["uid"]
             firstname = enrollment_state["firstname"]
             surname = enrollment_state["surname"]
@@ -1807,7 +1857,7 @@ class EnrollmentRecordingManager:
             self.decrease_count.pop(client_id, None)
             return 'success'
         except Exception as e:
-            print(f"[Enrollment] Error completing: {e}")
+            logger.error(f"[Enrollment] Error completing: {e}")
             return await self._abort_recording(client_id, "Enrollment failed.")
 
     async def _abort_recording(self, client_id: str, message: str) -> str:
@@ -1819,11 +1869,11 @@ class EnrollmentRecordingManager:
         try:
             if enrollment_state["audio_buffer"]:
                 wav_path = await self._save_audio_to_wav(client_id, enrollment_state)
-                print(f"[Enrollment] Aborted, saved debug file: {wav_path}")
+                logger.info(f"[Enrollment] Aborted, saved debug file: {wav_path}")
             await self.ctx.msg.send_transcript(client_id, self.server_name, "certain", "True", message, "certain")
             if not self.ctx.client_side_tts and self.ctx.active_websockets:
                 await cq[client_id]["tts_request_queue"].put(message)
-                print("Enqueued TTS message")
+                logger.debug("Enqueued TTS message")
             await self._notify_rasa(client_id, 'aborted')
             cq[client_id]["enrollment_active"] = False
             del cq[client_id]["enrollment_state"]
@@ -1831,7 +1881,7 @@ class EnrollmentRecordingManager:
             self.decrease_count.pop(client_id, None)
             return 'aborted'
         except Exception as e:
-            print(f"[Enrollment] Error during abort: {e}")
+            logger.error(f"[Enrollment] Error during abort: {e}")
             if "enrollment_state" in cq[client_id]:
                 del cq[client_id]["enrollment_state"]
             return 'aborted'
@@ -1871,34 +1921,31 @@ class EnrollmentRecordingManager:
             if pangram_id not in current:
                 current.append(pangram_id)
                 self.ctx.db.execute("UPDATE speakers SET pangrams = ? WHERE uid = ?", [current, uid])
-                print(f"[Enrollment] Marked pangram {pangram_id} for UID {uid}")
+                logger.debug(f"[Enrollment] Marked pangram {pangram_id} for UID {uid}")
         except Exception as e:
-            print(f"[Enrollment] Error marking pangram: {e}")
+            logger.error(f"[Enrollment] Error marking pangram: {e}")
 
-    async def _notify_rasa(self, client_id: str, status: str):
-        """Notify Rasa of enrollment completion via webhook message."""
+    async def _notify_rasa(self, client_id: str, status: str) -> bool:
+        """Notify Rasa of enrollment completion via RasaHandler."""
+        system_messages = {
+            "success": "SYSTEM_ENROLLMENT_SUCCESS",
+            "aborted": "SYSTEM_ENROLLMENT_ABORT"
+        }
+        system_message = system_messages.get(status)
+        if not system_message:
+            logger.error(f"[Enrollment] Unknown notification status: '{status}'")
+            return False
+        if not self.ctx.rasa_handler or not self.ctx.rasa_handler.session:
+            logger.warning("[Enrollment] RasaHandler not available for notification")
+            return False
         try:
-            system_messages = {"success": "SYSTEM_ENROLLMENT_SUCCESS", "aborted": "SYSTEM_ENROLLMENT_ABORT"}
-            system_message = system_messages.get(status)
-            if not system_message:
-                print(f"[Enrollment] Error: Unknown status '{status}'")
-                return False
-            payload = {"sender": f"client_{client_id}", "message": system_message}
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.ctx.config['rasa_url']}/webhooks/rest/webhook",
-                    json=payload, timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    if response.status == 200:
-                        rasa_response = await response.json()
-                        print(f"[Enrollment] Triggered {status} intent: {system_message}")
-                        print(f"[Enrollment] Rasa response: {rasa_response}")
-                        return await self.ctx.rasa_handler.process_response(client_id, rasa_response)
-                    else:
-                        print(f"[Enrollment] Failed to trigger intent: {response.status}")
-                        return False
+            response = await self.ctx.rasa_handler.send_message(
+                system_message, client_id=f"client_{client_id}")
+            if response:
+                return await self.ctx.rasa_handler.process_response(client_id, response)
+            return False
         except Exception as e:
-            print(f"[Enrollment] Error notifying Rasa: {e}")
+            logger.error(f"[Enrollment] Error notifying Rasa: {e}")
             return False
 
     async def _select_pangram(self, uid: Optional[int]) -> Tuple[Optional[int], Optional[str]]:
@@ -1915,17 +1962,17 @@ class EnrollmentRecordingManager:
                 else:
                     result = db.execute("SELECT id, text FROM pangrams ORDER BY RANDOM() LIMIT 1").fetchone()
                 if not result:
-                    print("[Enrollment] All pangrams recited, selecting random pangram")
+                    logger.info("[Enrollment] All pangrams recited, selecting random pangram")
                     result = db.execute("SELECT id, text FROM pangrams ORDER BY RANDOM() LIMIT 1").fetchone()
             else:
                 result = db.execute("SELECT id, text FROM pangrams ORDER BY RANDOM() LIMIT 1").fetchone()
             if result:
                 return result[0], result[1]
             else:
-                print("[Enrollment] No pangrams in database")
+                logger.warning("[Enrollment] No pangrams in database")
                 return None, None
         except Exception as e:
-            print(f"[Enrollment] Error selecting pangram: {e}")
+            logger.error(f"[Enrollment] Error selecting pangram: {e}")
             return None, None
 
 
@@ -1933,7 +1980,7 @@ class EnrollmentRecordingManager:
 # VOICE CLONE API HANDLER
 # =============================================================================
 
-class VoicecloneAPIHandler:
+class VoiceCloneAPIHandler:
     """Handles FastAPI endpoints for voice cloning workflows."""
 
     def __init__(self, ctx: ServerContext):
@@ -1946,7 +1993,7 @@ class VoicecloneAPIHandler:
             if request.action == "unique_sources":
                 sources = db.execute("SELECT DISTINCT source FROM passages ORDER BY source").fetchall()
                 source_list = [row[0] for row in sources]
-                print(f"[Passages] Found {len(source_list)} unique sources")
+                logger.debug(f"[Passages] Found {len(source_list)} unique sources")
                 return VoiceCloneAPIModels.PassagesQueryResponse(action="unique_sources", success=True, sources=source_list)
             elif request.action == "match_source":
                 if not request.fuzzy_source:
@@ -1962,11 +2009,11 @@ class VoicecloneAPIHandler:
                     normalized_source = source.lower().replace('-', ' ')
                     score = SequenceMatcher(None, normalized_query, normalized_source).ratio()
                     if normalized_query in normalized_source or normalized_source in normalized_query:
-                        score = max(score, 0.90)
+                        score = max(score, self.ctx.config["passages_substring_boost"])
                     if score > best_score:
                         best_score = score
                         best_match = source
-                print(f"[Passages] Match: '{request.fuzzy_source}' -> '{best_match}' ({best_score:.2%})")
+                logger.info(f"[Passages] Match: '{request.fuzzy_source}' -> '{best_match}' ({best_score:.2%})")
                 return VoiceCloneAPIModels.PassagesQueryResponse(action="match_source", success=True, source_name=best_match, confidence=round(best_score, 2))
             elif request.action == "select_quote":
                 if not request.source_name:
@@ -1975,13 +2022,13 @@ class VoicecloneAPIHandler:
                 if not quotes:
                     return VoiceCloneAPIModels.PassagesQueryResponse(action="select_quote", success=True, quote=None)
                 selected_quote = quotes[0][0]
-                print(f"[Passages] Selected quote from '{request.source_name}': {selected_quote[:60]}...")
+                logger.debug(f"[Passages] Selected quote from '{request.source_name}': {selected_quote[:60]}...")
                 return VoiceCloneAPIModels.PassagesQueryResponse(action="select_quote", success=True, quote=selected_quote)
             else:
-                print(f"[Passages] Invalid action: {request.action}")
+                logger.warning(f"[Passages] Invalid action: {request.action}")
                 return VoiceCloneAPIModels.PassagesQueryResponse(action=request.action, success=False)
         except Exception as e:
-            print(f"[Passages] Error in query_passages: {e}")
+            logger.error(f"[Passages] Error in query_passages: {e}")
             traceback.print_exc()
             return VoiceCloneAPIModels.PassagesQueryResponse(action=request.action, success=False)
 
@@ -1993,12 +2040,12 @@ class VoicecloneAPIHandler:
             quote = request.quote
             cq = self.ctx.client_queues
             if client_id not in cq:
-                print(f"[Voice Clone] Client {client_id} not found in active sessions")
+                logger.warning(f"[Voice Clone] Client {client_id} not found in active sessions")
                 return VoiceCloneAPIModels.VoiceCloneResponse(success=False, message=f"Client {client_id} not found")
             if not self.ctx.active_websockets:
-                print(f"[Voice Clone] No active websockets")
+                logger.warning("[Voice Clone] No active websockets")
                 return VoiceCloneAPIModels.VoiceCloneResponse(success=False, message="No active websocket connections")
-            print(f"[Voice Clone] Starting voice clone for speaker '{speaker}' with quote length {len(quote)}")
+            logger.info(f"[Voice Clone] Starting voice clone for speaker '{speaker}' with quote length {len(quote)}")
             server_name = self.ctx.config['server_name']
             await self.ctx.msg.send_transcript(client_id, speaker, "certain", "True", quote, "certain")
             tts = self.ctx.tts_manager
@@ -2012,7 +2059,7 @@ class VoicecloneAPIHandler:
                                     cq[client_id]["incoming_audio"].get_nowait()
                                 except:
                                     break
-                            print(f"[Voice Clone] Flushed audio buffer for {client_id}")
+                            logger.debug(f"[Voice Clone] Flushed audio buffer for {client_id}")
                         buffer = asyncio.Queue()
                         coqui_task = asyncio.create_task(tts.synthesize_xtts_to_buffer(speaker, quote, buffer))
                         await tts.stream_piper(client_id, "Compiling response, please wait a moment...")
@@ -2022,21 +2069,21 @@ class VoicecloneAPIHandler:
                             while not cq[client_id]["outgoing_audio"].empty():
                                 await asyncio.sleep(0.05)
                             await asyncio.sleep(0.2)
-                            print(f"[Voice Clone] All audio chunks sent to client")
+                            logger.debug(f"[Voice Clone] All audio chunks sent to client")
                             self.ctx.audio_playback_complete[client_id] = False
-                            max_wait = 15
+                            max_wait = self.ctx.config["voice_clone_playback_timeout"]
                             elapsed = 0
                             while not self.ctx.audio_playback_complete.get(client_id, False) and elapsed < max_wait:
                                 await asyncio.sleep(0.1)
                                 elapsed += 0.1
                             if self.ctx.audio_playback_complete.get(client_id, False):
-                                print(f"[Voice Clone] Client confirmed playback complete after {elapsed:.1f}s")
+                                logger.info(f"[Voice Clone] Client confirmed playback complete after {elapsed:.1f}s")
                             else:
-                                print(f"[Voice Clone] Timeout waiting for playback complete after {max_wait}s, proceeding anyway")
-                        print(f"[Voice Clone] Completed successfully, notifying Rasa")
+                                logger.warning(f"[Voice Clone] Timeout waiting for playback complete after {max_wait}s, proceeding anyway")
+                        logger.info("[Voice Clone] Completed successfully, notifying Rasa")
                         await self.notify_rasa_voice_clone_complete(client_id)
                     except Exception as e:
-                        print(f"[Voice Clone] Error in parallel TTS pipeline: {e}")
+                        logger.error(f"[Voice Clone] Error in parallel TTS pipeline: {e}")
                         await self.notify_rasa_voice_clone_complete(client_id)
                     finally:
                         if client_id in cq:
@@ -2046,29 +2093,23 @@ class VoicecloneAPIHandler:
                 await self.notify_rasa_voice_clone_complete(client_id)
             return VoiceCloneAPIModels.VoiceCloneResponse(success=True, message=f"Voice clone started for speaker '{speaker}'")
         except Exception as e:
-            print(f"[Voice Clone] Error in perform_voice_clone: {e}")
+            logger.error(f"[Voice Clone] Error in perform_voice_clone: {e}")
             traceback.print_exc()
             return VoiceCloneAPIModels.VoiceCloneResponse(success=False, message=str(e))
 
-    async def notify_rasa_voice_clone_complete(self, client_id: str):
-        """Notify Rasa that voice cloning is complete."""
+    async def notify_rasa_voice_clone_complete(self, client_id: str) -> bool:
+        """Notify Rasa that voice cloning is complete via RasaHandler."""
+        if not self.ctx.rasa_handler or not self.ctx.rasa_handler.session:
+            logger.warning("[Voice Clone] RasaHandler not available for notification")
+            return False
         try:
-            payload = {"sender": f"client_{client_id}", "message": "SYSTEM_VOICE_CLONE_COMPLETE"}
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.ctx.config['rasa_url']}/webhooks/rest/webhook",
-                    json=payload, timeout=aiohttp.ClientTimeout(total=5)
-                ) as response:
-                    if response.status == 200:
-                        rasa_response = await response.json()
-                        print(f"[Voice Clone] Triggered completion intent: SYSTEM_VOICE_CLONE_COMPLETE")
-                        print(f"[Voice Clone] Rasa response: {rasa_response}")
-                        return await self.ctx.rasa_handler.process_response(client_id, rasa_response)
-                    else:
-                        print(f"[Voice Clone] Failed to trigger intent: {response.status}")
-                        return False
+            response = await self.ctx.rasa_handler.send_message(
+                "SYSTEM_VOICE_CLONE_COMPLETE", client_id=f"client_{client_id}")
+            if response:
+                return await self.ctx.rasa_handler.process_response(client_id, response)
+            return False
         except Exception as e:
-            print(f"[Voice Clone] Error notifying Rasa: {e}")
+            logger.error(f"[Voice Clone] Error notifying Rasa: {e}")
             return False
 
 
@@ -2084,12 +2125,12 @@ class TTSStreamManager:
 
     async def process_queue(self, client_id):
         """Sequential TTS processor - ensures TTS messages play in order."""
-        print(f"[TTS Queue] Started processor for client {client_id}")
+        logger.info(f"[TTS Queue] Started processor for client {client_id}")
         cq = self.ctx.client_queues
         try:
             while True:
                 if client_id not in cq:
-                    print(f"[TTS Queue] Client {client_id} disconnected, stopping processor")
+                    logger.info(f"[TTS Queue] Client {client_id} disconnected, stopping processor")
                     break
                 text = await cq[client_id]["tts_request_queue"].get()
                 try:
@@ -2105,26 +2146,26 @@ class TTSStreamManager:
                         while not cq[client_id]["outgoing_audio"].empty():
                             await asyncio.sleep(0.05)
                         await asyncio.sleep(0.2)
-                    print(f"[TTS Queue] Completed: '{text[:50]}...' for {client_id}")
+                    logger.debug(f"[TTS Queue] Completed: '{text[:50]}...' for {client_id}")
                 except Exception as e:
-                    print(f"[TTS Queue] Error processing '{text[:50]}...': {e}")
+                    logger.error(f"[TTS Queue] Error processing '{text[:50]}...': {e}")
                 finally:
                     if client_id in cq:
                         cq[client_id]["tts_active"] = False
                 cq[client_id]["tts_request_queue"].task_done()
         except Exception as e:
-            print(f"[TTS Queue] Processor error for {client_id}: {e}")
+            logger.error(f"[TTS Queue] Processor error for {client_id}: {e}")
         finally:
-            print(f"[TTS Queue] Processor stopped for client {client_id}")
+            logger.info(f"[TTS Queue] Processor stopped for client {client_id}")
 
     async def stream_piper(self, client_id, text):
         """Stream Piper TTS audio to a client."""
         piper = self.ctx.piper_tts
         main_loop = self.ctx.main_loop
         cq = self.ctx.client_queues
-        print(f"[TTS] Streaming (raw) to client {client_id}: {text}")
+        logger.debug(f"[TTS] Streaming (raw) to client {client_id}: {text}")
         if client_id not in cq:
-            print(f"[TTS] Client {client_id} not in client_queues")
+            logger.warning(f"[TTS] Client {client_id} not in client_queues")
             return
 
         def blocking_piper_inference():
@@ -2138,21 +2179,21 @@ class TTSStreamManager:
                     else:
                         pass
                 asyncio.run_coroutine_threadsafe(cq[client_id]["outgoing_audio"].put(None), main_loop)
-                print(f"[TTS] Finished streaming to client {client_id} (from thread).")
+                logger.debug(f"[TTS] Finished streaming to client {client_id} (from thread).")
             except Exception as e:
-                print(f"[TTS] Error during Piper inference in thread for {client_id}: {e}")
+                logger.error(f"[TTS] Error during Piper inference in thread for {client_id}: {e}")
                 asyncio.run_coroutine_threadsafe(cq[client_id]["outgoing_audio"].put(None), main_loop)
 
         try:
             await asyncio.to_thread(blocking_piper_inference)
         except Exception as e:
-            print(f"[TTS] Error setting up Piper streaming to {client_id}: {e}")
+            logger.error(f"[TTS] Error setting up Piper streaming to {client_id}: {e}")
 
     async def synthesize_xtts_to_buffer(self, speaker_name, text, buffer):
         """Kicks off XTTS inference in a background thread and puts audio chunks into buffer."""
         xtts = self.ctx.xtts
         main_loop = self.ctx.main_loop
-        print(f"Computing XTTS for: {text}")
+        logger.debug(f"Computing XTTS for: {text}")
 
         def blocking_direct_inference():
             try:
@@ -2163,23 +2204,23 @@ class TTSStreamManager:
                     converted_chunk = AudioUtils.prepare_for_streaming(chunk_np_float32, 'float32', xtts.sample_rate)
                     asyncio.run_coroutine_threadsafe(buffer.put(converted_chunk), main_loop)
                 asyncio.run_coroutine_threadsafe(buffer.put(None), main_loop)
-                print(f"[XTTS] Finished streaming to buffer.")
+                logger.debug(f"[XTTS] Finished streaming to buffer.")
             except ValueError as ve:
-                print(f"[XTTS] Speaker Error during inference: {ve}")
+                logger.error(f"[XTTS] Speaker Error during inference: {ve}")
                 asyncio.run_coroutine_threadsafe(buffer.put(None), main_loop)
             except Exception as e:
-                print(f"[XTTS] General Error during inference: {e}")
+                logger.error(f"[XTTS] General Error during inference: {e}")
                 asyncio.run_coroutine_threadsafe(buffer.put(None), main_loop)
 
         await asyncio.to_thread(blocking_direct_inference)
 
     async def stream_from_buffer(self, client_id, buffer):
         """Streams pre-buffered audio chunks from a queue to a client's outgoing_audio queue."""
-        print(f"[XTTS] Streaming from buffer queue to client {client_id}")
+        logger.debug(f"[XTTS] Streaming from buffer queue to client {client_id}")
         cq = self.ctx.client_queues
         queue = cq.get(client_id, {}).get("outgoing_audio")
         if not queue:
-            print(f"[XTTS] Client {client_id} not in client_queues or missing 'outgoing_audio'")
+            logger.warning(f"[XTTS] Client {client_id} not in client_queues or missing 'outgoing_audio'")
             return
         try:
             while True:
@@ -2190,7 +2231,7 @@ class TTSStreamManager:
                 await asyncio.sleep(0.015)
             await queue.put(None)
         except Exception as e:
-            print(f"[XTTS] Error streaming to {client_id}: {e}")
+            logger.error(f"[XTTS] Error streaming to {client_id}: {e}")
 
 
 # =============================================================================
@@ -2206,7 +2247,7 @@ class WebSocketManager:
     async def connection_handler(self, websocket):
         """Handle a new WebSocket connection."""
         client_id = str(uuid.uuid4())
-        print(f"New client connected: {client_id}")
+        logger.info(f"New client connected: {client_id}")
         await self._websocket_session(websocket, client_id)
 
     async def _websocket_session(self, websocket, client_id):
@@ -2226,11 +2267,11 @@ class WebSocketManager:
             tts_task = asyncio.create_task(self.ctx.tts_manager.process_queue(client_id))
             await asyncio.gather(incoming_task, outgoing_task, asr_task, tts_task)
         except asyncio.CancelledError:
-            print(f"WebSocket task for {client_id} cancelled.")
+            logger.debug(f"WebSocket task for {client_id} cancelled.")
         except Exception as e:
-            print(f"WebSocket error for {client_id}: {e}")
+            logger.error(f"WebSocket error for {client_id}: {e}")
         finally:
-            print(f"Cleaning up client {client_id}")
+            logger.info(f"Cleaning up client {client_id}")
             self.ctx.client_queues.pop(client_id, None)
             self.ctx.active_websockets.pop(client_id, None)
             await websocket.close()
@@ -2243,15 +2284,15 @@ class WebSocketManager:
                 if isinstance(message, bytes):
                     await cq[client_id]["incoming_audio"].put(message)
                 else:
-                    print(f"Text message received: {message}")
+                    logger.debug(f"Text message received: {message}")
                     if message == 'clientSideTTS':
                         self.ctx.client_side_tts = True
-                        print(f"Client has specified using client-side TTS.")
+                        logger.info(f"Client has specified using client-side TTS.")
                     elif message == 'AUDIO_PLAYBACK_COMPLETE':
                         self.ctx.audio_playback_complete[client_id] = True
-                        print(f"[Audio] Client {client_id} confirmed playback complete")
+                        logger.debug(f"[Audio] Client {client_id} confirmed playback complete")
         except websockets.exceptions.ConnectionClosed:
-            print(f"Client {client_id} disconnected.")
+            logger.info(f"Client {client_id} disconnected.")
         finally:
             self.ctx.active_websockets.pop(client_id, None)
             self.ctx.client_queues.pop(client_id, None)
@@ -2262,7 +2303,7 @@ class WebSocketManager:
         try:
             while True:
                 if client_id not in cq:
-                    print(f"Client {client_id} no longer in client_queues. Exiting handle_outgoing.")
+                    logger.debug(f"Client {client_id} no longer in client_queues. Exiting handle_outgoing.")
                     break
                 if not cq[client_id]["outgoing_audio"].empty():
                     chunk = await cq[client_id]["outgoing_audio"].get()
@@ -2300,7 +2341,7 @@ class WebSocketManager:
         last_utterance_time = None
         last_speech_time = None
         last_prompt_time = None
-        SILENCE_CHUNKS_THRESHOLD = 2
+        SILENCE_CHUNKS_THRESHOLD = cfg["silence_chunks_threshold"]
         final_transcription_text = ""
         SPEAKER = cfg["default_speaker"]
         SPEAKER_CONFIDENCE = cfg["default_speaker_confidence"]
@@ -2361,7 +2402,7 @@ class WebSocketManager:
                                 ecapa_result = await ecapa_processor.extract_and_match_from_buffer(
                                     current_utterance_buffer, reason="scheduled")
                                 if "error" not in ecapa_result:
-                                    print(f"[Speaker ID] {ecapa_result['speaker_result']}")
+                                    logger.info(f"[Speaker ID] {ecapa_result['speaker_result']}")
                                     SPEAKER = ecapa_result['speaker_result']
                                     SPEAKER_CONFIDENCE = ecapa_result['speaker_confidence']
                                     speaker_uid = ecapa_result['uid_result']
@@ -2379,10 +2420,10 @@ class WebSocketManager:
                                     expected_uid = enrollment_state["uid"]
                                     detected_uid = speaker_uid
                                     if expected_uid is None and detected_uid is not None and SPEAKER_CONFIDENCE == "certain":
-                                        print(f"[Enrollment] ABORT: Other speaker detected (UID {detected_uid})")
+                                        logger.warning(f"[Enrollment] ABORT: Other speaker detected (UID {detected_uid})")
                                         await enrollment_manager.abort_recording(client_id=client_id, reason="other_speaker")
                                     elif expected_uid is not None and detected_uid is not None and detected_uid != expected_uid and SPEAKER_CONFIDENCE == "certain":
-                                        print(f"[Enrollment] ABORT: Wrong speaker (expected {expected_uid}, got {detected_uid})")
+                                        logger.warning(f"[Enrollment] ABORT: Wrong speaker (expected {expected_uid}, got {detected_uid})")
                                         await enrollment_manager.abort_recording(client_id=client_id, reason="other_speaker")
 
                         else:  # VAD indicates silence
@@ -2396,7 +2437,7 @@ class WebSocketManager:
                                     enrollment_last_speech = enrollment_state.get("enrollment_last_speech_time")
                                     nonspeech_duration = (current_time - enrollment_last_speech) if enrollment_last_speech else 0.0
                                     if nonspeech_duration >= cfg['enrollment_timeout']:
-                                        print(f"silence duration = {nonspeech_duration}")
+                                        logger.debug(f"silence duration = {nonspeech_duration}")
                                         await enrollment_manager.abort_recording(client_id, reason="timeout")
                                     elif nonspeech_duration >= cfg['enrollment_reminder_interval']:
                                         if last_prompt_time is None or (current_time - last_prompt_time) >= cfg['enrollment_reminder_interval']:
@@ -2405,13 +2446,13 @@ class WebSocketManager:
                                             last_prompt_time = current_time
 
                             if is_speaking and silence_counter >= SILENCE_CHUNKS_THRESHOLD:
-                                print("Acoustic finality detected. Processing full utterance with offline model...")
+                                logger.debug("Acoustic finality detected. Processing full utterance with offline model...")
 
                                 if len(current_utterance_buffer) > 0:
                                     final_ecapa_result = await ecapa_processor.extract_and_match_from_buffer(
                                         current_utterance_buffer, reason="silence")
                                     if "error" not in final_ecapa_result:
-                                        print(f"[Final Speaker ID] {final_ecapa_result['speaker_result']}")
+                                        logger.info(f"[Final Speaker ID] {final_ecapa_result['speaker_result']}")
                                         SPEAKER = final_ecapa_result['speaker_result']
                                         SPEAKER_CONFIDENCE = final_ecapa_result['speaker_confidence']
                                         nomatch_score = final_ecapa_result['nomatch_score']
@@ -2422,7 +2463,7 @@ class WebSocketManager:
 
                                 final_canary_transcription = await asyncio.to_thread(
                                     canary_qwen.transcribe_final, audio_int16, cfg["audio_sample_rate"])
-                                print(f"Canary-Qwen final transcription: '{final_canary_transcription}'")
+                                logger.info(f"Canary-Qwen final transcription: '{final_canary_transcription}'")
 
                                 if final_canary_transcription.strip():
                                     final_transcription_text = final_canary_transcription
@@ -2440,7 +2481,7 @@ class WebSocketManager:
                                             client_id=client_id, utterance_audio=current_utterance_buffer,
                                             utterance_transcript=final_transcription_text)
                                         if result in ['success', 'aborted']:
-                                            print(f"[Enrollment] Recording {result}")
+                                            logger.info(f"[Enrollment] Recording {result}")
                                     else:
                                         await rasa_handler.handle_final_utterance(
                                             client_id, final_transcription_text, SPEAKER, speaker_uid, confidence, nomatch_score)
@@ -2453,7 +2494,7 @@ class WebSocketManager:
                                         )
                                         if not recording_active:
                                             cq[client_id]["enrollment_active"] = True
-                                            print(f"[ECAPA] Triggering enrollment flow for {client_id}")
+                                            logger.info(f"[ECAPA] Triggering enrollment flow for {client_id}")
                                             if rasa_handler and rasa_handler.session:
                                                 await rasa_handler.trigger_enrollment(client_id)
 
@@ -2469,12 +2510,12 @@ class WebSocketManager:
                 except asyncio.QueueEmpty:
                     await asyncio.sleep(0.01)
                 except Exception as e:
-                    print(f"Error processing audio for {client_id}: {e}")
+                    logger.error(f"Error processing audio for {client_id}: {e}")
                     break
                 finally:
                     pass
         finally:
-            print("Async Audio processing stopped")
+            logger.info("Async Audio processing stopped")
 
 
 # =============================================================================
@@ -2497,9 +2538,9 @@ async def save_utterance_async(audio_bytes: bytes) -> str:
                 wf.setsampwidth(SAMPLE_WIDTH)
                 wf.setframerate(SAMPLE_RATE)
                 wf.writeframes(audio_bytes)
-            print(f"Successfully saved utterance to {filepath}")
+            logger.info(f"Successfully saved utterance to {filepath}")
         except Exception as e:
-            print(f"Error saving utterance to {filepath}: {e}")
+            logger.error(f"Error saving utterance to {filepath}: {e}")
             raise e
 
     await asyncio.to_thread(_save_file)
@@ -2508,7 +2549,7 @@ async def save_utterance_async(audio_bytes: bytes) -> str:
 
 async def manual_sequential_ecapa(ctx, firstname, surname, update_wav_paths):
     """Perform sequential ECAPA embedding updates for a specific speaker (testing utility)."""
-    print(f"\n--- Sequential ECAPA updates for {firstname} {surname if surname else ''} ---")
+    logger.info(f"--- Sequential ECAPA updates for {firstname} {surname if surname else ''} ---")
     db = ctx.db
     if surname:
         uid_result = db.execute("SELECT uid FROM speakers WHERE firstname = ? AND surname = ?", (firstname, surname)).fetchone()
@@ -2518,49 +2559,49 @@ async def manual_sequential_ecapa(ctx, firstname, surname, update_wav_paths):
         speaker_display_name = firstname
     if not uid_result:
         error_msg = f"Error: Could not find speaker '{speaker_display_name}' in database"
-        print(error_msg)
+        logger.error(error_msg)
         return {"success": False, "error": error_msg, "speaker": speaker_display_name, "updates_attempted": 0, "updates_successful": 0}
     speaker_uid = uid_result[0]
-    print(f"Found {speaker_display_name} with UID: {speaker_uid}")
+    logger.info(f"Found {speaker_display_name} with UID: {speaker_uid}")
     initial_metadata = db.execute("SELECT total_duration_sec, sample_count FROM speakers WHERE uid = ?", (speaker_uid,)).fetchone()
     initial_duration, initial_count = initial_metadata if initial_metadata else (0.0, 0)
-    print(f"Initial state - Duration: {initial_duration:.2f}s, Sample count: {initial_count}")
+    logger.info(f"Initial state - Duration: {initial_duration:.2f}s, Sample count: {initial_count}")
     successful_updates = 0
     failed_updates = []
     try:
         for i, wav_path in enumerate(update_wav_paths, 1):
-            print(f"\nProcessing update {i}/{len(update_wav_paths)}: {Path(wav_path).name}")
+            logger.info(f"Processing update {i}/{len(update_wav_paths)}: {Path(wav_path).name}")
             try:
                 success = await ctx.ecapa_processor.update_speaker_imprint_from_file(wav_path, speaker_uid)
                 if success:
                     successful_updates += 1
-                    print(f"Update {i} completed successfully")
+                    logger.info(f"Update {i} completed successfully")
                 else:
                     failed_updates.append({"index": i, "path": wav_path, "error": "Function returned False"})
-                    print(f"Update {i} failed - function returned False")
+                    logger.warning(f"Update {i} failed - function returned False")
             except FileNotFoundError:
                 failed_updates.append({"index": i, "path": wav_path, "error": "File not found"})
-                print(f"Update {i} failed - file not found: {wav_path}")
+                logger.error(f"Update {i} failed - file not found: {wav_path}")
             except Exception as e:
                 failed_updates.append({"index": i, "path": wav_path, "error": str(e)})
-                print(f"Update {i} failed - error: {e}")
+                logger.error(f"Update {i} failed - error: {e}")
     except Exception as e:
         error_msg = f"Critical error during sequential updates: {e}"
-        print(error_msg)
+        logger.error(error_msg)
         return {"success": False, "error": error_msg, "speaker": speaker_display_name,
                 "updates_attempted": len(update_wav_paths), "updates_successful": successful_updates, "failed_updates": failed_updates}
     final_metadata = db.execute("SELECT total_duration_sec, sample_count, last_updated FROM speakers WHERE uid = ?", (speaker_uid,)).fetchone()
     if final_metadata:
         final_duration, final_count, last_update = final_metadata
-        print(f"\n--- Final metadata for {speaker_display_name} ---")
-        print(f"Total duration: {final_duration:.2f}s (+{final_duration - initial_duration:.2f}s)")
-        print(f"Sample count: {final_count} (+{final_count - initial_count})")
-        print(f"Last updated: {last_update}")
-    print(f"\n--- Update Summary ---")
-    print(f"Speaker: {speaker_display_name}")
-    print(f"Updates attempted: {len(update_wav_paths)}")
-    print(f"Updates successful: {successful_updates}")
-    print(f"Updates failed: {len(failed_updates)}")
+        logger.info(f"--- Final metadata for {speaker_display_name} ---")
+        logger.info(f"Total duration: {final_duration:.2f}s (+{final_duration - initial_duration:.2f}s)")
+        logger.info(f"Sample count: {final_count} (+{final_count - initial_count})")
+        logger.info(f"Last updated: {last_update}")
+    logger.info(f"--- Update Summary ---")
+    logger.info(f"Speaker: {speaker_display_name}")
+    logger.info(f"Updates attempted: {len(update_wav_paths)}")
+    logger.info(f"Updates successful: {successful_updates}")
+    logger.info(f"Updates failed: {len(failed_updates)}")
     return {"success": successful_updates > 0, "speaker": speaker_display_name, "speaker_uid": speaker_uid,
             "updates_attempted": len(update_wav_paths), "updates_successful": successful_updates,
             "updates_failed": len(failed_updates), "failed_updates": failed_updates}
@@ -2583,15 +2624,15 @@ async def query_speaker_endpoint(request: EnrollmentAPIModels.SpeakerQueryReques
 async def query_passages_endpoint(request: VoiceCloneAPIModels.PassagesQueryRequest):
     return await _ctx.voiceclone_api.query_passages(request)
 
-@app.post("/api/record_pangram", response_model=EnrollmentAPIModels.RecordPangramResponse)
+@app.post("/api/enrollment/record", response_model=EnrollmentAPIModels.RecordPangramResponse)
 async def record_pangram_endpoint(request: EnrollmentAPIModels.RecordPangramRequest):
     return await _ctx.enrollment_api.record_pangram(request)
 
-@app.post("/api/enrollment_status", response_model=EnrollmentAPIModels.EnrollmentStatusResponse)
+@app.post("/api/enrollment/status", response_model=EnrollmentAPIModels.EnrollmentStatusResponse)
 async def update_enrollment_status_endpoint(request: EnrollmentAPIModels.EnrollmentStatusRequest):
     return await _ctx.enrollment_api.update_enrollment_status(request)
 
-@app.post("/api/voice_clone", response_model=VoiceCloneAPIModels.VoiceCloneResponse)
+@app.post("/api/voice-clone", response_model=VoiceCloneAPIModels.VoiceCloneResponse)
 async def voice_clone_endpoint(request: VoiceCloneAPIModels.VoiceCloneRequest):
     return await _ctx.voiceclone_api.perform_voice_clone(request)
 
@@ -2622,7 +2663,7 @@ async def main():
     ctx.xtts = XTTSWrapper(
         ctx, CONFIG["xtts_model_dir"], CONFIG["inference_device"], CONFIG["speakers_dir"])
 
-    ctx.nemo_vad = NeMoVAD(
+    ctx.nemo_vad = NemoVAD(
         model_path=CONFIG["nemo_vad_model_path"],
         device=CONFIG["inference_device"],
         sample_rate=CONFIG["vad_sample_rate"])
@@ -2638,7 +2679,8 @@ async def main():
     ctx.canary_qwen = None
     ctx.canary_qwen = CanaryQwenTranscriber(
         model_path=CONFIG["canary_qwen_model_path"],
-        device=CONFIG["inference_device"])
+        device=CONFIG["inference_device"],
+        max_new_tokens=CONFIG["canary_max_new_tokens"])
     
 
     ctx.ecapa_matcher = FastECAPASpeakerMatcher(ctx)
@@ -2654,7 +2696,7 @@ async def main():
 
     ctx.enrollment_api = EnrollmentAPIHandler(ctx, ctx.enrollment_manager, ctx.ecapa_matcher)
 
-    ctx.voiceclone_api = VoicecloneAPIHandler(ctx)
+    ctx.voiceclone_api = VoiceCloneAPIHandler(ctx)
 
     ctx.tts_manager = TTSStreamManager(ctx)
 
@@ -2664,7 +2706,7 @@ async def main():
     if CONFIG.get("enable_rasa", False):
         ctx.rasa_handler = RasaHandler(ctx, CONFIG["rasa_url"], CONFIG["rasa_timeout"])
         await ctx.rasa_handler.__aenter__()
-        print("[Rasa] Client initialized and connected")
+        logger.info("[Rasa] Client initialized and connected")
     else:
         ctx.rasa_handler = None
 
@@ -2678,31 +2720,31 @@ async def main():
         ctx.ws_manager.connection_handler, CONFIG['websocket_host'], CONFIG['websocket_port'])
 
     try:
-        print(f"Starting FastAPI server on http://{CONFIG['fastapi_host']}:{CONFIG['fastapi_port']}")
-        print(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
+        logger.info(f"Starting FastAPI server on http://{CONFIG['fastapi_host']}:{CONFIG['fastapi_port']}")
+        logger.info(f"Starting WebSocket server on ws://{CONFIG['websocket_host']}:{CONFIG['websocket_port']}")
         await asyncio.gather(fastapi_task, websocket_server.wait_closed())
     except asyncio.CancelledError:
         pass
     finally:
-        print("\nCleaning up resources...")
+        logger.info("Cleaning up resources...")
         if ctx.rasa_handler:
             try:
                 await ctx.rasa_handler.__aexit__(None, None, None)
-                print("[Rasa] Client connection closed")
+                logger.info("[Rasa] Client connection closed")
             except Exception as e:
-                print(f"[Rasa] Error during cleanup: {e}")
+                logger.error(f"[Rasa] Error during cleanup: {e}")
         websocket_server.close()
         await websocket_server.wait_closed()
-        print("[WebSocket] Server closed")
+        logger.info("[WebSocket] Server closed")
         if ctx.db:
             ctx.db.close()
-            print("[Database] Connection closed")
+            logger.info("[Database] Connection closed")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nServer shutting down gracefully...")
+        logger.info("Server shutting down gracefully...")
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")
