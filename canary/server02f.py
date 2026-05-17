@@ -4107,7 +4107,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
 
                             # Convert the accumulated utterance buffer to numpy array
                             # The buffer is already in 16kHz 16-bit mono PCM format from the client
-                            '''
+                            
                             audio_int16 = np.frombuffer(current_utterance_buffer, dtype=np.int16)
 
                             # Use Canary-Qwen for final transcription with ITN and P&C
@@ -4125,7 +4125,7 @@ async def process_audio_from_queue(client_id, nemo_transcriber, nemo_vad, canary
                             # Otherwise fall back to the streaming result
                             if final_canary_transcription.strip():
                                 final_transcription_text = final_canary_transcription
-                            '''
+                            
                             # else keep the existing final_transcription_text from streaming
                             if final_transcription_text:
                                 data_to_send = {
@@ -4237,12 +4237,11 @@ async def main():
         sample_rate=CONFIG["audio_sample_rate"]
     )
     # Initialize Canary-Qwen-2.5b transcriber (for final results)
-    '''
     canary_qwen_transcriber = CanaryQwenTranscriber(
         model_path=CONFIG["canary_qwen_model_path"],
         device=CONFIG["inference_device"]
     )
-    '''
+
     # Load in-memory ECAPA matching routine
     ecapa_matcher = FastECAPASpeakerMatcher(con)
     # Initialize unified ECAPA processor (add this after ecapa_matcher)
