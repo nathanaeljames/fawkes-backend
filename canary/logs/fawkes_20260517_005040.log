@@ -1,0 +1,200 @@
+00:50:40 [fawkes] INFO: DuckDB table 'speakers' is ready.
+00:50:40 [fawkes] INFO: DuckDB table 'pangrams' is ready.
+00:50:40 [fawkes] INFO: DuckDB table 'passages' is ready.
+00:50:40 [fawkes] INFO: Pre-loading Piper TTS model...
+00:50:41 [fawkes] INFO: Piper TTS model loaded successfully
+00:50:41 [fawkes] INFO: Pre-loading Coqui XTTS model...
+00:51:02 [fawkes] INFO: Loading XTTS speakers from DuckDB native arrays...
+00:51:02 [fawkes] INFO: Loaded 3 XTTS speakers from DuckDB native arrays.
+00:51:02 [fawkes] INFO: Coqui XTTS Model loaded on device: cuda
+00:51:02 [fawkes] INFO: Pre-loading NeMo VAD model...
+00:51:03 [fawkes] INFO: NeMo VAD model loaded successfully
+00:51:03 [fawkes] INFO: Pre-loading NVIDIA NeMo Streaming Conformer-Hybrid Large...
+00:51:12 [fawkes] INFO: NVIDIA NeMo Streaming Conformer-Hybrid Large loaded successfully
+00:51:12 [fawkes] INFO: Pre-loading Canary-Qwen-2.5b model...
+00:51:53 [fawkes] INFO: Canary-Qwen-2.5b model loaded successfully
+00:51:53 [fawkes] INFO: Loading ECAPA embeddings into memory...
+00:51:53 [fawkes] INFO: Loaded 3 ECAPA embeddings into memory.
+00:51:53 [fawkes] INFO: Pre-loading ECAPA-TDNN speaker processor...
+00:52:01 [fawkes] INFO: ECAPA-TDNN speaker processor loaded successfully
+00:52:01 [fawkes] INFO: [Rasa] Client initialized and connected
+00:52:01 [websockets.server] INFO: server listening on 0.0.0.0:9001
+00:52:01 [fawkes] INFO: Starting FastAPI server on http://0.0.0.0:9002
+00:52:01 [fawkes] INFO: Starting WebSocket server on ws://0.0.0.0:9001
+00:52:45 [websockets.server] INFO: connection open
+00:52:45 [fawkes] INFO: New client connected: e9913e7d-23b2-4e03-a4af-de1e33448a91
+00:52:45 [fawkes] INFO: [TTS Queue] Started processor for client e9913e7d-23b2-4e03-a4af-de1e33448a91
+00:52:53 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:52:54 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Alright'
+00:52:54 [fawkes] INFO: Canary-Qwen final transcription: 'Alright'
+00:52:55 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:52:56 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Good morning'
+00:52:56 [fawkes] INFO: Canary-Qwen final transcription: 'Good morning'
+00:52:58 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:52:58 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Okay'
+00:52:58 [fawkes] INFO: Canary-Qwen final transcription: 'Okay'
+00:52:58 [fawkes] WARNING: [Rasa] Failed to get response from Rasa
+00:53:00 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:01 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:04 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:53:04 [fawkes] INFO: [Canary-Qwen] Final transcription: 'What is your name'
+00:53:04 [fawkes] INFO: Canary-Qwen final transcription: 'What is your name'
+00:53:08 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:09 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:53:10 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Nathaniel Warren'
+00:53:10 [fawkes] INFO: Canary-Qwen final transcription: 'Nathaniel Warren'
+00:53:15 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:53:16 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Yes'
+00:53:16 [fawkes] INFO: Canary-Qwen final transcription: 'Yes'
+00:53:20 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:22 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:53:22 [fawkes] INFO: [Canary-Qwen] Final transcription: 'No'
+00:53:22 [fawkes] INFO: Canary-Qwen final transcription: 'No'
+00:53:26 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:27 [fawkes] INFO: [Speaker ID] Nathanael Warren(?)
+00:53:28 [fawkes] INFO: [Speaker ID] Nathanael Warren(?)
+00:53:29 [fawkes] INFO: [Speaker ID] Nathanael Warren(?)
+00:53:30 [fawkes] INFO: [Final Speaker ID] Nathanael Warren(?)
+00:53:31 [fawkes] INFO: [Canary-Qwen] Final transcription: 'N A T H A N A E L'
+00:53:31 [fawkes] INFO: Canary-Qwen final transcription: 'N A T H A N A E L'
+00:53:36 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:53:36 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Yes'
+00:53:36 [fawkes] INFO: Canary-Qwen final transcription: 'Yes'
+00:53:41 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:42 [fawkes] INFO: [Speaker ID] unknown speaker
+00:53:43 [fawkes] INFO: [Final Speaker ID] Nathanael Warren(?)
+00:53:44 [fawkes] INFO: [Canary-Qwen] Final transcription: 'W-A-R-R-E-N'
+00:53:44 [fawkes] INFO: Canary-Qwen final transcription: 'W-A-R-R-E-N'
+00:53:50 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:53:51 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Yes'
+00:53:51 [fawkes] INFO: Canary-Qwen final transcription: 'Yes'
+00:53:51 [fawkes] INFO: [Enrollment API] Exact match found: 'Nathanael Warren' (UID=2, score=1.00)
+00:54:02 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:54:03 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Yes you may'
+00:54:03 [fawkes] INFO: Canary-Qwen final transcription: 'Yes you may'
+00:54:03 [fawkes] INFO: [Enrollment] Starting pangram recording for Nathanael Warren, uid: 2
+00:54:03 [fawkes] INFO: [Enrollment] Recording started for e9913e7d-23b2-4e03-a4af-de1e33448a91
+00:54:03 [fawkes] INFO: [Enrollment] Pangram: The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again, just as young Arthur wanted.
+00:54:08 [fawkes] INFO: [Speaker ID] unknown speaker
+00:54:09 [fawkes] INFO: [Speaker ID] unknown speaker
+00:54:10 [fawkes] INFO: [Speaker ID] Nathanael Warren
+00:54:12 [fawkes] INFO: [Speaker ID] Nathanael Warren
+00:54:13 [fawkes] INFO: [Speaker ID] Nathanael Warren
+00:54:14 [fawkes] INFO: [Speaker ID] Nathanael Warren
+00:54:15 [fawkes] INFO: [Speaker ID] Nathanael Warren
+00:54:19 [fawkes] INFO: [ECAPA] Updating speaker imprint for UID 2 from audio buffer...
+00:54:19 [fawkes] INFO: [ECAPA] Successfully updated speaker Nathanael Warren (UID: 2) from buffer
+00:54:19 [fawkes] INFO: [Final Speaker ID] Nathanael Warren
+00:54:21 [fawkes] INFO: [Canary-Qwen] Final transcription: 'The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again just as young Arthur wanted'
+00:54:21 [fawkes] INFO: Canary-Qwen final transcription: 'The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again just as young Arthur wanted'
+00:54:21 [fawkes] INFO: [Enrollment] Processing utterance: 'The beige hue on the waters of the loch impressed all, including the French queen, before she heard that symphony again just as young Arthur wanted'
+00:54:21 [fawkes] INFO: [Enrollment] Coverage score: 100.0%
+00:54:21 [fawkes] INFO: [Enrollment] Success threshold reached: 100.0%
+00:54:21 [fawkes] INFO: [Enrollment] Saved: /root/fawkes/audio_samples/pangram2_e9913e7d_Warren_Nathanael_uid2.wav
+00:54:21 [fawkes] INFO: [ECAPA] Updating speaker imprint for UID 2 with /root/fawkes/audio_samples/pangram2_e9913e7d_Warren_Nathanael_uid2.wav...
+00:54:21 [fawkes] INFO: [ECAPA] Successfully updated speaker Nathanael Warren (UID: 2)
+00:54:21 [fawkes] INFO: Rebuilding ECAPA embedding matrix from database...
+00:54:21 [fawkes] INFO: Loading ECAPA embeddings into memory...
+00:54:21 [fawkes] INFO: Loaded 3 ECAPA embeddings into memory.
+00:54:21 [fawkes] INFO: [Enrollment API] Status updated for e9913e7d-23b2-4e03-a4af-de1e33448a91: success
+00:54:21 [fawkes] INFO: [Enrollment] Recording success
+00:54:27 [fawkes] INFO: [Speaker ID] unknown speaker
+00:54:29 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:54:29 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Yes please'
+00:54:29 [fawkes] INFO: Canary-Qwen final transcription: 'Yes please'
+00:54:33 [fawkes] INFO: [Speaker ID] unknown speaker
+00:54:34 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:54:34 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Neil Gaiman'
+00:54:34 [fawkes] INFO: Canary-Qwen final transcription: 'Neil Gaiman'
+00:54:34 [fawkes] INFO: [Enrollment API] Full name fuzzy match for 'Neil Gaiman': 'Neil Gaiman' (UID=3, confidence=1.00)
+00:54:36 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:54:36 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Tricky'
+00:54:36 [fawkes] INFO: Canary-Qwen final transcription: 'Tricky'
+00:54:36 [fawkes] INFO: [Passages] Match: 'Tricky' -> 'Fifty Shades of Grey' (23.08%)
+00:54:49 [fawkes] INFO: [Speaker ID] unknown speaker
+00:54:51 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:54:51 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Fifty shades of gray'
+00:54:51 [fawkes] INFO: Canary-Qwen final transcription: 'Fifty shades of gray'
+00:54:51 [fawkes] INFO: [Passages] Match: 'Fifty shades of gray' -> 'Fifty Shades of Grey' (95.00%)
+00:54:52 [fawkes] INFO: [Voice Clone] Starting voice clone for speaker 'Neil Gaiman' with quote length 145
+00:55:02 [fawkes] WARNING: [Rasa] Timeout after 10 seconds
+00:55:02 [fawkes] WARNING: [Rasa] Failed to get response from Rasa
+00:55:12 [fawkes] INFO: [Voice Clone] Client confirmed playback complete after 12.5s
+00:55:12 [fawkes] INFO: [Voice Clone] Completed successfully, notifying Rasa
+00:55:17 [fawkes] INFO: [Speaker ID] unknown speaker
+00:55:18 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:55:19 [fawkes] INFO: [Canary-Qwen] Final transcription: 'The lightning thief'
+00:55:19 [fawkes] INFO: Canary-Qwen final transcription: 'The lightning thief'
+00:55:19 [fawkes] INFO: [Passages] Match: 'The lightning thief' -> 'The Lightning Thief' (100.00%)
+00:55:19 [fawkes] INFO: [Voice Clone] Starting voice clone for speaker 'Neil Gaiman' with quote length 90
+00:55:28 [fawkes] INFO: [Voice Clone] Client confirmed playback complete after 5.6s
+00:55:28 [fawkes] INFO: [Voice Clone] Completed successfully, notifying Rasa
+00:55:29 [fawkes] WARNING: [Rasa] Timeout after 10 seconds
+00:55:29 [fawkes] WARNING: [Rasa] Failed to get response from Rasa
+00:55:35 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:55:35 [fawkes] INFO: [Canary-Qwen] Final transcription: 'No'
+00:55:35 [fawkes] INFO: Canary-Qwen final transcription: 'No'
+00:55:35 [fawkes] INFO: [Passages] Match: 'No' -> 'The Lightning Thief' (9.52%)
+00:55:46 [fawkes] INFO: [Speaker ID] unknown speaker
+00:55:47 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:55:48 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Abort voice cloning.'
+00:55:48 [fawkes] INFO: Canary-Qwen final transcription: 'Abort voice cloning.'
+00:55:48 [fawkes] INFO: [Passages] Match: 'Abort voice cloning.' -> 'The Lightning Thief' (41.03%)
+00:55:58 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:55:58 [fawkes] INFO: [Canary-Qwen] Final transcription: 'Okay'
+00:55:58 [fawkes] INFO: Canary-Qwen final transcription: 'Okay'
+00:55:58 [fawkes] WARNING: [Rasa] Failed to get response from Rasa
+00:56:06 [fawkes] INFO: [Speaker ID] unknown speaker
+00:56:07 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:56:07 [fawkes] INFO: [Canary-Qwen] Final transcription: 'What time is it'
+00:56:07 [fawkes] INFO: Canary-Qwen final transcription: 'What time is it'
+00:56:23 [fawkes] INFO: [Speaker ID] unknown speaker
+00:56:25 [fawkes] INFO: [Final Speaker ID] unknown speaker
+00:56:25 [fawkes] INFO: [Canary-Qwen] Final transcription: 'What are you thinking about'
+00:56:25 [fawkes] INFO: Canary-Qwen final transcription: 'What are you thinking about'
+00:56:51 [fawkes] INFO: Async Audio processing stopped
+00:56:51 [fawkes] INFO: [TTS Queue] Processor stopped for client e9913e7d-23b2-4e03-a4af-de1e33448a91
+00:56:51 [fawkes] INFO: Cleaning up resources...
+00:56:51 [fawkes] INFO: [Rasa] Client connection closed
+00:56:51 [fawkes] INFO: Cleaning up client e9913e7d-23b2-4e03-a4af-de1e33448a91
+00:56:51 [websockets.server] INFO: server closing
+00:56:51 [websockets.server] INFO: server closed
+00:56:51 [fawkes] INFO: [WebSocket] Server closed
+00:56:51 [fawkes] INFO: [Database] Connection closed
+00:56:51 [fawkes] INFO: Server shutting down gracefully...
+00:56:52 [asyncio] ERROR: Task exception was never retrieved
+future: <Task finished name='Task-1' coro=<main() done, defined at /usr/local/whisper/server03f.py:2644> exception=KeyboardInterrupt()>
+Traceback (most recent call last):
+  File "/usr/local/whisper/server03f.py", line 2746, in <module>
+    asyncio.run(main())
+  File "/usr/lib/python3.10/asyncio/runners.py", line 47, in run
+    _cancel_all_tasks(loop)
+  File "/usr/lib/python3.10/asyncio/runners.py", line 63, in _cancel_all_tasks
+    loop.run_until_complete(tasks.gather(*to_cancel, return_exceptions=True))
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 636, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 603, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 1909, in _run_once
+    handle._run()
+  File "/usr/lib/python3.10/asyncio/events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "/usr/local/whisper/server03f.py", line 2725, in main
+    await asyncio.gather(fastapi_task, websocket_server.wait_closed())
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 636, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 603, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 1909, in _run_once
+    handle._run()
+  File "/usr/lib/python3.10/asyncio/events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "/usr/local/lib/python3.10/dist-packages/uvicorn/server.py", line 70, in serve
+    with self.capture_signals():
+  File "/usr/lib/python3.10/contextlib.py", line 142, in __exit__
+    next(self.gen)
+  File "/usr/local/lib/python3.10/dist-packages/uvicorn/server.py", line 331, in capture_signals
+    signal.raise_signal(captured_signal)
+KeyboardInterrupt
