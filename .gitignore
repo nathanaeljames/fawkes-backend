@@ -1,7 +1,92 @@
-## Rasa
-/rasa-nlp/.rasa/
-/rasa-nlp/models/
+## Rasa (iteration 1)
+/legacy/iteration1/rasa-nlp/.rasa/
+/legacy/iteration1/rasa-nlp/models/
+/legacy/iteration1/rasa-nlp/.config/
+/legacy/iteration1/rasa-nlp/.keras/
+/legacy/iteration1/rasa-nlp/.cache/
 
 ## Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+## Editor and OS
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.swp
+
+## Shell histories
+.bash_history
+.zsh_history
+.python_history
+
+## Logs and traces (runtime output goes to a mounted volume, never the tree)
+*.log
+*.log.*
+logs/
+log/
+*.jsonl
+
+## Secrets and configuration with values (templates named *.env.example are fine)
+.env
+.env.*
+*.env
+!*.env.example
+!.env.example
+*credentials*
+!legacy/iteration1/rasa-nlp/credentials.yml
+*secret*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+id_ed25519*
+.netrc
+.npmrc
+.pypirc
+*service-account*.json
+*.tfstate
+*.tfstate.*
+*.tfvars
+.kube/
+
+## Databases and data directories (speaker voiceprints, Postgres data)
+*.duckdb
+*.duckdb.bak
+*.duckdb.wal
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+postgres-data/
+
+## Model weights (downloaded, never tracked). Small speaker latents (*.pt), *.npy, and sample audio are allowed.
+*.nemo
+*.onnx
+*.safetensors
+*.ckpt
+*.gguf
+
+## One-off scripts that name real people live outside the repo
+populate_speakers.py
+
+## Local-only Compose overrides (machine-specific mounts)
+docker-compose.override.yml
+
+## Scratch
+scratch/
+scratchpad/
+.scratch/
+tmp/
+.tmp/

@@ -68,4 +68,10 @@ COPY . .
 
 EXPOSE 9001
 
+# Machine-wide git policy is mounted from the host at /root/.git-hooks and /root/.gitignore_global;
+# the repository root is mounted at /workspace.
+RUN git config --global core.hooksPath /root/.git-hooks \
+    && git config --global core.excludesFile /root/.gitignore_global \
+    && git config --global --add safe.directory /workspace
+
 #CMD ["python3", "server.py"]

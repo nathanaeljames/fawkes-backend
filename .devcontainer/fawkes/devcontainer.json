@@ -1,0 +1,11 @@
+{
+	"name": "Fawkes: fawkes (Iteration 2 development)",
+	"dockerComposeFile": ["../../docker-compose.yml", "../../docker-compose.override.yml"],
+	"service": "fawkes",
+	"runServices": ["postgres", "fawkes"],
+	"workspaceFolder": "/workspace",
+	"forwardPorts": [
+		5432
+	],
+	"postCreateCommand": "pip install -e '.[dev]' && python -c \"import psycopg, pathlib; c = psycopg.connect(pathlib.Path('/run/secrets/pg_url').read_text().strip()); print('postgres ok:', c.execute('select version()').fetchone()[0][:24])\""
+}

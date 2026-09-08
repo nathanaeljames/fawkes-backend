@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fawkes"
+version = "0.2.0.dev0"
+description = "Self-hosted, voice-native, multi-user assistant with a memory that never forgets and always cites its sources."
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "phase0: Phase 0 exit test (permanent)",
+    "phase1: Phase 1 exit test (permanent)",
+    "integration: needs a live Postgres",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

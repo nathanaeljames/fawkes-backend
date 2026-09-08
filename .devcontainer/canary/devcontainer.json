@@ -1,0 +1,12 @@
+{
+	"name": "Fawkes: canary (Iteration 1 voice server)",
+	"dockerComposeFile": ["../../docker-compose.yml", "../../docker-compose.override.yml"],
+	"service": "canary",
+	"workspaceFolder": "/workspace",
+	"forwardPorts": [
+		9001,
+		9002,
+		5005
+	],
+	"postCreateCommand": "echo 'Waiting for Rasa to be ready...' && sleep 10 && curl -f http://rasa-nlp:5005/version || echo 'Rasa not ready yet'"
+}

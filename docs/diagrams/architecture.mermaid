@@ -1,0 +1,25 @@
+flowchart TD
+    Mic([Microphone / WebSocket clients]):::startEnd --> ASR[Streaming ASR + VAD<br/>FastConformer / Canary-Qwen / MarbleNet]:::handler
+    ASR --> ID[Speaker identity<br/>ECAPA-TDNN → user_id]:::handler
+    ID --> Router[Small-model router<br/>FSM event / freeform / ignore / escalate]:::decision
+    Router --> Build[Prompt builder<br/>Layers 0-3 + FSM state + time injection]:::handler
+    Build --> LLM[Qwen3.8-27B on vLLM<br/>structured output]:::action
+    LLM --> Val{Validator<br/>statechart law}:::decision
+    Val -->|legal| Apply[Apply transition<br/>persist turn]:::action
+    Val -->|illegal| Build
+    Apply --> TTS[TTS + stream manager<br/>XTTS / Piper]:::action
+    TTS --> Out([Spoken response]):::startEnd
+
+    Apply --> Mem[(MemoryStore<br/>Postgres + pgvector + FTS<br/>verbatim transcripts, bi-temporal facts)]:::server
+    Mem --> Build
+
+    Research[Research / coding pipeline<br/>agentic retrieval, document trees,<br/>OKF wiki, OpenCode surface]:::form <--> Mem
+    Research <--> Board[Shared blackboard<br/>notes-up, read-down, imperatives]:::form
+    Board <--> Build
+
+    classDef startEnd fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9,stroke-width:3px
+    classDef form fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd,stroke-width:2px
+    classDef action fill:#4a7c59,stroke:#6b9b7a,color:#e8f5e9,stroke-width:2px
+    classDef handler fill:#5c4a1a,stroke:#8b7520,color:#fff9c4,stroke-width:2px
+    classDef decision fill:#7c5a1a,stroke:#a8762b,color:#fff9c4,stroke-width:2px
+    classDef server fill:#696969,stroke:#808080,color:#f5f5f5,stroke-width:2px

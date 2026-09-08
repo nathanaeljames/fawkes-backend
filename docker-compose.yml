@@ -1,16 +1,69 @@
-version: "3.8" 
-
 services:
+
+  # ---------------------------------------------------------------------------
+  # Iteration 2 (Phase 0+): memory substrate and development container
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: fawkes-postgres
+    environment:
+      POSTGRES_DB: fawkes
+      POSTGRES_USER: fawkes
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets:
+      - pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data                       # Docker-managed named volume: outside the tree
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ../fawkes_private/backups:/backups                    # pg_dump target, never in git
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fawkes -d fawkes"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - fawkes-network
+    restart: unless-stopped
+
+  fawkes:
+    build:
+      context: .
+      dockerfile: infra/docker/fawkes.Dockerfile
+    container_name: fawkes
+    volumes:
+      - ".:/workspace"
+      - "../fawkes_private:/workspace-private"
+    working_dir: /workspace
+    environment:
+      DATABASE_URL_FILE: /run/secrets/pg_url
+      PYTHONDONTWRITEBYTECODE: "1"
+    secrets:
+      - pg_url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fawkes-network
+    command: ["tail", "-f", "/dev/null"]
+
+  # ---------------------------------------------------------------------------
+  # Iteration 1 (legacy/iteration1): voice server and Rasa dialogue layer.
+  # Kept running through Phase 1; retired in Phase 2.
+  # ---------------------------------------------------------------------------
   canary:
     build:
-      context: ./canary
+      context: ./legacy/iteration1/canary
       dockerfile: Dockerfile
     container_name: canary
     ports:
       - "9001:9001"
     volumes:
       - "${USERPROFILE}/fawkes:/root/fawkes"
-      - "./canary:/usr/local/whisper"
+      - "./legacy/iteration1/canary:/usr/local/whisper"         # server03f.py runs from here, unchanged
+      - ".:/workspace"                                          # whole repo visible to the editor
+      - "../fawkes_private:/workspace-private"                  # speaker database, enrollment script
     working_dir: /usr/local/whisper
     command: ["tail", "-f", "/dev/null"]
     deploy:
@@ -29,12 +82,11 @@ services:
 
   rasa-init:
     image: busybox:latest
-    # An absolutely exhausting hack to get rasa's training cache and directories to work in ramdisk on Windows host
-    # Shouldn't be necessary on a Linux host in the future
-    # sqlite's atomic i/o doesn't play well with Docker volumes bridging virtualization layers
+    # Rasa's training cache and directories run on a ramdisk on the Windows host:
+    # sqlite's atomic i/o does not play well with Docker volumes bridging virtualization layers.
     container_name: rasa-init
     volumes:
-      - "./rasa-nlp:/app"
+      - "./legacy/iteration1/rasa-nlp:/app"
     tmpfs:
       - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
       - /tmp:size=2g
@@ -55,9 +107,8 @@ services:
     ports:
       - "5005:5005"
     volumes:
-      - "./rasa-nlp:/app"
+      - "./legacy/iteration1/rasa-nlp:/app"
     tmpfs:
-      #- /app/.rasa:size=2g,noexec,nosuid,nodev
       - /app/.rasa:size=2g,uid=1001,gid=1001,mode=755
       - /tmp:size=2g
     working_dir: /app
@@ -73,24 +124,31 @@ services:
       rasa-actions:
         condition: service_started
     environment:
-      # Force Rasa to use in-memory SQLite for tracker store during development
       - RASA_TRACKER_STORE_TYPE=sql
       - RASA_TRACKER_STORE_URL=sqlite:///tmp/rasa_tracker.db
 
   rasa-actions:
-    #image: rasa/rasa-sdk:latest
     build:
-      context: ./rasa-actions
+      context: ./legacy/iteration1/rasa-actions
       dockerfile: Dockerfile
     container_name: rasa-actions
     volumes:
-      - "./rasa-actions/actions:/app/actions"
+      - "./legacy/iteration1/rasa-actions/actions:/app/actions"
     ports:
       - "5055:5055"
     networks:
       - fawkes-network
     restart: unless-stopped
     command: ["start", "--actions", "actions"]
+
+secrets:
+  pg_password:
+    file: ../fawkes_private/secrets/pg_password.txt
+  pg_url:
+    file: ../fawkes_private/secrets/pg_url.txt
+
+volumes:
+  pgdata:
 
 networks:
   fawkes-network:

@@ -84,7 +84,7 @@ CONFIG = {
     "nemo_vad_model_path": "/root/fawkes/models/marblenet_vad_multi/frame_vad_multilingual_marblenet_v2.0.nemo",
     "canary_qwen_model_path": "/root/fawkes/models/canary-qwen-2.5b/",
     "ecapa_tdnn_model_path": "/root/fawkes/models/ecapa_tdnn_embed/ecapa_tdnn.nemo",
-    "duckdb_path": "./speakers/database.duckdb",
+    "duckdb_path": "/workspace-private/speakers/database.duckdb",
 
     # --- ASR settings ---
     "nemo_encoder_step_length": 80,
