@@ -1,29 +1,31 @@
 # Fawkes Session Handoff
-A living document for resuming work in any new conversation window. Update at the end of any session that changes state. Companion documents: Wishlist_v2, Guiding_Principles, Systems_Inventory, Implementation_Plan, Toolbox, Architecture_Specification (v1.1), README_draft.
+A living document for resuming work in any new conversation window. Update at the end of any session that changes state. Companion documents: Wishlist_v2, Guiding_Principles, Systems_Inventory, Implementation_Plan, Toolbox, Architecture_Specification (v1.2), README_draft, diagram sources (`architecture_L4.mmd`, `_L7.mmd`, `_L10.mmd`).
 
-## Current state (as of 2026-09-19)
+## Current state (as of 2026-09-20)
 
-- **Iteration 1** (Rasa-based) complete; no conversation logging exists in iteration 1. Keeps running in parallel through Phase 1; retired in Phase 2.
-- **Iteration 2** (LLM + statechart) in final planning; **no code written yet**. Architecture Specification v1.1 is the document for independent multi-model review before Phase 0.
+- **Iteration 1** (Rasa-based) complete; no conversation logging exists. Runs in parallel through Phase 1; retired in Phase 2.
+- **Iteration 2** in final planning; **no code written yet**. Architecture Specification v1.2 and the three-level diagram set are the review artifacts for independent multi-model review (in progress with a second model).
 - Hardware: one RTX 3090; second RTX 3090 planned by end of year (one model per card by default).
-- Next action: independent review of the Architecture Specification, then **Phase 0 / Milestone Zero** — now including the silo layer in migration 001. Say "go."
+- Next action: finish the independent review, reconcile disputes here, then **Phase 0 / Milestone Zero** with silo Tier A in migration 001. Say "go."
 
 ## Decisions log (major, most recent first)
 
-- 2026-09-19: **Silo layer** adopted into migration 001 (silos table, non-null silo_id everywhere, composite project keys, single-silo tunnels, per-silo content hash, list partitioning with one default partition, forced RLS under a non-owner role, immutable silo context, identity outside silos with membership + default silo, export-and-re-ingest crossings, permanent leakage tests). Three mechanisms kept distinct: silos (hard), scopes/tunnels (soft), RLS (authorization). **Schema-first, analytics-later** principle recorded. **Response modality follows input modality** (voice in/voice out; text in/text out; background results return through the originating channel). Verdict vocabulary unified: voice {ignore | FSM event | escalate}; voice-slot powers {answer | note | start | queue | interrupt}; text {start | queue | interrupt | FSM command}. Illegal proposals return to their proposer with a hint, bounded, then dropped and traced; text-channel rejections never reach the voice slot. Imperatives go directly to the research command queue; only notes go to the blackboard. Browser/terminal ingestion adapters deferred to Phase 6+ (the motivating goal belongs to the KVM/HID track); file drops and coding transcripts stay in Phase 3. Capability-card process specified (nightly versioned rows per model/quant/config; router and bridge read them). Serving-recipe experiment scheduled in Phase 1 (stock vLLM vs tuned vLLM fork vs tuned llama.cpp fork); two-card default is one model per card, tensor parallelism gated on verified NVLink/x16/PSU and measured gain; drafters are per-target-model (no public DFlash2 for Gemma). Compression tooling deferred indefinitely. Architecture Specification promoted to a permanent project document. **Public-documents hygiene** rule adopted: no secrets, hostnames, employer names, or third-party names; deployment defaults moved out of docs; secret scanning on push; the silo design note stays out of the public repo. Master diagram v3: subgraphs per pipeline, unified labels, text-response endpoint, voice-slot → apply → TTS path, re-prompt node, single Postgres cylinder plus file-based derived cylinder, status-board edge solid, escalate label, README embeds an exported image with source in docs/diagrams.
-- 2026-09-15: GTX 1660 Super removed; Phase 1 on one 3090 with split-mode fallback; input routing doctrine fixed; external API bridge (Phase 3) with OCR-first payloads; token/cost accounting in traces; panel mode and code-graph MCP added; back-catalog = Claude/ChatGPT exports only (Phase 5); DuckDB retires after Phase 2; UTC timestamptz with per-session time zones; screen-capture conversation harvested; diagram color semantics assigned.
-- 2026-09-06: Clean-slate ruling; operational DuckDB migration (Phase 2); Canary-Qwen-as-router scratched; rubber-duck v1 on single served Qwen (Phase 3), Gemma Phase 4, heads-down mode; tools bound to slots; time injection; CI/testing strategy; SSM ASR swap separated from Cocktail Party; arbiter protocol.
-- 2026-08-31: Qwen3.8-27B primary; vLLM now; small-model router fronts the FSM; Postgres SoR from v1; OpenCode adopted (Phase 3); wiki OKF-conformant; Claude integration = API-key escalation + MemoryStore-MCP (Phase 3); SimonScrapes patterns harvested.
+- 2026-09-20: **Silo layer tiered.** Tier A in migration 001 (silo key on every row and in every unique constraint and index prefix, composite project references, single-silo tunnels, per-silo hash, silo context, leakage tests — about an hour, no runtime cost). Tier B deferred to the first real second silo (partitioning, silo-keyed forced RLS, per-silo roles, instance pin — real friction, no value at one silo); user-keyed RLS still lands in Phase 5. Nothing retracted. **Capability-card measurement** specified: deterministic slice scoring (labeled verdicts, seeded recall, fixed-corpus citations, failing-test repositories for patches, schema validation, loop/stop/latency), fixed seed set, runs keyed by a config fingerprint and skipped when unchanged, several sampling seeds, usage corrections become labeled cases, remote paid tiers carded per release with a monthly capped spot-check; panel mode is a runtime feature, not the eval. **Code graphs:** adopt both — code-review-graph for blast radius (priority if only one), graphify for the multimodal bird's-eye view. **Voice-slot FSM proposals** clarified as a context-richer proposer plus safety net; router remains primary. Labels restored: blackboard "notes-up, read-down, imperatives" and correction edge "research results / self-correction, voice-initiated tasks." **Diagram complexity levels** defined (1-10); v3 rated level 7; delivered L10 (exhaustive), L7 (engineering), L4 (README).
+- 2026-09-19: Silo layer adopted; schema-first principle; modality rule; verdict vocabulary unified; illegal proposals return to proposer bounded; adapters deferred to 6+; capability cards introduced; serving-recipe experiment; one model per card default; compression deferred indefinitely; specification promoted to permanent; public-documents hygiene rule; diagram v3.
+- 2026-09-15: GTX 1660 Super removed; routing doctrine fixed; external API bridge; token/cost accounting; panel mode and code-graph MCP added; back-catalog = Claude/ChatGPT only; DuckDB retires after Phase 2; UTC timestamptz with per-session time zones; screen-capture conversation harvested; diagram color semantics.
+- 2026-09-06: Clean-slate ruling; DuckDB migration (Phase 2); Canary-as-router scratched; rubber-duck v1 on single Qwen (Phase 3), Gemma Phase 4, heads-down mode; tools bound to slots; time injection; CI/testing strategy; SSM ASR separated from Cocktail Party; arbiter protocol.
+- 2026-08-31: Qwen3.8-27B primary; vLLM now; small-model router fronts the FSM; Postgres SoR; OpenCode adopted; wiki OKF-conformant; Claude integration = API-key escalation + MemoryStore-MCP.
 - Earlier: two-pipeline latency split is structural; verbatim-first; bi-temporal facts; ontology v1 before data; eval harness in Phase 1; tunnels lifecycle; deferred risk-based voice auth; adopt-at-edges/build-the-core; monorepo; Adi Insights discredited; Harness-1 supersedes Context-1.
 
 ## Open questions (parked, mostly measurables)
 
-- Single-card Phase 1 co-residency in practice; which serving recipe wins per role.
-- Identity-outside-silos placement and project resolution from voice (settle before the enrollment port).
-- Gemma 4 vs tuned Qwen for voice register; decorrelated-judgment value in panel mode.
-- Routing thresholds for the external API bridge (calibration of the confidence field against capability cards).
-- Wiki vs Cog-RAG; hand-rolled loop vs deepagents; Harness-1; code-graph MCP vs grep-only; tensor-parallel vs one-model-per-card.
-- OpenCode vs DeepSeek Harness maturity at Phase-3 start; GLM-class coding model for heads-down mode.
+- Single-card Phase 1 co-residency; which serving recipe wins per role.
+- Identity-outside-silos and project resolution from voice (settle before the enrollment port).
+- Exact feature boundary of code-review-graph vs graphify at Phase 3 (both move fast).
+- Gemma 4 vs tuned Qwen; decorrelated-judgment value in panel mode.
+- Escalation thresholds calibrated from capability cards.
+- Wiki vs Cog-RAG; hand-rolled loop vs deepagents; Harness-1; code-graph vs grep-only; tensor-parallel vs one-model-per-card.
+- OpenCode vs DeepSeek Harness maturity at Phase-3 start; GLM-class coding model.
 - When bi-temporal SQL → Graphiti; when the SSM ASR swap (~3.5).
 
 ## Standing rules (recorded in assistant memory as well)
@@ -32,8 +34,8 @@ A living document for resuming work in any new conversation window. Update at th
 - Expand uncommon acronyms on first use.
 - Multi-user support at every stage; never regresses. Silo isolation never regresses.
 - Any input meriting a change to project files returns the full revised file(s) in the same turn, with an explanation of exactly what was edited and why.
-- Project documents are publishable as written: no secrets, hostnames, employer names, or third-party personal names.
-- Patch-style code edits with surrounding-context anchors; no unsolicited refactors; no emoji; Mermaid house colorway with the semantics recorded in the toolbox.
+- Project documents are publishable as written.
+- Patch-style code edits with surrounding-context anchors; no unsolicited refactors; no emoji; Mermaid house colorway with the semantics and complexity levels recorded in the toolbox.
 
 ## How to resume a session
 
