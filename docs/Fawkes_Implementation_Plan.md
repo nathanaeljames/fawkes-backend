@@ -20,7 +20,7 @@ Goal: the new brain exists; the old Rasa functionality is reachable through it i
 - vLLM serving for the 27B; llama.cpp serving the 4B on the same card; prompt prefix ordered for cache stability. Serving-recipe experiment: stock vLLM vs the tuned vLLM fork vs the tuned llama.cpp fork, scored by the eval harness; winner recorded in the toolbox with data.
 - Ontology v1 (`ontology.md` + enum tables + constraints), evolved only via versioned migrations.
 - `ingest()` v1 with content hashing, provenance, silo/project stamps, and fan-out handler registry; turns, traces, and model-call cost rows all enter through it.
-- Eval harness v0: ~30 seed cases sliced by task family with deterministic scoring (labeled routing verdicts, seeded recall facts with expected citations, fixed-corpus multi-hop citation ids, small failing-test repositories for coding patches, schema validation, loop/stop/latency observation); runs on fingerprint change in idle windows plus weekly; first capability cards written to `capability_cards`.
+- Eval harness v0: ~30 seed cases sliced by task family with deterministic scoring (labeled routing verdicts, seeded recall facts with expected citations, fixed-corpus multi-hop citation ids, schema validation, loop/stop/latency observation); the coding-patch slice arrives in Phase 3 with the coding surface; nightly smoke subset plus full runs on fingerprint change and weekly; first capability cards written to `capability_cards`; `feedback_events` table created (schema first) so corrections, re-asks, and thumbs can be captured as soon as a channel produces them.
 - CI pipeline (GitHub Actions): unit tests for the deterministic core (test-first), integration tests against Postgres, mocked-LLM FSM lifecycle walkthroughs via a shared `FakeLLM` fixture, silo leakage tests, secret scanning on every push; Phase 0 and Phase 1 exit tests as permanent pytest markers.
 - Observability schema: one JSON trace per turn/call including tokens in/out/cached, model, task id, silo, and (for external calls) cost; backup cron for Postgres.
 Exit: text-mode conversation through the statechart passes the eval set's FSM and recall slices; every turn produces a trace record; a first capability card exists for each served model; CI green.
@@ -46,6 +46,7 @@ Goal: Fawkes reads, researches, codes, talks to the outside world, and the voice
 - Rubber-duck interplay v1 on the single served Qwen: blackboard (notes-up), imperative channel direct to the research command queue (start/queue/interrupt), read-down status board + deep transcript access, arbiter machinery with out-of-band cancel; research model resteers itself.
 - Consolidation/compaction jobs + scheduler (idle-window arbitration).
 - OpenCode integrated as coding surface; its transcripts ingested.
+- Coding-patch eval slice: 10-15 hand-authored micro-repositories (5-30 files each, a task statement, failing tests) drawn from our own past bugs, stored under `tests/eval/repos/`, optionally supplemented by a small public subset (HumanEval+ or Aider polyglot); the harness copies each to a temp directory, runs the coding loop, applies the patch, runs the suite; weekly cadence, and included in full card runs.
 - MCP server over MemoryStore (scoped auth by silo, user, project; audit log).
 - External API bridge: Claude escalation tool with local-first routing policy, tier selection from capability cards, OCR-first text/JSON/Markdown payloads, budget gate, per-call cost accounting, silo-stamped audit log; remote tiers scored once per model release and spot-checked monthly on a capped sample.
 - Salience weights v1; contradiction detector v1 (log-level); per-task token/cost rollups and expensive-task flags.
@@ -83,10 +84,19 @@ Exit: a project created by voice is visible and editable on the web by an authen
 ## Separate tracks (not scheduled here)
 - Cocktail Party speaker separation (own repository); KVM/HID computer control (own repository, own milestone zero, begins no earlier than Fawkes Phase 3).
 
-## Testing strategy (all phases)
-- Per commit (GitHub Actions, no GPU): unit tests for the deterministic core, integration tests against Postgres, functional FSM lifecycle walkthroughs against the shared `FakeLLM` fixture, schema contract tests, silo leakage tests, arbiter protocol tests, secret scanning.
-- On fingerprint change and weekly (workstation, GPU): the eval harness — deterministic slice scoring, several sampling seeds, capability cards; gates phase exits.
-- Every phase exit test is a permanent pytest marker; later phases may not break earlier exits.
+## Testing and evaluation cadence (all phases)
+
+| Cadence | Where | What runs | Purpose |
+|---|---|---|---|
+| Per commit | GitHub Actions, no GPU, seconds | Unit tests for the deterministic core; integration tests against Postgres; FSM lifecycle walkthroughs against the shared `FakeLLM` fixture; schema contract tests; silo leakage tests; arbiter protocol tests; secret scanning | Regression armor; a phase exit test never leaves this suite |
+| Nightly | Workstation, GPU, minutes | Smoke eval: a fixed ~10-case subset (routing verdicts, seeded recall, structured-output validity) against the currently served local models, plus latency timings; results appended to the eval log, no new card unless the fingerprint changed | Catch drift from prompt, harness, or config edits within a day |
+| On fingerprint change (as needed) | Workstation, GPU, tens of minutes | Full local capability-card run: every applicable slice, several sampling seeds → new card version | Re-measure whenever model, quant, serving config, prompt version, or index contents change |
+| Weekly | Workstation, GPU | Full card run even without a fingerprint change; the coding-patch suite (once it exists, Phase 3) runs here, not nightly | Catch environmental drift (drivers, libraries, index growth) |
+| Per remote model release, plus a monthly capped spot-check | Anthropic API, budgeted | Remote-tier cards on the research-tier slices only (multi-hop, complex reasoning, coding patch if remote coding escalation is enabled) — never routing or voice-recall slices, which no remote model ever serves | Keep tier selection honest at bounded cost |
+| Opportunistic | Whenever panel mode runs | Per-model tokens, loops, compute time, and judge rubric grades on the same real task, written to `panel_results` and summarized onto cards as field observations, labeled as uncontrolled | Head-to-head evidence on real tasks that the seed set cannot produce |
+
+- The general eval harness (all local slices, all cadences above) and the card-stamping routine (the subset that produces a versioned card row) are the same code; a card is simply the harness output frozen at a fingerprint.
+- Feedback capture is schema-first: a `feedback_events` table exists from Phase 1 (turn_id, task_id, kind: thumbs_up / thumbs_down / explicit_correction / re_ask / confirm / abandon, source channel, payload, silo). Phase 2 fills it from voice via the router (a correction class: "no, I meant…", re-asks of the same intent within a window, verbal thumbs) and the promotion hook; Phase 5 adds thumbs up/down in the web interface. Every feedback event links a turn to a task, so exchanges-before-answer is derivable later from transcripts alone.
 - Test-first for the deterministic core; prompts iterate against the eval harness instead.
 
 ## Standing constraints (all phases)
