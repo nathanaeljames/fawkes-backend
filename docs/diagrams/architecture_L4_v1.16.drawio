@@ -1,0 +1,477 @@
+<mxfile host="app.diagrams.net" agent="Fawkes diagram editor">
+  <diagram id="fawkes-overview-mark14" name="How Fawkes fits together — Mark 14">
+    <mxGraphModel dx="4713" dy="2637" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2020" pageHeight="2680" background="#ffffff" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="voice_lane" fawkesRole="responsibility boundary, not a deployment" parent="1" style="rounded=0;html=0;fillColor=#f8fafc;strokeColor=#e2e8f0;strokeWidth=1;container=1;collapsible=0;recursiveResize=0;" value="" vertex="1">
+          <mxGeometry height="2325" width="440" x="145" y="165" as="geometry" />
+        </mxCell>
+        <mxCell id="voice_context" edge="1" parent="voice_lane" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" value="prepared context">
+          <mxGeometry relative="1" x="-0.0667" y="100" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points" />
+            <mxPoint x="235" y="1635" as="sourcePoint" />
+            <mxPoint x="235" y="1785" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_tools" edge="1" parent="voice_lane" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.25;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" value="tool / event&#xa;requests">
+          <mxGeometry relative="1" x="0.0667" y="90" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points" />
+            <mxPoint x="195" y="1785" as="sourcePoint" />
+            <mxPoint x="195" y="1635" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="shared_lane" fawkesRole="responsibility boundary, not a deployment" parent="1" style="rounded=0;html=0;fillColor=#f8fafc;strokeColor=#e2e8f0;strokeWidth=1;container=1;collapsible=0;recursiveResize=0;" value="" vertex="1">
+          <mxGeometry height="1985" width="480" x="805" y="165" as="geometry" />
+        </mxCell>
+        <mxCell id="research_lane" fawkesRole="responsibility boundary, not a deployment" parent="1" style="rounded=0;html=0;fillColor=#f8fafc;strokeColor=#e2e8f0;strokeWidth=1;container=1;collapsible=0;recursiveResize=0;" value="" vertex="1">
+          <mxGeometry height="2325" width="440" x="1505" y="165" as="geometry" />
+        </mxCell>
+        <mxCell id="research_context" edge="1" parent="research_lane" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" value="prepared context">
+          <mxGeometry relative="1" x="-0.0667" y="-90" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points" />
+            <mxPoint x="205" y="1635" as="sourcePoint" />
+            <mxPoint x="205" y="1785" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="research_tools" edge="1" parent="research_lane" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" value="tool / API&#xa;requests">
+          <mxGeometry relative="1" x="-0.0667" y="-75" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points" />
+            <mxPoint x="245" y="1785" as="sourcePoint" />
+            <mxPoint x="245" y="1635" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a" edge="1" parent="1" source="voicein" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="speech" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="b" edge="1" parent="1" source="speech" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="router" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="g" edge="1" parent="1" source="textin" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="arbiter" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_verdict" edge="1" parent="1" source="router" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="voice_route" value="verdict">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="47" y="-0.5" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="text_verdict" edge="1" parent="1" source="arbiter" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="text_route" value="verdict">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="47" y="-0.5" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_fsm" edge="1" parent="1" source="voice_route" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.6666666666666666;entryDx=0;entryDy=0;entryPerimeter=0;" target="controller" value="FSM event + slots">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-90" y="78.5" as="offset" />
+            <Array as="points">
+              <mxPoint x="665" y="770" />
+              <mxPoint x="665" y="605" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="text_fsm" edge="1" parent="1" source="text_route" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.6666666666666666;entryDx=0;entryDy=0;entryPerimeter=0;" target="controller" value="FSM command">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="80" y="78.5" as="offset" />
+            <Array as="points">
+              <mxPoint x="1425" y="770" />
+              <mxPoint x="1425" y="605" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_hint" edge="1" parent="1" source="controller" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.2222222222222222;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.2222222222222222;entryDx=0;entryDy=0;entryPerimeter=0;" target="router" value="illegal · hint">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="10" y="-26" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="text_hint" edge="1" parent="1" source="controller" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.2222222222222222;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.2222222222222222;entryDx=0;entryDy=0;entryPerimeter=0;" target="arbiter" value="illegal · hint">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-10" y="-26" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="state_write" edge="1" parent="1" source="apply" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="ingest" value="applied state + audit">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="124" y="-1" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_confirm" edge="1" parent="1" source="apply" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" target="speechout" value="reply after state applied">
+          <mxGeometry relative="1" x="-0.7347" y="-25" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="125" y="945" />
+              <mxPoint x="125" y="2444" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="text_confirm" edge="1" parent="1" source="apply" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" target="textout" value="reply after state applied">
+          <mxGeometry relative="1" x="-0.7561" y="25" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="2025" y="945" />
+              <mxPoint x="2025" y="2444" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ignore_exit" edge="1" parent="1" source="voice_route" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" value="log as noise">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-26" as="offset" />
+            <Array as="points" />
+            <mxPoint x="73" y="770" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_escalate" edge="1" parent="1" source="voice_route" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="voice_runtime" value="escalate">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="52" y="335" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="text_tasks" edge="1" parent="1" source="text_route" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;" value="start / queue / interrupt">
+          <mxGeometry relative="1" x="-0.4761" y="20" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="1725" y="1020" />
+              <mxPoint x="1925" y="1020" />
+              <mxPoint x="1930" y="1620" />
+              <mxPoint x="1840" y="1620" />
+            </Array>
+            <mxPoint x="1840" y="1648.05" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_write" edge="1" parent="1" source="voice_lane" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.4043010752688172;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" target="ingest" value="runtime writes">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-27" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="research_write" edge="1" parent="1" source="research_lane" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.4043010752688172;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" target="ingest" value="runtime writes">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="-27" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="commit" edge="1" parent="1" source="ingest" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="memory" value="atomic commit">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="85" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fanout" edge="1" parent="1" source="memory" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="derived" value="committed derived jobs">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="122" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="memory_voice" edge="1" parent="1" source="memory" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.3333333333333333;entryDx=0;entryDy=0;entryPerimeter=0;" target="voice_runtime" value="scoped memory reads">
+          <mxGeometry relative="1" x="-0.5407" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="715" y="1315" />
+              <mxPoint x="715" y="1700" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="memory_research" edge="1" parent="1" source="memory" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.3333333333333333;entryDx=0;entryDy=0;entryPerimeter=0;" target="research_runtime" value="scoped memory reads">
+          <mxGeometry relative="1" x="-0.4815" y="-5" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="1395" y="1315" />
+              <mxPoint x="1395" y="1700" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="derived_voice" edge="1" parent="1" source="derived" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.6;entryDx=0;entryDy=0;entryPerimeter=0;" target="voice_runtime" value="fast derived reads">
+          <mxGeometry relative="1" x="-0.2727" y="55" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="775" y="1510" />
+              <mxPoint x="775" y="1740" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="derived_research" edge="1" parent="1" source="derived" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.6;entryDx=0;entryDy=0;entryPerimeter=0;" target="research_runtime" value="derived reads">
+          <mxGeometry relative="1" x="-0.2364" y="-25" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="1335" y="1510" />
+              <mxPoint x="1335" y="1740" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voice_proposal" edge="1" parent="1" source="voice_runtime" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.13333333333333333;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.8888888888888888;entryDx=0;entryDy=0;entryPerimeter=0;startArrow=block;startFill=1;" target="controller" value="FSM proposal / illegal hint">
+          <mxGeometry relative="1" x="0.4505" y="5" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="685" y="1670" />
+              <mxPoint x="685" y="625" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="notes" edge="1" parent="1" source="voice" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.20689655172413793;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.20689655172413793;entryDx=0;entryDy=0;entryPerimeter=0;" target="board" value="publish notes">
+          <mxGeometry relative="1" x="0.2813" y="30" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="read_status" edge="1" parent="1" source="board" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.4827586206896552;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.8;entryDx=0;entryDy=0;entryPerimeter=0;" target="voice_runtime" value="read status">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="102" y="70" as="offset" />
+            <Array as="points">
+              <mxPoint x="625" y="2020" />
+              <mxPoint x="625" y="1770" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="read_notes" edge="1" parent="1" source="board" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.20689655172413793;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.8;entryDx=0;entryDy=0;entryPerimeter=0;" target="research_runtime" value="read notes">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-120" y="-20" as="offset" />
+            <Array as="points">
+              <mxPoint x="1485" y="1980" />
+              <mxPoint x="1485" y="1770" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="publish_status" edge="1" parent="1" source="research" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.4827586206896552;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.4827586206896552;entryDx=0;entryDy=0;entryPerimeter=0;" target="board" value="publish status">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-2" y="25" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="commands" edge="1" parent="1" source="voice" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.8888888888888888;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=1.0;entryY=0.7333333333333333;entryDx=0;entryDy=0;entryPerimeter=0;" target="research_runtime" value="start / queue / interrupt — research command queue">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-397.5" y="-25" as="offset" />
+            <Array as="points">
+              <mxPoint x="505" y="2190" />
+              <mxPoint x="2005" y="2190" />
+              <mxPoint x="2005" y="1760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="corrections" edge="1" parent="1" source="research" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.1388888888888889;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.0;entryY=0.7333333333333333;entryDx=0;entryDy=0;entryPerimeter=0;" target="voice_runtime" value="research results / self-correction — voice-initiated tasks">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="372.5" y="-25" as="offset" />
+            <Array as="points">
+              <mxPoint x="1595" y="2270" />
+              <mxPoint x="145" y="2270" />
+              <mxPoint x="145" y="1760" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="spoken" edge="1" parent="1" source="voice" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.3888888888888889;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.3888888888888889;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="speechout" value="response_text">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="77" y="98.5" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="text_reply" edge="1" parent="1" source="research" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.6388888888888888;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.6388888888888888;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="textout" value="text output">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="58" y="98.5" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cloud_request" edge="1" parent="1" source="research_runtime" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=0.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=1.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="cloud_gate" value="escalation request">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="88" y="-20" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="cloud_no" edge="1" parent="1" source="cloud_gate" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.1111111111111111;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="research_runtime" value="No · continue locally">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint y="105" as="offset" />
+            <Array as="points">
+              <mxPoint x="1505" y="1230" />
+              <mxPoint x="1505" y="1610" />
+              <mxPoint x="1585" y="1610" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="remote_payload" edge="1" parent="1" source="cloud_gate" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" value="Yes · to Claude">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-2" y="-27" as="offset" />
+            <Array as="points" />
+            <mxPoint x="2110" y="1230" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="remote_result" edge="1" parent="1" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" target="research_runtime" value="from Claude">
+          <mxGeometry relative="1" x="-0.1578" as="geometry">
+            <mxPoint x="24" y="-25" as="offset" />
+            <Array as="points">
+              <mxPoint x="1999.5" y="1687.5" />
+            </Array>
+            <mxPoint x="2110" y="1687.5" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="validate" edge="1" parent="1" source="controller" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="validator" value="check proposal">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="100" y="-0.5" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legal" edge="1" parent="1" source="validator" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=0.5;exitY=1.0;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="apply" value="legal">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="40" as="offset" />
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="illegal" edge="1" parent="1" source="validator" style="edgeStyle=none;html=0;rounded=0;endArrow=block;endFill=1;strokeColor=#475569;strokeWidth=2.3;jumpStyle=arc;jumpSize=8;fontColor=#475569;fontSize=18;labelBackgroundColor=#ffffff;spacing=4;exitX=1.0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.8888888888888888;entryY=1.0;entryDx=0;entryDy=0;entryPerimeter=0;" target="controller" value="illegal · retry ≤ 2">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="58" y="17.5" as="offset" />
+            <Array as="points">
+              <mxPoint x="1265" y="770" />
+              <mxPoint x="1265" y="660" />
+              <mxPoint x="1185" y="660" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="voicein" fawkesClass="startEnd" parent="1" sourceRefs="" style="rounded=1;arcSize=66;absoluteArcSize=1;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#2d5016;strokeColor=#4a7c1f;strokeWidth=3;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Voice clients&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Microphones · phones · satellites&lt;/div&gt;" vertex="1">
+          <mxGeometry height="66" width="360" x="185" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="textin" fawkesClass="startEnd" parent="1" sourceRefs="" style="rounded=1;arcSize=66;absoluteArcSize=1;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#2d5016;strokeColor=#4a7c1f;strokeWidth=3;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Text clients&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Web · mobile · coding clients&lt;/div&gt;" vertex="1">
+          <mxGeometry height="66" width="360" x="1545" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="speech" fawkesClass="form" parent="1" sourceRefs="C-01 C-02 C-03 C-04 C-34" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#1a3d5c;strokeColor=#2e5c8b;strokeWidth=2;fontColor=#e3f2fd;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Speech + speaker identity&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;ASR · VAD · speaker identification&lt;/div&gt;" vertex="1">
+          <mxGeometry height="115" width="360" x="185" y="375" as="geometry" />
+        </mxCell>
+        <mxCell id="router" fawkesClass="action" parent="1" sourceRefs="C-05" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#4a7c59;strokeColor=#6b9b7a;strokeWidth=2;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Voice router&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Qwen3-4B-Instruct&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="360" x="185" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="arbiter" fawkesClass="action" parent="1" sourceRefs="C-05" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#4a7c59;strokeColor=#6b9b7a;strokeWidth=2;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Text arbiter&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Same Qwen3-4B-Instruct model&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="360" x="1545" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="voice_route" fawkesClass="decision" parent="1" sourceRefs="C-05" style="shape=rhombus;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#7c5a1a;strokeColor=#a8762b;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Voice route?&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Dispatch model verdict&lt;/div&gt;" vertex="1">
+          <mxGeometry height="160" width="280" x="225" y="690" as="geometry" />
+        </mxCell>
+        <mxCell id="text_route" fawkesClass="decision" parent="1" sourceRefs="C-05" style="shape=rhombus;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#7c5a1a;strokeColor=#a8762b;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Text action?&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Dispatch model verdict&lt;/div&gt;" vertex="1">
+          <mxGeometry height="160" width="280" x="1585" y="690" as="geometry" />
+        </mxCell>
+        <mxCell id="validator" fawkesClass="decision" parent="1" sourceRefs="C-06 I-02; decision has legal and illegal exits only" style="shape=rhombus;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#7c5a1a;strokeColor=#a8762b;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Transition / slots&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;legal?&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Statechart law&lt;/div&gt;" vertex="1">
+          <mxGeometry height="160" width="320" x="885" y="690" as="geometry" />
+        </mxCell>
+        <mxCell id="controller" fawkesClass="handler" parent="1" sourceRefs="C-06 P-02; three-level HFSM reference: supplied Mark 12" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#5c4a1a;strokeColor=#8b7520;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;HFSM controller&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Registry · current state / slots&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Bounded retries · hints to proposer&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="360" x="865" y="545" as="geometry" />
+        </mxCell>
+        <mxCell id="ingest" fawkesClass="handler" parent="1" sourceRefs="C-12" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#5c4a1a;strokeColor=#8b7520;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;ingest() — single write path&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Typed events · scope · provenance&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Idempotency · durable acknowledgement&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="400" x="845" y="1050" as="geometry" />
+        </mxCell>
+        <mxCell id="memory" fawkesClass="server" parent="1" sourceRefs="C-10 C-12" style="shape=cylinder3;size=20;boundedLbl=1;backgroundOutline=1;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#696969;strokeColor=#808080;strokeWidth=2;fontColor=#f5f5f5;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;MemoryStore — Postgres&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Authoritative turns · facts · tasks · state&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Vectors · full-text · document nodes&lt;/div&gt;" vertex="1">
+          <mxGeometry height="130" width="420" x="835" y="1250" as="geometry" />
+        </mxCell>
+        <mxCell id="derived" fawkesClass="server" parent="1" sourceRefs="C-27" style="shape=cylinder3;size=20;boundedLbl=1;backgroundOutline=1;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#696969;strokeColor=#808080;strokeWidth=2;fontColor=#f5f5f5;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Derived file store&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Wiki bundles · compiled artifacts&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Rebuildable from Postgres&lt;/div&gt;" vertex="1">
+          <mxGeometry height="120" width="360" x="865" y="1450" as="geometry" />
+        </mxCell>
+        <mxCell id="voice_runtime" fawkesClass="handler" parent="1" sourceRefs="C-07 C-09 C-16 P-05 P-07; logical L4 model-input boundary" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#5c4a1a;strokeColor=#8b7520;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Voice runtime / context&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Prompt builder · fast tools&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Results · corrections · status&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Prepare every voice-slot model call&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="360" x="185" y="1650" as="geometry" />
+        </mxCell>
+        <mxCell id="research_runtime" fawkesClass="handler" parent="1" sourceRefs="C-09 C-16 C-18 P-04 P-06; logical L4 model-input boundary" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#5c4a1a;strokeColor=#8b7520;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Research runtime / context&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Command queue · interrupt handling&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Prompt builder · tools · API results&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Prepare every research model call&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="360" x="1545" y="1650" as="geometry" />
+        </mxCell>
+        <mxCell id="voice" fawkesClass="action" parent="1" sourceRefs="S-02" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#4a7c59;strokeColor=#6b9b7a;strokeWidth=2;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Voice-slot LLM&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Qwen3.8-27B now · Gemma 4 later&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Fast interaction · workflow proposals&lt;/div&gt;" vertex="1">
+          <mxGeometry height="145" width="360" x="185" y="1950" as="geometry" />
+        </mxCell>
+        <mxCell id="research" fawkesClass="action" parent="1" sourceRefs="S-03 C-18" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#4a7c59;strokeColor=#6b9b7a;strokeWidth=2;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Research / coding LLM&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Qwen3.8-27B · vLLM · thinking on&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Plan · reason · request tools&lt;/div&gt;" vertex="1">
+          <mxGeometry height="145" width="360" x="1545" y="1950" as="geometry" />
+        </mxCell>
+        <mxCell id="board" fawkesClass="form" parent="1" sourceRefs="C-23" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#1a3d5c;strokeColor=#2e5c8b;strokeWidth=2;fontColor=#e3f2fd;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Shared blackboard + status&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Notes-up → research&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Status / read-down → voice&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Task-scoped MemoryStore views&lt;/div&gt;" vertex="1">
+          <mxGeometry height="145" width="360" x="865" y="1950" as="geometry" />
+        </mxCell>
+        <mxCell id="cloud_gate" fawkesClass="decision" parent="1" sourceRefs="C-22 P-19; bridge execution and accounting implicit" style="shape=rhombus;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#7c5a1a;strokeColor=#a8762b;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Cloud escalation?&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Trigger + scope&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Policy + budget?&lt;/div&gt;" vertex="1">
+          <mxGeometry height="200" width="320" x="1565" y="1130" as="geometry" />
+        </mxCell>
+        <mxCell id="speechout" fawkesClass="startEnd" parent="1" sourceRefs="" style="rounded=1;arcSize=88;absoluteArcSize=1;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#2d5016;strokeColor=#4a7c1f;strokeWidth=3;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Spoken response&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;XTTS / Piper → voice client speaker&lt;/div&gt;" vertex="1">
+          <mxGeometry height="88" width="360" x="185" y="2400" as="geometry" />
+        </mxCell>
+        <mxCell id="textout" fawkesClass="startEnd" parent="1" sourceRefs="" style="rounded=1;arcSize=88;absoluteArcSize=1;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#2d5016;strokeColor=#4a7c1f;strokeWidth=3;fontColor=#e8f5e9;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Text response&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Originating text client / thread&lt;/div&gt;" vertex="1">
+          <mxGeometry height="88" width="360" x="1545" y="2400" as="geometry" />
+        </mxCell>
+        <mxCell id="apply" fawkesClass="handler" parent="1" sourceRefs="C-06 C-08 I-14; supplied Mark 12" style="rounded=0;html=1;whiteSpace=wrap;align=center;verticalAlign=middle;fillColor=#5c4a1a;strokeColor=#8b7520;strokeWidth=2;fontColor=#fff9c4;fontSize=18;spacing=12;" value="&lt;div style=&quot;font-family:Arial;font-size:22px;font-weight:bold;line-height:1.2;&quot;&gt;Apply + reply&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Persist applied state&lt;/div&gt;&lt;div style=&quot;font-family:Arial;font-size:18px;line-height:1.35;&quot;&gt;Confirm only after application&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="360" x="865" y="900" as="geometry" />
+        </mxCell>
+        <mxCell id="title" parent="1" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=38;fontColor=#152c42;fontStyle=1;strokeColor=none;fillColor=none;" value="How Fawkes fits together" vertex="1">
+          <mxGeometry height="58" width="1800" x="135" y="37" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" parent="1" style="text;html=0;align=left;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=21;fontColor=#64748b;fontStyle=0;strokeColor=none;fillColor=none;" value="Complexity level 4 of 10 · Version Mark 14/ v1.16" vertex="1">
+          <mxGeometry height="33" width="1800" x="138" y="103" as="geometry" />
+        </mxCell>
+        <mxCell id="board_note" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=15;fontColor=#475569;fontStyle=0;strokeColor=none;fillColor=none;" value="Boards are views of Postgres; writes use ingest()." vertex="1">
+          <mxGeometry height="32" width="460" x="815" y="2112" as="geometry" />
+        </mxCell>
+        <mxCell id="voice_lane_title" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=20;fontColor=#334155;fontStyle=1;strokeColor=none;fillColor=none;" value="VOICE PIPELINE" vertex="1">
+          <mxGeometry height="29" width="440" x="145" y="177" as="geometry" />
+        </mxCell>
+        <mxCell id="voice_lane_subtitle" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=15;fontColor=#64748b;fontStyle=0;strokeColor=none;fillColor=none;" value="Fast interaction · automatic turn logging" vertex="1">
+          <mxGeometry height="27" width="424" x="153" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="shared_lane_title" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=20;fontColor=#334155;fontStyle=1;strokeColor=none;fillColor=none;" value="SHARED CONTROL &amp; MEMORY" vertex="1">
+          <mxGeometry height="29" width="480" x="805" y="177" as="geometry" />
+        </mxCell>
+        <mxCell id="shared_lane_subtitle" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=15;fontColor=#64748b;fontStyle=0;strokeColor=none;fillColor=none;" value="Validation · one write path · scoped reads" vertex="1">
+          <mxGeometry height="27" width="464" x="813" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="research_lane_title" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=20;fontColor=#334155;fontStyle=1;strokeColor=none;fillColor=none;" value="TEXT / RESEARCH PIPELINE" vertex="1">
+          <mxGeometry height="29" width="440" x="1505" y="177" as="geometry" />
+        </mxCell>
+        <mxCell id="research_lane_subtitle" parent="1" style="text;html=0;align=center;verticalAlign=middle;whiteSpace=wrap;fontFamily=Arial;fontSize=15;fontColor=#64748b;fontStyle=0;strokeColor=none;fillColor=none;" value="Background work · automatic task logging" vertex="1">
+          <mxGeometry height="27" width="424" x="1513" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shape_startEnd" parent="1" style="rounded=1;arcSize=100;absoluteArcSize=0;fillColor=#2d5016;strokeColor=#4a7c1f;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="26" width="34" x="151" y="2552" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text_startEnd" parent="1" style="text;html=0;align=left;fontColor=#475569;fontFamily=Arial;fontSize=17;" value="Input / output" vertex="1">
+          <mxGeometry height="30" width="255" x="196" y="2550" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shape_action" parent="1" style="rounded=0;fillColor=#4a7c59;strokeColor=#6b9b7a;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="26" width="34" x="466" y="2552" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text_action" parent="1" style="text;html=0;align=left;fontColor=#475569;fontFamily=Arial;fontSize=17;" value="Learned inference" vertex="1">
+          <mxGeometry height="30" width="255" x="511" y="2550" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shape_handler" parent="1" style="rounded=0;fillColor=#5c4a1a;strokeColor=#8b7520;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="26" width="34" x="781" y="2552" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text_handler" parent="1" style="text;html=0;align=left;fontColor=#475569;fontFamily=Arial;fontSize=17;" value="Application logic" vertex="1">
+          <mxGeometry height="30" width="255" x="826" y="2550" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shape_decision" parent="1" style="shape=rhombus;fillColor=#7c5a1a;strokeColor=#a8762b;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="26" width="34" x="1096" y="2552" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text_decision" parent="1" style="text;html=0;align=left;fontColor=#475569;fontFamily=Arial;fontSize=17;" value="Conditional branch" vertex="1">
+          <mxGeometry height="30" width="255" x="1141" y="2550" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shape_server" parent="1" style="shape=cylinder;fillColor=#696969;strokeColor=#808080;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="26" width="34" x="1411" y="2552" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text_server" parent="1" style="text;html=0;align=left;fontColor=#475569;fontFamily=Arial;fontSize=17;" value="Stored state" vertex="1">
+          <mxGeometry height="30" width="255" x="1456" y="2550" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_shape_form" parent="1" style="rounded=0;fillColor=#1a3d5c;strokeColor=#2e5c8b;strokeWidth=2;" value="" vertex="1">
+          <mxGeometry height="26" width="34" x="1726" y="2552" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_text_form" parent="1" style="text;html=0;align=left;fontColor=#475569;fontFamily=Arial;fontSize=17;" value="Collapsed subsystem" vertex="1">
+          <mxGeometry height="30" width="255" x="1771" y="2550" as="geometry" />
+        </mxCell>
+        <mxCell id="footer_0" parent="1" style="text;html=0;align=left;fontFamily=Arial;fontSize=16;fontColor=#64748b;" value="Arrows show runtime relationships and data direction, not one global execution order. Lanes group responsibilities, not deployments." vertex="1">
+          <mxGeometry height="25" width="1870" x="145" y="2590" as="geometry" />
+        </mxCell>
+        <mxCell id="footer_1" parent="1" style="text;html=0;align=left;fontFamily=Arial;fontSize=16;fontColor=#64748b;" value="Off-chart arrows: ignore ends response processing; Claude is external. Runtime logging remains on the single ingest path." vertex="1">
+          <mxGeometry height="25" width="1870" x="145" y="2614" as="geometry" />
+        </mxCell>
+        <mxCell id="footer_2" parent="1" style="text;html=0;align=left;fontFamily=Arial;fontSize=16;fontColor=#64748b;" value="Voice/research LLMs receive prepared context only. Runtime boxes include event handling and tools; HFSM validates before Apply + reply; cloud bridge internals remain implicit." vertex="1">
+          <mxGeometry height="25" width="1870" x="145" y="2638" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

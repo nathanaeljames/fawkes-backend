@@ -2,48 +2,27 @@
 
 **A self-hosted, voice-native, multi-user AI assistant with a memory that never forgets and always cites its sources.**
 
-Fawkes runs entirely on local hardware. It listens on any microphone, knows who is speaking, remembers every conversation verbatim with timestamps, and reasons over that memory with a hierarchical state machine driving a local large language model. It is built around one conviction: an assistant is only as good as its memory, and memory is an architecture, not a feature.
+Fawkes runs entirely on local hardware. It listens on any microphone, knows who is speaking, remembers every conversation verbatim with timestamps, and reasons over that memory with a hierarchical statechart driving a local large language model. It is built around one conviction: an assistant is only as good as its memory, and memory is an architecture, not a feature.
 
 ---
 
 ## What Fawkes is
 
-- **Voice-first.** Streaming speech recognition, voice-activity detection, speaker identification, and cloned-voice synthesis, end to end, on owned GPUs.
-- **Person-centric.** Memory is keyed to the *speaker*, resolved from voice (ECAPA-TDNN embeddings), across every session and device, never to a chat session. Multiple users are a hard requirement at every stage.
-- **Memory-first.** A PostgreSQL system of record holds verbatim, timestamped transcripts and a bi-temporal facts table (when a fact was true, when it was learned), with hybrid lexical + semantic retrieval inside the same transactional boundary. Summaries and compiled knowledge are overlays that link back to sources and never replace them.
+- **Voice-first.** On-device wake word on every microphone, streaming speech recognition, voice-activity detection, continuous speaker identification, and cloned-voice synthesis, end to end, on owned GPUs.
+- **Person-centric.** Memory is keyed to the *speaker*, resolved from voice (ECAPA-TDNN embeddings accumulated per conversation), across every session and device, never to a chat session. Multiple users are a hard requirement at every stage.
+- **Memory-first.** A PostgreSQL system of record holds verbatim, timestamped transcripts and a bi-temporal facts table (when a fact was true, when it was learned), with hybrid lexical and semantic retrieval inside the same transactional boundary. Summaries and compiled knowledge are overlays that link back to sources and never replace them.
+- **Scoped by trust.** Every record lives in exactly one of three areas — a shared household *workspace*, a private *user* area, or a hardened *silo* — and each area has its own level of authentication: registered-device trust, voice authentication by reading a pushed passage aloud, or web sign-in plus a PIN. Authorization is checked per utterance, never granted to a device for a whole session.
 - **Statechart-driven.** Multi-step workflows (enrollment, voice cloning, authentication) are Harel statecharts. The language model *proposes* transitions; a deterministic validator *ratifies* them. No closed-set intent classifier ever gates the conversation.
-- **Two pipelines, one brain.** A latency-critical voice loop (deterministic lookups and single-shot retrieval only) runs alongside a research/coding pipeline (agentic retrieval, multi-hop reasoning, document trees, a compiled wiki), with a shared blackboard between them.
-- **Local by default.** Everything runs on the workstation; cloud calls are explicit, budget-gated, and logged.
+- **Two pipelines, one brain.** A latency-critical voice loop (deterministic lookups and single-shot tools only) runs alongside a research and coding pipeline (agentic retrieval, multi-hop reasoning, document trees, a compiled wiki), with a shared blackboard and a command queue between them.
+- **Local by default.** Everything runs on the workstation; a cloud model is called only as a per-request subagent, under a policy with a budget, with extracted text rather than documents, and every remote turn is stored locally.
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    Mic([Microphone / WebSocket clients]):::startEnd --> ASR[Streaming ASR + VAD<br/>FastConformer / Canary-Qwen / MarbleNet]:::handler
-    ASR --> ID[Speaker identity<br/>ECAPA-TDNN → user_id]:::handler
-    ID --> Router[Small-model router<br/>FSM event / freeform / ignore / escalate]:::decision
-    Router --> Build[Prompt builder<br/>Layers 0-3 + FSM state + time injection]:::handler
-    Build --> LLM[Qwen3.8-27B on vLLM<br/>structured output]:::action
-    LLM --> Val{Validator<br/>statechart law}:::decision
-    Val -->|legal| Apply[Apply transition<br/>persist turn]:::action
-    Val -->|illegal| Build
-    Apply --> TTS[TTS + stream manager<br/>XTTS / Piper]:::action
-    TTS --> Out([Spoken response]):::startEnd
+![How Fawkes fits together — level 4 overview, Specification v1.16](docs/diagrams/architecture_L4_v1.16.png)
 
-    Apply --> Mem[(MemoryStore<br/>Postgres + pgvector + FTS<br/>verbatim transcripts, bi-temporal facts)]:::server
-    Mem --> Build
+*Level 4 of 10 on the project's complexity scale, drawn from Architecture Specification v1.16. Source: [`docs/diagrams/architecture_L4_v1.16.drawio`](docs/diagrams/architecture_L4_v1.16.drawio). Notation: [`docs/Fawkes_Diagram_Standards.md`](docs/Fawkes_Diagram_Standards.md).*
 
-    Research[Research / coding pipeline<br/>agentic retrieval, document trees,<br/>OKF wiki, OpenCode surface]:::form <--> Mem
-    Research <--> Board[Shared blackboard<br/>notes-up, read-down, imperatives]:::form
-    Board <--> Build
-
-    classDef startEnd fill:#2d5016,stroke:#4a7c1f,color:#e8f5e9,stroke-width:3px
-    classDef form fill:#1a3d5c,stroke:#2e5c8b,color:#e3f2fd,stroke-width:2px
-    classDef action fill:#4a7c59,stroke:#6b9b7a,color:#e8f5e9,stroke-width:2px
-    classDef handler fill:#5c4a1a,stroke:#8b7520,color:#fff9c4,stroke-width:2px
-    classDef decision fill:#7c5a1a,stroke:#a8762b,color:#fff9c4,stroke-width:2px
-    classDef server fill:#696969,stroke:#808080,color:#f5f5f5,stroke-width:2px
-```
+Three lanes. The **voice pipeline** turns microphones into a router verdict (ignore, statechart event, or escalate) and, on escalation, a prompt assembled by deterministic code from tiered memory layers before the voice-slot model answers. The **text and research pipeline** does the same for web, mobile, and coding clients, with an arbiter deciding whether a message starts, queues, or interrupts background work, and a governed bridge deciding whether a task escalates to a cloud model. Between them, **shared control and memory**: the statechart controller validates every proposed state change against statechart law before anything is applied or spoken; `ingest()` is the single write path into Postgres; both pipelines read memory through scoped, eligibility-checked queries; and a blackboard carries notes up from voice, status down from research, and commands straight to the research queue.
 
 ### Workflow depth: one excerpt
 
@@ -73,22 +52,23 @@ flowchart TD
     classDef decision fill:#7c5a1a,stroke:#a8762b,color:#fff9c4,stroke-width:2px
 ```
 
-The complete Iteration-1 flowcharts (enrollment name collection with spelling confirmation, pangram recording, and the full voice-cloning loop) are in [`docs/diagrams/iteration1/`](docs/diagrams/iteration1/); earlier drafts are in [`docs/diagrams/iteration1/archive/`](docs/diagrams/iteration1/archive/). The architecture diagram above is maintained as [`docs/diagrams/architecture.mermaid`](docs/diagrams/architecture.mermaid). Iteration-2 statecharts will be added under `docs/diagrams/iteration2/` alongside the code that implements them.
+The complete Iteration-1 flowcharts (enrollment name collection with spelling confirmation, pangram recording, and the full voice-cloning loop) are in [`docs/diagrams/iteration1/`](docs/diagrams/iteration1/); earlier drafts are in [`docs/diagrams/iteration1/archive/`](docs/diagrams/iteration1/archive/). Iteration-2 statecharts are added under `docs/diagrams/iteration2/` as `stateDiagram-v2` sources alongside the code that implements them.
 
 ## Design principles (abridged)
 
 1. One ACID system of record; everything else is derived and rebuildable.
 2. Verbatim first; synthesis is an overlay with provenance.
 3. Time is not optional: every turn, fact, and resource is timestamped, and elapsed time is injected into every prompt.
-4. One write path (`ingest()`): hashed, idempotent, provenance-stamped.
-5. Transformations leave receipts: manifests on compression, traces on retrieval.
+4. One write path (`ingest()`): typed, idempotent, provenance-stamped, durably acknowledged.
+5. Transformations leave receipts: manifests on compression, traces on retrieval, cost on every model call.
 6. Epistemic hygiene: cite the source, or say "I don't know."
 7. Latency class determines retrieval class: the voice loop never waits on an LLM-driven search.
 8. The LLM proposes; deterministic code ratifies.
-9. Adopt at the edges, build the core: the statechart, memory substrate, and identity system are built; coding harnesses and serving runtimes are adopted behind seams.
-10. Measure, don't debate: an evaluation harness is a component of the system.
+9. Authorization precedes ranking: eligibility decides what may be read; relevance weights rank only what is eligible.
+10. Adopt at the edges, build the core: the statechart, memory substrate, and identity system are built; coding harnesses and serving runtimes are adopted behind seams.
+11. Measure, don't debate: an evaluation harness is a component of the system.
 
-The complete twenty-principle manifesto is [`docs/Fawkes_Guiding_Principles.md`](docs/Fawkes_Guiding_Principles.md). The rest of the design set lives beside it: [wishlist](docs/Fawkes_Wishlist_v2.md), [systems inventory](docs/Fawkes_Systems_Inventory.md), [implementation plan](docs/Fawkes_Implementation_Plan.md), [toolbox](docs/Fawkes_Toolbox.md), and [session handoff](docs/Fawkes_Session_Handoff.md).
+The complete manifesto is [`docs/Fawkes_Guiding_Principles.md`](docs/Fawkes_Guiding_Principles.md). The rest of the design set lives beside it: [architecture specification](docs/Fawkes_Architecture_Specification.md), [behavior contract](docs/Fawkes_Behavior_Contract.md), [implementation plan](docs/Fawkes_Implementation_Plan.md), [systems inventory](docs/Fawkes_Systems_Inventory.md), [wishlist](docs/Fawkes_Wishlist.md), [toolbox](docs/Fawkes_Toolbox.md), [diagram standards](docs/Fawkes_Diagram_Standards.md), and [session handoff](docs/Fawkes_Session_Handoff.md).
 
 ## Technical highlights from Iteration 1
 
@@ -104,11 +84,15 @@ The complete twenty-principle manifesto is [`docs/Fawkes_Guiding_Principles.md`]
 
 | Layer | Technology |
 |---|---|
-| Speech | NVIDIA NeMo (FastConformer, Canary-Qwen, MarbleNet), ECAPA-TDNN, XTTS / Piper |
-| Cognition | Qwen3.8-27B (Int4) on vLLM; Qwen 4B router; hierarchical statechart + validator |
-| Memory | PostgreSQL + pgvector + full-text search; bi-temporal facts; hybrid retrieval with Reciprocal Rank Fusion |
-| Research / coding | Agentic retrieval loop, PageIndex-style document trees, OKF-conformant wiki, OpenCode, MCP server |
+| Speech | NVIDIA NeMo (FastConformer, Canary-Qwen, MarbleNet) behind a typed streaming interface; ECAPA-TDNN; XTTS / Piper; ESP32-S3 satellites with hardware audio front ends |
+| Cognition | Qwen3.8-27B (Int4) on vLLM and a Qwen3-4B router on llama.cpp, sharing one RTX 3090; hierarchical statechart + validator |
+| Memory | PostgreSQL + pgvector + full-text search; bi-temporal facts; hybrid retrieval with Reciprocal Rank Fusion; scope on every row |
+| Research / coding | Agentic retrieval loop, PageIndex-style document trees, OKF-conformant wiki, code-graph MCP servers, OpenCode, MCP server over MemoryStore |
 | Infrastructure | Docker Compose, FastAPI, asyncio, GitHub Actions CI, pytest eval harness |
+
+## How it is being built
+
+Iteration 2 is developed in graded rounds. For each round the planning seat writes a spec and commits its tests first; two implementers from different model vendors build the same spec in separate git worktrees; a grader audits each implementation's claims against its diff before scoring; and the owner integrates the winner only after explaining its functions in a viva. The process, contract, grader prompt, and round list are in [`buildout/`](buildout/); every round's documents are archived there and never deleted.
 
 ## Implementation status
 
@@ -121,58 +105,67 @@ The complete twenty-principle manifesto is [`docs/Fawkes_Guiding_Principles.md`]
 - [x] Rasa-driven enrollment and voice-cloning workflows with fuzzy-matched name and passage selection
 - [x] DuckDB speaker, pangram, and passage store
 
-**Iteration 2 — LLM + statechart rebuild (in progress)**
+**Iteration 2 — LLM + statechart rebuild (in progress; rounds per [`buildout/ROUNDS.md`](buildout/ROUNDS.md))**
 
 - [ ] **Phase 0 — Milestone Zero** (first running code)
-  - [ ] Postgres + pgvector service in Docker Compose
-  - [ ] Migration 001: transcripts, bi-temporal facts, documents; full-text and vector indexes; enum seed tables
-  - [ ] `MemoryStore` skeleton: `remember_utterance()`, `recall()` with hybrid BM25 + vector and Reciprocal Rank Fusion
-  - [ ] First pytest: three utterances in, retrieved by meaning and by keyword, timestamps and provenance asserted; transcript survives a container restart
+  - [ ] P0-1 Postgres + pgvector service; migration 001 with workspaces, silos, scoped projects, devices and environments, transcripts with runtime event ids, bi-temporal facts, documents and document nodes, derived jobs, pending deliveries, tunnels; scope pair on every content row, identity tables outside it; audio-capture columns reserved; no raw audio ever stored
+  - [ ] P0-2 Typed `ingest()`: event-id idempotency for turns, content hash per scope for documents, search vector committed with the row, derived job in the same transaction, acknowledgement after commit; `remember_utterance()` delegates from day one
+  - [ ] P0-3 `recall()`: eligibility first, then Postgres full-text ranking + vectors with Reciprocal Rank Fusion; the permanent Phase 0 suite (duplicate-utterance and retry, crash between commit and embedding, silo leakage through every path, restart survival); CI bootstrap
 - [ ] **Phase 1 — Cognitive core and substrate foundation** (text mode; Iteration 1 keeps running)
-  - [ ] Prompt builder with current-time and elapsed-time injection; validator skeleton; structured-output JSON contract; FSM registry data structures
-  - [ ] Small-model router v1 (advance-FSM / freeform / ignore / escalate, with confidence) in front of the 27B
-  - [ ] Serving: vLLM for Qwen3.8-27B on the RTX 3090; llama.cpp for the 4B router + embedder on the GTX 1660 Super; cache-stable prompt prefix
-  - [ ] Ontology v1 (entity, relation, and facet vocabulary as enum tables and constraints) before the facts table takes data
-  - [ ] `ingest()` v1 with content hashing and provenance; one JSON trace per turn; Postgres backup cron
-  - [ ] Eval harness v0 (about 30 seeded questions, behavioral checks, latency timing) on the workstation
-  - [ ] CI on GitHub Actions: unit tests for the deterministic core, Postgres integration tests, mocked-LLM FSM walkthroughs via a shared `FakeLLM` fixture; phase exits as permanent pytest markers
+  - [ ] P1-1 Structured-output contract and validator: all-or-nothing ratification, two bounded retries, confirmation only after application; shared `FakeLLM` fixture
+  - [ ] P1-2 Statechart registry: workflow state keyed by user, scope, and instance; version checks; append-only applied-state history
+  - [ ] P1-3 Prompt builder, Layers 0-1 and the topic slice: deterministic assembly after the router verdict, local and elapsed time, scope assertion on every item
+  - [ ] P1-4 Small-model router v1 (statechart event / ignore / escalate with confidence) in front of the 27B
+  - [ ] P1-5 Ontology v1 as enum tables and constraints; `ingest()` fan-out registry; one JSON trace per turn and model call; capability-card and feedback-event schemas; Postgres backup
+  - [ ] P1-6 Serving: vLLM for the 27B and llama.cpp for the 4B on the same card, OpenAI-compatible seam, cache-stable prefix; serving-recipe experiment and Budget A measured
+  - [ ] P1-7 Eval harness v0 (about 30 seeded cases by slice, nightly smoke, weekly full runs, prove-it-bites meta-test); first capability cards; Phase 1 exit
 - [ ] **Phase 2 — Voice memory and identity** (voice becomes primary; Rasa retired)
-  - [ ] Tiered context loading (Layers 0-2), semantic cache, Layer-3 tool calls (remember, recall, single-shot lookups)
-  - [ ] Enrollment and voice-clone statecharts ported; authentication statechart with deferred identification tiers and passphrase
-  - [ ] Operational data migration: DuckDB speakers, imprints, pangrams, and passages into Postgres; DuckDB retired
-  - [ ] Voice register: thinking off or budgeted, brevity persona, stall words; correction-event hook into the prompt builder
-  - [ ] Per-turn memory-promotion hook on the small model; sandboxed tool container
-  - [ ] Rasa switched off once lifecycle tests and eval slices pass; two speakers hold personalized conversations on separate devices
+  - [ ] P2-1 Speech behind typed seams (raw and enhanced audio per consumer; opaque per-stream ASR state); capture statistics and an embedding stored per voice turn; DuckDB migrated into Postgres and retired
+  - [ ] P2-2 Per-conversation speaker accumulator with online clustering and prior-aware matching
+  - [ ] P2-3 Wake word, microphone election, session and follow-up windows, listen-along binding, continuity judge
+  - [ ] P2-4 Enrollment and voice-clone statecharts ported (enrollment creates an identity with consent; no passphrase)
+  - [ ] P2-5 Pass-blurb authentication (a pushed passage read aloud, with a full challenge protocol), per-utterance authorization, Layer 1a/1b disclosure, threshold revocation, audit
+  - [ ] P2-6 Thread promotion to a user area as a unit, mixed-speaker rules, private-continuation forks
+  - [ ] P2-7 Tiered context on the voice path; semantic cache keyed by permission set
+  - [ ] P2-8 Fast-class tool registry in a sandbox, voice register, correction and memory-promotion hooks
+  - [ ] P2-9 Session-end imprint enrichment with a maturity-aware gate, authenticated sessions as ground truth, drift monitor, versioned rollback
+  - [ ] P2-10 Speaker-identification evaluation slice, real satellite integration, Rasa switched off; two speakers hold personalized conversations on separate devices
+  - [ ] P2-11 (conditional) Multi-centroid imprints, only if the evaluation slice shows an environment failing
 - [ ] **Phase 3 — Ingestion, research pipeline, external hands, dual-pipeline interplay**
-  - [ ] Ingestion router with structure scoring and Qwen-vision OCR; PageIndex-style document trees with checksum caching
-  - [ ] Research pipeline v1: agentic loop (grep, FTS, tree, web), CRAG grading, recall ladder with citations, checkpoints to `MemoryStore`
-  - [ ] Rubber-duck interplay v1: shared blackboard, notes-up, read-down status board, imperative channel, 4B arbiter (discard / queue / interrupt)
-  - [ ] Consolidation and compaction jobs with an idle-window scheduler
-  - [ ] OpenCode as coding surface on the local endpoint; MCP server over `MemoryStore` with scoped auth and audit log; budget-gated Claude escalation tool
-  - [ ] Salience weights v1 and contradiction detector v1 (log level); state-space-model ASR swap around Phase 3.5 as VRAM allows
+  - [ ] P3-1 Ingestion adapters and router with OCR; PageIndex-style document trees with checksum caching
+  - [ ] P3-2 Research pipeline v1: agentic loop, CRAG grading, recall ladder with citations, checkpoints
+  - [ ] P3-3 Text arbiter (start / queue / interrupt / statechart command), one disposition per message, generation-scoped cancellation
+  - [ ] P3-4 Rubber-duck interplay: blackboard, status projection, imperatives, results back to voice
+  - [ ] P3-5 Durable delivery: claims and acknowledgements, assurance re-checked at playback, preferred-device push
+  - [ ] P3-6 Code tools, code-graph MCP servers, OpenCode, scoped MCP server over `MemoryStore`
+  - [ ] P3-7 Governed cloud escalation with per-call budget reservation and local logging of every remote turn
+  - [ ] P3-8 Non-destructive compaction with manifests, idle-window scheduler, salience v1, contradiction detector v1
+  - [ ] P3-9 Coding-patch evaluation slice; Phase 3 exit
+  - [ ] P3-10 (conditional, ~3.5) State-space-model ASR substituted behind the typed interface when the audio evidence gate opens
 - [ ] **Phase 4 — Synthesis layer, second GPU, measured experiments**
-  - [ ] OKF-conformant wiki distillation layer with lifecycle states and lint cron
-  - [ ] Tunnel manager (cross-project scope weights) and contradiction escalation to a clarification statechart
-  - [ ] Gemma 4 on the second RTX 3090 as conversational and second-opinion model; listening tests against tuned Qwen
-  - [ ] Heads-down mode: conversational slot handed to a second coding model by task mode
-  - [ ] Reconciliation crons and type histograms
-  - [ ] Benchmarks recorded in the toolbox: wiki vs Cog-RAG, hand-rolled research loop vs deepagents, Harness-1 as retrieval subagent
+  - [ ] P4-1 OKF-conformant wiki distillation with lifecycle states, lint, and source descent
+  - [ ] P4-2 Tunnel lifecycle within a scope instance; contradiction escalation to a clarification statechart
+  - [ ] P4-3 Gemma 4 on a second RTX 3090 as the voice-slot model; listening tests against tuned Qwen
+  - [ ] P4-4 Panel mode with arbiter strategies and recorded verdicts
+  - [ ] P4-5 Heads-down mode, reconciliation crons, the four recorded benchmarks
 - [ ] **Phase 5 — Web interface, multi-surface, back-catalog**
-  - [ ] Web app: chat, uploads, project notes, authentication and sessions, security hardening pass
-  - [ ] Row-level security scoping per user and per project; voice-driven project management
-  - [ ] Back-catalog import of Iteration-1 logs and Claude/ChatGPT exports through an `ingest()` adapter with project assignment
-  - [ ] Mobile-facing API and Claude handoff bundles
-- [ ] **Phase 6+ — Frontier** (planned, not scheduled): state-space-model ASR if not already swapped, digests and scrape crons, home automation, computer vision, Graphiti if bi-temporal SQL hits its ceiling
+  - [ ] P5-1 Web app: chat, uploads, projects, sign-in and sessions, hardening pass
+  - [ ] P5-2 Row-level security per user; silo area with PIN after sign-in, device-exclusive sessions, separate timeouts (P5-2a: Tier B silo enforcement, only if a second silo is wanted)
+  - [ ] P5-3 Workspace administrator and root roles; voice-approved device pairing; revocation and audit views
+  - [ ] P5-4 Workspace conversation list and per-thread actions (archive, export, duplicate, move to profile); preferred-device registration
+  - [ ] P5-5 Back-catalog import of Iteration-1 logs and Claude/ChatGPT exports; authorized cross-silo export; mobile API; handoff bundles
+- [ ] **Phase 6+ — Frontier** (planned, not scheduled): browser and terminal capture, screen context, digests and scrape crons, home automation, computer vision, Graphiti if bi-temporal SQL hits its ceiling
 
 ## Research directions
 
-- **Speaker separation ("cocktail party")**: a separate research track and repository; results will feed Fawkes's speech stack.
+- **Speaker separation ("cocktail party")**: a separate research track and repository, trained and evaluated on prepared public datasets; results will feed Fawkes's speech stack through the typed ASR interface.
 - **State-space-model ASR**: replacing transformer ASR with Mamba-class streaming models for constant-memory, low-latency transcription.
+- **Microphone and environment quality**: per-device and per-environment identification reliability from the capture statistics Fawkes already records; multi-centroid voiceprints if the evidence calls for them.
 - **Retrieval policy**: measured comparisons of compiled-wiki, hypergraph, and agentic retrieval on a personal research corpus.
 
 ## Getting started
 
-Requirements: Docker with the NVIDIA container toolkit, one CUDA-capable GPU (developed on an RTX 3090), a host directory `~/fawkes` holding model weights (`models/coqui_xtts/XTTS-v2/`, `models/ecapa_tdnn_embed/ecapa_tdnn.nemo`) and audio samples (mounted into the container at `/root/fawkes`), and a sibling directory `../fawkes_private/` outside the repository holding the speaker database (`speakers/database.duckdb`) and the Postgres secrets (`secrets/pg_password.txt`, `secrets/pg_url.txt`), mounted at `/workspace-private` and `/run/secrets`.
+Requirements: Docker with the NVIDIA container toolkit, one CUDA-capable GPU (developed on a single RTX 3090), a host directory `~/fawkes` holding model weights (`models/coqui_xtts/XTTS-v2/`, `models/ecapa_tdnn_embed/ecapa_tdnn.nemo`) and audio samples (mounted into the container at `/root/fawkes`), and a sibling directory `../fawkes_private/` outside the repository holding the speaker database (`speakers/database.duckdb`) and the Postgres secrets (`secrets/pg_password.txt`, `secrets/pg_url.txt`), mounted at `/workspace-private` and `/run/secrets`.
 
 ```bash
 docker compose up -d                       # postgres, fawkes (Iteration 2); canary, rasa-nlp, rasa-actions (Iteration 1)
@@ -205,8 +198,10 @@ Operational notes:
 |---|---|
 | `src/fawkes/` | Iteration-2 package: `speech/`, `memory/`, `cognition/` (with `fsm/`), `server/`, `eval/`. Scaffolded; Phase 0 lands in `memory/` |
 | `migrations/` | Plain-SQL schema migrations, applied in order |
-| `tests/` | `unit/`, `integration/` (live Postgres), `functional/` (statechart walkthroughs against a mock model); phase exits are permanent markers |
-| `docs/` | The six living design documents; `docs/diagrams/` holds the architecture diagram and the workflow flowcharts |
+| `tests/` | `unit/`, `integration/` (live Postgres), `functional/` (statechart walkthroughs against a mock model); phase exits are permanent markers; round tests are committed before their round opens |
+| `docs/` | The nine living design documents; `docs/diagrams/` holds the architecture overview (`architecture_L4_v1.16.*`) and the workflow flowcharts |
+| `buildout/` | The development pipeline: process, implementer contract, grader prompt, round list, and every round's archived documents |
+| `tools/` | `round.py` — round bookkeeping (timing, diff hashing, spec-test guard) |
 | `infra/` | `docker/fawkes.Dockerfile`, `postgres/init.sql` |
 | `docker-compose.yml`, `.devcontainer/` | `postgres`, `fawkes`, and the Iteration-1 services on one network; Dev Containers configs for `fawkes` and `canary` |
 | `legacy/iteration1/` | The frozen Iteration-1 system: `canary/` (voice server, speaker tooling, earlier code generations), `rasa-nlp/`, `rasa-actions/` |

@@ -90,3 +90,6 @@ scratchpad/
 .scratch/
 tmp/
 .tmp/
+
+## Pipeline
+.round/

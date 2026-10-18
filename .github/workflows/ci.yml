@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "round/**"]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests tools
+
+  spec-guard:
+    # Spec tests are pipeline-owned: any change to a test file listed in an open round's manifest fails the build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python tools/round.py guard
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      # xfail_strict is set in pyproject: an open round's test that starts passing fails here until the owner promotes it.
+      - run: pytest -m "not integration" -q
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: fawkes
+          POSTGRES_USER: fawkes
+          POSTGRES_HOST_AUTH_METHOD: trust   # ephemeral CI container on localhost; no password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fawkes -d fawkes"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://fawkes@localhost:5432/fawkes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e ".[dev]"
+      - run: psql "$DATABASE_URL" -f infra/postgres/init.sql
+      - run: for f in migrations/*.sql; do [ -e "$f" ] && psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$f"; done; true
+      - run: pytest -m integration -q
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
