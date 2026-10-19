@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """round.py — round bookkeeping for the Fawkes development pipeline.
 
 Runs inside an implementer worktree (or the owner's main checkout for `guard`).
@@ -21,6 +20,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import itertools
 import json
 import os
 import pathlib
@@ -34,7 +34,7 @@ IGNORE_DIRS = {".git", ".round", "__pycache__", ".pytest_cache", ".ruff_cache", 
 
 
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
 def git(*args: str) -> str:
@@ -112,7 +112,7 @@ def timeline(data: dict, idle_minutes: float, end: str | None = None) -> dict:
     ts = [dt.datetime.fromisoformat(s) for s in stamps]
     active = dt.timedelta()
     pauses = []
-    for prev, cur in zip(ts, ts[1:]):
+    for prev, cur in itertools.pairwise(ts):
         gap = cur - prev
         if gap <= dt.timedelta(minutes=idle_minutes):
             active += gap
