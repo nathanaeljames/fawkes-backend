@@ -1,3 +1,9 @@
+# Host paths outside the repository come from one variable so the file needs no edit on another machine:
+#   FAWKES_HOME  defaults to %USERPROFILE%\fawkes on Windows; on Linux export FAWKES_HOME=$HOME/fawkes.
+# Under it: models/ (weights), data/ (audio, datasets), private/ (speakers, secrets), backups/ (pg_dump).
+# The repository itself lives beside its scratch directory under ~/repos; nothing here points into scratch
+# (see docker-compose.override.yml, which is local-only and gitignored).
+
 services:
 
   # ---------------------------------------------------------------------------
@@ -15,7 +21,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data                       # Docker-managed named volume: outside the tree
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - ../fawkes_private/backups:/backups                    # pg_dump target, never in git
+      - "${FAWKES_HOME:-${USERPROFILE}/fawkes}/backups:/backups"   # pg_dump target, never in git
     ports:
       - "5432:5432"
     healthcheck:
@@ -34,7 +40,7 @@ services:
     container_name: fawkes
     volumes:
       - ".:/workspace"
-      - "../fawkes_private:/workspace-private"
+      - "${FAWKES_HOME:-${USERPROFILE}/fawkes}/private:/workspace-private"
     working_dir: /workspace
     environment:
       DATABASE_URL_FILE: /run/secrets/pg_url
@@ -60,10 +66,10 @@ services:
     ports:
       - "9001:9001"
     volumes:
-      - "${USERPROFILE}/fawkes:/root/fawkes"
+      - "${FAWKES_HOME:-${USERPROFILE}/fawkes}:/root/fawkes"           # models and audio, as server03f.py expects
       - "./legacy/iteration1/canary:/usr/local/whisper"         # server03f.py runs from here, unchanged
       - ".:/workspace"                                          # whole repo visible to the editor
-      - "../fawkes_private:/workspace-private"                  # speaker database, enrollment script
+      - "${FAWKES_HOME:-${USERPROFILE}/fawkes}/private:/workspace-private"   # speaker database, enrollment script
     working_dir: /usr/local/whisper
     command: ["tail", "-f", "/dev/null"]
     deploy:
@@ -143,9 +149,9 @@ services:
 
 secrets:
   pg_password:
-    file: ../fawkes_private/secrets/pg_password.txt
+    file: "${FAWKES_HOME:-${USERPROFILE}/fawkes}/private/secrets/pg_password.txt"
   pg_url:
-    file: ../fawkes_private/secrets/pg_url.txt
+    file: "${FAWKES_HOME:-${USERPROFILE}/fawkes}/private/secrets/pg_url.txt"
 
 volumes:
   pgdata:

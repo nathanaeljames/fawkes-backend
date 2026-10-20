@@ -140,6 +140,16 @@ def cmd_close(a: argparse.Namespace) -> None:
     diff = git("diff", data["base"], *excl)
     stat = git("diff", "--stat", data["base"], *excl)
     digest = hashlib.sha256(diff.encode()).hexdigest()
+
+    def transcript_line(path: str | None) -> str:
+        # The transcript itself never enters the repository (it is a .jsonl under ~/.claude or scratch);
+        # BUILD records its location and a hash so the grader can verify the file the implementer names.
+        if not path:
+            return "NOT RECORDED — grader applies the Step 0 penalty"
+        tp = pathlib.Path(path)
+        if not tp.exists():
+            return f"{path} (NOT FOUND at close — grader applies the Step 0 penalty)"
+        return f"{path} (SHA-256 `{hashlib.sha256(tp.read_bytes()).hexdigest()}`, {tp.stat().st_size} bytes)"
     out_dir = ROOT / "buildout" / a.round
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"BUILD-{a.seat}.md"
@@ -153,7 +163,7 @@ def cmd_close(a: argparse.Namespace) -> None:
         f"- End (UTC): {end}",
         f"- Active: {tl['active_minutes']} min · Elapsed: {tl['elapsed_minutes']} min · Activity events: {tl['events']}",
         "- Pauses longer than the idle threshold: " + (", ".join(f"{p['from']} ({p['minutes']} min)" for p in tl["pauses"]) or "none"),
-        f"- Harness transcript: {a.transcript or 'NOT RECORDED — grader applies the Step 0 penalty'}",
+        "- Harness transcript: " + transcript_line(a.transcript),
         f"- Diff SHA-256: `{digest}`",
         f"- Reproduce: `git diff {data['base'][:12]}..{data['branch']}`",
         "",

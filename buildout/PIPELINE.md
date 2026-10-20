@@ -1,6 +1,6 @@
 # The Fawkes development pipeline
 
-v1, 2026-10-13. How Iteration 2 code gets written, judged, understood, and integrated. Derived from the Greek Tutor pipeline (22 graded rounds) with the changes that project's record argued for. This file owns the process; `CONTRACT.md` owns the implementer rules; `GRADER.md` owns grading; `ROUNDS.md` owns the round list; `docs/` owns what Fawkes is.
+v2, 2026-10-20 (v1 2026-10-13). How Iteration 2 code gets written, judged, understood, and integrated. Derived from the Greek Tutor pipeline (22 graded rounds) with the changes that project's record argued for. This file owns the process; `CONTRACT.md` owns the implementer rules; `GRADER.md` owns grading; `ROUNDS.md` owns the round list; `docs/` owns what Fawkes is.
 
 ## Authority
 | Question | Owner |
@@ -13,6 +13,7 @@ v1, 2026-10-13. How Iteration 2 code gets written, judged, understood, and integ
 | What was decided and when | `docs/Fawkes_Session_Handoff.md` decisions log; `buildout/LEDGER.md` for round outcomes |
 | Deliberate departures from the specification | `buildout/DIVERGENCE-LOG.md` (numbered DV-n, never renumbered) |
 | Deferred minor items | `buildout/NIT-LOG.md` (numbered NT-n) |
+| Security-relevant deferrals | a private note outside the repository (see Publication); the public log entry names only the resolving round |
 When two documents disagree, the one named here wins and the other has a bug; say so rather than reconciling silently.
 
 ## Seats
@@ -37,12 +38,12 @@ Day 0 is pipeline scaffolding and contains no Fawkes code. It is separate from P
 2. **Tests first.** Planning seat writes the round's tests under `tests/`, each marked `@pytest.mark.round("<ROUND>")` and `@pytest.mark.xfail(strict=True, reason="<ROUND> open")`. Owner commits them to `main`, then records them: `python tools/round.py manifest <ROUND> --tests tests/...`. CI's `spec-guard` job now refuses any diff that changes those files.
 3. **Open.** Owner cuts the branches and worktrees from the same base commit:
    ```
-   git worktree add ../fawkes-A -b round/<ROUND>/A main
-   git worktree add ../fawkes-B -b round/<ROUND>/B main
+   git worktree add ../fawkes-backend-A -b round/<ROUND>/A main
+   git worktree add ../fawkes-backend-B -b round/<ROUND>/B main
    ```
    Decide dual or solo per `ROUNDS.md`; the split rule: a round is split when its tests have different oracles (deterministic CPU test, GPU measurement, human judgment) and merged when they share one.
-4. **Implement.** Each implementer, in its worktree: `round.py open`, `round.py watch &`, work, `pytest --runxfail -m <ROUND>` and `pytest`, prove-it-bites, `round.py close`, RESULTS.
-5. **Seal.** Owner commits each worktree's state on its branch and tags it: `git -C ../fawkes-A add -A && git -C ../fawkes-A commit -m "<ROUND> A"`; `git tag <ROUND>/A round/<ROUND>/A`; same for B. Both implementations are now permanent history.
+4. **Implement.** Each implementer, in its worktree: `round.py open`, `round.py watch &`, work, `pytest --runxfail -m <ROUND>` and `pytest`, prove-it-bites, `round.py close --transcript <harness log>`, RESULTS. The transcript itself stays outside the repository (under `~/.claude/` or `../claude-scratch/fawkes-backend/`); BUILD records its path, size, and SHA-256 so the grader can verify the file the implementer names.
+5. **Seal.** Owner commits each worktree's state on its branch and tags it: `git -C ../fawkes-backend-A add -A && git -C ../fawkes-backend-A commit -m "<ROUND> A"`; `git tag <ROUND>/A round/<ROUND>/A`; same for B. Both implementations are now permanent history.
 6. **Blind.** Owner copies RESULTS and BUILD into `buildout/<ROUND>/` under neutral seat letters if they are not already neutral, keeps the mapping privately, and hands the grader the branch names or the inline diffs.
 7. **Grade.** Grader runs Steps 0-8 of `GRADER.md` and writes `GRADE.md`. Owner challenges anything that smells wrong. Within the tie band or on dispute, Astra grades the same bundles and the owner reconciles.
 8. **Port, if argued.** Winner applies `XPATCH.md` in its worktree; owner commits it on the winner's branch; `round.py close` again with the patch time added.
@@ -54,12 +55,18 @@ Day 0 is pipeline scaffolding and contains no Fawkes code. It is separate from P
     git checkout main
     git merge --no-ff round/<ROUND>/A -m "<ROUND>: ship A (+n ports from B)"
     # in the same commit or the next: remove the xfail markers on the round's tests; set manifest status to "closed"
-    git worktree remove ../fawkes-A && git worktree remove ../fawkes-B
+    git worktree remove ../fawkes-backend-A && git worktree remove ../fawkes-backend-B
     ```
     The loser's branch and tag remain. CI must be green with the promoted tests passing for real. Retroactive grade adjustment if integration contradicts a claim; absorb every owner edit into the next SPEC's model of the code. Each deviation in the shipped RESULTS gets a DV entry with the owner's ruling; minor findings deferred by the grader or the owner get NT entries.
 
 ## Documents per round (`buildout/<ROUND>/`)
 `SPEC.md`, `manifest.json`, `RESULTS-A.md`, `BUILD-A.md`, `RESULTS-B.md`, `BUILD-B.md`, optional `RESULTS-N.md`/`BUILD-N.md`, `GRADE.md`, optional `XPATCH.md`, `LEARN.md`, `VERIFY.md`. Nothing in `buildout/` is ever deleted.
+
+## Publication
+`buildout/` is public, including every archived round. Three rules keep that safe:
+1. **No secrets, transcripts, or environment specifics.** The machine-wide guards refuse secrets, credentials, logs, and `.jsonl` at commit and push. Hostnames, LAN addresses, VPN ranges, device identifiers, and real names are not caught by any scanner; the owner reads every RESULTS, GRADE, and LEARN for them at the viva before the round merges.
+2. **Security-relevant deferrals are never described in public.** A grader or owner finding that names an exploitable gap (an authorization check missing, a lock that can be bypassed, a scope key not enforced) goes to a private note outside the repository, not to `NIT-LOG.md` or `DIVERGENCE-LOG.md`. The public log entry for it records only an identifier and the round that resolves it ("NT-7: resolved in P5-2"); the description is added to the public entry after that round merges.
+3. **Nothing is deleted, but anything can be redacted.** If a published document is later found to violate rule 1 or 2, the owner rewrites the file and purges history by the recorded runbook; the ledger notes the redaction.
 
 ## Timing
 `round.py` times the worktree, not the model: start and end stamps plus a file-activity timeline. Active time is the sum of gaps under the idle threshold (default 5 minutes); longer gaps are listed as pauses with their start and length, so an absent owner, exhausted credits, or a question waiting for an answer appear as labeled pauses rather than inflated work. The harness transcript is the ground truth for what happened inside a pause; the grader consults it when active time looks implausibly low.
